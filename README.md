@@ -17,6 +17,8 @@ Zadaniem systemu wieloagentowego będzie poprawne zdiagnozowanie przyczyny awari
 
 ---
 
+## Diagram rozwiązania
+
 <p align="center">
 <img src="./imgs/diagram-2.drawio.png">
 </p>
@@ -33,14 +35,37 @@ Zadaniem systemu wieloagentowego będzie poprawne zdiagnozowanie przyczyny awari
 
 W tym celu zostanie stworzona osobna aplikacja agentowa, której zadaniem będzie wprowadzanie niewielkich, losowych zmian w wybranych miejscach aplikacji, mających na celu zakłócenie pracy serwisów. Dodatkowo będzie ona mogła indukować stres infrastrukturalny — lub wykonywać obie te czynności w różnych kombinacjach.
 
+
+### Diagnoza
+
+Agenci SME (z ang. Subject Matter Experts) mają dostęp do rozłącznych zbiorów danych – repozytoriów kodu, logów i metryk – odpowiadających konkretnym komponentom systemu. Każdy agent podczas wywołania diagnozuje swoją część systemu i wspólnie z pozostałymi agentami SME dąży do osiągnięcia konsensusu w sprawie przyczyny problemu.
+
+Przykłady:
+
+* **Problem z integracją:**
+Agent A zauważa, że serwis A nie może się połączyć z serwisem B z powodu błędnego wywołania endpointu REST API. Pojawia się pytanie: czy błąd leży po stronie serwisu A (wywołanie) czy serwisu B (implementacja API)? Jak agenci osiągają konsensus w tej sytuacji?
+
+* **Problem z kolejką:** 
+Agent A obserwuje, że kolejka jest przepełniona – system nie nadąża z przetwarzaniem obciążenia. Z kolei Agent B sugeruje, że kolejkę należy szybciej opróżniać. Czy problem wynika z niedostatecznych zasobów kolejki, czy z niewydolności konsumenta?
+
+### Planowanie
+Agent IC (z ang. Incident Commander) odpowiada za przyjęcie wspólnej diagnozy i przygotowanie planu naprawczego – określenia kolejnych działań niezbędnych do przywrócenia prawidłowego działania systemu.
+
+### Egzekucja
+Agent IC przekazuje zadania odpowiednim agentom SME (mogą to być inne warianty agentów wyposażone w narzędzia wykonawcze) i nadzoruje ich realizację. Po wykonaniu zadań – zmianach w kodzie i infrastrukturze – uruchamiany jest proces ponownego wdrożenia. Na zakończenie sprawdzana jest skuteczność planu, np. przez uruchomienie testów automatycznych lub analizę metryk.
+
+
+
 ---
 
 ### Potencjalne kierunki badawcze:
 
-- Jak różne modele diagnozy radzą sobie z wykrywaniem problemów, planowaniem i realizacją remediacji?
-- W jaki sposób różne mechanizmy podejmowania decyzji wpływają na skuteczność diagnozy?
+- Jak różne modele LLM radzą sobie z wykrywaniem problemów, planowaniem i realizacją remediacji?
+- W jaki sposób różne mechanizmy podejmowania decyzji wpływają na skuteczność diagnozy? - [Reliable Decision-Making for Multi-Agent LLM System](https://multiagents.org/2025_artifacts/reliable_decision_making_for_multi_agent_llm_systems.pdf)
+- Czy plan powinien być wykonywany w modelu swarm czy supervisor? ([architektura supervisor](https://github.com/langchain-ai/langgraph-supervisor-py), [architektura swarm](https://github.com/langchain-ai/langgraph-swarm-py))
 - Jaki jest optymalny zakres odpowiedzialności agenta typu SME (Subject Matter Expert)? Ile agentów potrzeba do skutecznej diagnozy systemu?
 - Jak system poradzi sobie z nietrywialnymi awariami, np. wieloma błędami jednocześnie lub dodatkowym stresem infrastruktury?
+
 
 ---
 
