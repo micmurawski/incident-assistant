@@ -46,8 +46,9 @@ W tym celu zostanie stworzona osobna aplikacja agentowa, której zadaniem będzi
 
 
 ### Bibliografia:
-*  [Leveraging Large Language Models for the Auto-remediation of Microservice Applications: An Experimental Study](https://dl.acm.org/doi/pdf/10.1145/3663529.3663855) - publikacja która mnie zainspirowała do tematu pracy magisterskiej, w badaniu realizują podobną z tą różnicą.
+*  [Leveraging Large Language Models for the Auto-remediation of Microservice Applications: An Experimental Study](https://dl.acm.org/doi/pdf/10.1145/3663529.3663855) - publikacja która mnie zainspirowała do tematu pracy magisterskiej, 
+w badaniu realizują podobną z tą różnicą, że nie wykorzystują wielu agentów, skupiają się głównie na infrastrukturze
 
-*  [Reliable Decision-Making for Multi-Agent LLM System](https://multiagents.org/2025_artifacts/reliable_decision_making_for_multi_agent_llm_systems.pdf)
+*  [Reliable Decision-Making for Multi-Agent LLM System](https://multiagents.org/2025_artifacts/reliable_decision_making_for_multi_agent_llm_systems.pdf) - przydatna publikacja w kontekscie modelu podejmowania decyzji podczas diagnozy
 
 *  [LLM Multi-Agent Systems: Challenges and Open Problems](https://arxiv.org/pdf/2402.03578)
