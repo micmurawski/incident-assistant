@@ -6,7 +6,8 @@ Celem pracy jest stworzenie systemu wieloagentowego, który będzie monitorował
 
 Aplikacja wdrożona na klastrze będzie jedną z aplikacji przedstawionych w niniejszej publikacji:
 
-[link](https://elib.dlr.de/211381/1/2024_AST_MicroService_BMK.pdf)
+* [An Overview of Microservice-Based Systems Used for Evaluation
+in Testing and Monitoring: A Systematic Mapping Study](https://elib.dlr.de/211381/1/2024_AST_MicroService_BMK.pdf)
 
 System wieloagentowy będzie miał dostęp do logów, metryk poszczególnych serwisów, a także do kodu źródłowego aplikacji.
 
@@ -15,6 +16,16 @@ Aplikacja mikroserwisowa będzie poddawana drobnym modyfikacjom lub jej infrastr
 Zadaniem systemu wieloagentowego będzie poprawne zdiagnozowanie przyczyny awarii na podstawie dostępnych informacji (logi, metryki, kod źródłowy), opracowanie planu remediacji oraz egzekucja tego planu w celu przywrócenia prawidłowego działania aplikacji.
 
 ---
+
+<p align="center">
+<img src="./imgs/diagram-2.drawio.png">
+</p>
+
+<div align="center">
+
+[link do diagramu](/imgs/diagram-2.drawio.png)
+
+</div>
 
 ---
 
@@ -32,3 +43,11 @@ W tym celu zostanie stworzona osobna aplikacja agentowa, której zadaniem będzi
 - Jak system poradzi sobie z nietrywialnymi awariami, np. wieloma błędami jednocześnie lub dodatkowym stresem infrastruktury?
 
 ---
+
+
+### Bibliografia:
+*  [Leveraging Large Language Models for the Auto-remediation of Microservice Applications: An Experimental Study](https://dl.acm.org/doi/pdf/10.1145/3663529.3663855) - publikacja która mnie zainspirowała do tematu pracy magisterskiej, w badaniu realizują podobną z tą różnicą.
+
+*  [Reliable Decision-Making for Multi-Agent LLM System](https://multiagents.org/2025_artifacts/reliable_decision_making_for_multi_agent_llm_systems.pdf)
+
+*  [LLM Multi-Agent Systems: Challenges and Open Problems](https://arxiv.org/pdf/2402.03578)
