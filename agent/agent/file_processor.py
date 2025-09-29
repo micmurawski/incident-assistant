@@ -1,21 +1,18 @@
-from typing import Any, Dict, List, Callable, Optional, Callable, Literal, Coroutine
-
-import os
-from pathlib import Path
-from constants import (
-    EXTENSIONS,
-    FALLBACK_EXTENSION,
-    MIN_BLOCK_CHARS,
-    MAX_BLOCK_CHARS,
-    MAX_CHARS_TOLERANCE_FACTOR,
-    MIN_CHUNK_REMAINDER_CHARS,
-)
 import hashlib
-from tree_sitter import Parser, Tree, Node, QueryCursor
+import os
 from collections import deque
-from ast_parser.loader import TreeSitterLoader
-from ast_parser.markdown_parser import parse_markdown
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Coroutine, Dict, List, Literal, Optional
+
+from tree_sitter import Node, Parser, QueryCursor, Tree
+
+from .code_analysis.import_resolvers.base import DepInfo
+from .code_analysis.loader import TreeSitterLoader
+from .code_analysis.markdown_parser import parse_markdown
+from .constants import (EXTENSIONS, FALLBACK_EXTENSION, MAX_BLOCK_CHARS,
+                        MAX_CHARS_TOLERANCE_FACTOR, MIN_BLOCK_CHARS,
+                        MIN_CHUNK_REMAINDER_CHARS)
 
 Options = Optional[Dict[str, Any]]
 
@@ -54,6 +51,19 @@ class CodeBlock:
     file_hash: str
     segment_hash: str
     identifier: Optional[str] = None
+    dep_infos: Optional[List[DepInfo]] = field(default_factory=list)
+
+    def to_file(self):
+        path = os.path.join("store", f"{self.file_hash}-{self.segment_hash}")
+        with open(path, "w") as f:
+            f.write(f"FILE_PATH: {self.file_path}\n")
+            f.write(f"TYPE: {self.type}\n")
+            f.write(f"IDENTIFIER: {self.identifier}\n")
+            f.write(f"START_LINE: {self.start_line}\n")
+            f.write(f"END_LINE: {self.end_line}\n\n")
+            f.write(f"DEP_INFOS: {self.dep_infos}\n")
+
+            f.write(self.content.decode('utf-8'))
 
 
 @dataclass
@@ -92,7 +102,7 @@ class CodeParser:
     def create_hash(content: bytes) -> str:
         return hashlib.sha256(content).hexdigest()
 
-    async def parse_file(self, file_path: str, options: Options = None) -> Coroutine[Any, Any, List[CodeBlock]]:
+    async def parse_file(self, work_dir: str, file_path: str, options: Options = None) -> Coroutine[Any, Any, List[CodeBlock]]:
         options = options or {}
 
         ext = Path(file_path).suffix.lower()
@@ -114,9 +124,9 @@ class CodeParser:
                 print(f"Error parsing file {file_path}: {str(e)}")
                 return []
 
-        return await self.parse_content(file_path, content, file_hash)
+        return await self.parse_content(work_dir, file_path, content, file_hash)
 
-    async def parse_content(self, file_path: str, content: bytes, file_hash: str) -> Coroutine[Any, Any, List[CodeBlock]]:
+    async def parse_content(self, work_dir: str, file_path: str, content: bytes, file_hash: str) -> Coroutine[Any, Any, List[CodeBlock]]:
         ext = Path(file_path).suffix.lower()[1:]
         seen_segment_hashes: set[str] = set()
 
@@ -190,6 +200,15 @@ class CodeParser:
 
                 if segment_hash not in seen_segment_hashes:
                     seen_segment_hashes.add(segment_hash)
+
+                    dep_infos = []
+                    # TODO: Add import analysis
+                    # if _type in ["import_from_statement", "import_statement"] and self.loaded_parsers[ext]["import_resolver"]:
+                    #    dep_infos = self.loaded_parsers[ext]["import_resolver"].resolve_import(
+                    #        work_dir,
+                    #        file_path,
+                    #        content.decode('utf-8'),
+                    #    )
                     results.append(
                         CodeBlock(
                             identifier=_id,
@@ -199,9 +218,11 @@ class CodeParser:
                             end_line=end_line,
                             content=content,
                             file_hash=file_hash,
-                            segment_hash=segment_hash
+                            segment_hash=segment_hash,
+                            dep_infos=dep_infos
                         )
                     )
+                    # results[-1].to_file()
 
         return results
 
@@ -253,6 +274,7 @@ class CodeParser:
                             segment_hash=segment_hash
                         )
                     )
+                    #chunks[-1].to_file()
                 current_chunk_lines = []
                 current_chunk_length = 0
                 chunk_start_line_index = end_line_index + 1
@@ -276,6 +298,7 @@ class CodeParser:
                         segment_hash=segment_hash
                     )
                 )
+                # chunks[-1].to_file()
 
         for i in range(len(lines)):
             line = lines[i]
@@ -385,7 +408,7 @@ class CodeParser:
         return results
 
     @classmethod
-    def process_markdown_section(cls, lines: list[str], file_path: str, file_hash: str, type: str, seen_segment_hashes: set[str], start_line: int, identifier: str | None = None) -> Coroutine[Any, Any, List[CodeBlock]]:
+    def process_markdown_section(cls, lines: list[bytes], file_path: str, file_hash: str, _type: str, seen_segment_hashes: set[str], start_line: int, identifier: str | None = None) -> Coroutine[Any, Any, List[CodeBlock]]:
         content = b"\n".join(lines)
         if len(content.strip()) < MIN_BLOCK_CHARS:
             return []
@@ -407,7 +430,10 @@ class CodeParser:
         )
         if segment_hash not in seen_segment_hashes:
             seen_segment_hashes.add(segment_hash)
-            return [CodeBlock(file_path=file_path, content=content.decode('utf-8'), type="markdown_content", start_line=start_line, end_line=end_line, file_hash=file_hash, segment_hash=segment_hash, identifier=identifier)]
+            res = [CodeBlock(file_path=file_path, content=content, type="markdown_content", start_line=start_line,
+                             end_line=end_line, file_hash=file_hash, segment_hash=segment_hash, identifier=identifier)]
+            # res[-1].to_file()
+            return res
 
     def perform_fallback_chunking(self, content: bytes, file_path: str, file_hash: str, seen_segment_hashes: set[str]) -> List[CodeBlock]:
         lines = content.split(b"\n")
@@ -430,7 +456,7 @@ async def main():
               code_block.start_line, code_block.segment_hash)
         print()
         print(code_block.content.decode('utf-8'))
-        #print("\n".join(read_lines(code_block.file_path,
+        # print("\n".join(read_lines(code_block.file_path,
         #      code_block.start_line, code_block.end_line)))
 
 if __name__ == "__main__":

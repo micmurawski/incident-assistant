@@ -1,8 +1,10 @@
-from safe_writer import safe_write_json
-from typing import Dict, Any
-import os
 import asyncio
 import functools
+import os
+from re import A
+from typing import Any, Dict
+
+from .safe_writer import safe_write_json
 
 HOME_DIR = os.path.expanduser("~")
 
@@ -31,13 +33,18 @@ def async_debounce(wait_seconds):
             async def call_it():
                 try:
                     await asyncio.sleep(wait_seconds)
-                    await fn(*args, **kwargs)
+                    return await fn(*args, **kwargs)
                 except asyncio.CancelledError:
                     # Ignore cancellation, as this is expected for debouncing
-                    pass
+                    return None
             # Schedule the new call and await it
             task = asyncio.create_task(call_it())
-            await task
+            try:
+                res = await task
+                return res
+            except asyncio.CancelledError:
+                # If the outer await is cancelled, propagate the cancellation
+                raise
         return debounced
     return decorator
 
@@ -50,7 +57,6 @@ class CacheManager:
 
     @staticmethod
     async def _safe_write_json(file_path: str, data: Any):
-        print("Saving cache to", file_path)
         try:
             await safe_write_json(file_path, data)
         except Exception as e:
@@ -67,12 +73,12 @@ class CacheManager:
 
     async def update_file_hash(self, file_path: str, file_hash: str):
         self.file_hashes[file_path] = file_hash
-        print("AWAIT", file_path)
         await self._debounced_save_cache()
 
     async def delete_file_hash(self, file_path: str):
-        del self.file_hashes[file_path]
-        await self._debounced_save_cache()
+        if file_path in self.file_hashes:
+            del self.file_hashes[file_path]
+            await self._debounced_save_cache()
 
     def get_all_file_hashes(self) -> dict[str, str]:
         return self.file_hashes
@@ -80,3 +86,23 @@ class CacheManager:
     @async_debounce(1.5)
     async def _debounced_save_cache(self):
         await self._perform_save()
+
+
+
+if __name__ == "__main__":
+
+    @async_debounce(1.5)
+    async def test_debounce(num:int):
+        await asyncio.sleep(num)
+        print("Hello", num)
+
+    async def main():
+        # Only the last call should actually execute after debounce period.
+        # If both are awaited in parallel, the first will be cancelled.
+        t1 = asyncio.create_task(test_debounce(1))
+        await asyncio.sleep(0.1)  # Simulate rapid succession
+        t2 = asyncio.create_task(test_debounce(5))
+        # Only the last call should print after debounce period
+        await asyncio.gather(t1, t2, return_exceptions=True)
+
+    asyncio.run(main())

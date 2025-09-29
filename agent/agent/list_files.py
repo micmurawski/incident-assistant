@@ -1,13 +1,13 @@
-from fnmatch import fnmatch
-from dataclasses import dataclass, field
-import subprocess
-from constants import DIRS_TO_IGNORE
-from pathlib import Path
-import os
 import asyncio
-from typing import Any, Coroutine, Optional
+import os
+import subprocess
 import sys
+from dataclasses import dataclass, field
+from fnmatch import fnmatch
+from pathlib import Path
+from typing import Any, Coroutine, Optional
 
+from .constants import DIRS_TO_IGNORE
 
 CRITICAL_IGNORE_PATTERNS = set(
     ["node_modules", ".git", "__pycache__", "venv", "env"]
@@ -378,10 +378,8 @@ def are_same_path(path1: str, path2: str) -> bool:
 
 async def handle_special_dirs(dir_path: str):
     abs_path = os.path.abspath(dir_path)
-    if are_same_path(abs_path, os.path.abspath(os.sep)):
-        return [abs_path, False]
-    home = os.path.expanduser("~")
-    if are_same_path(abs_path, home):
+    special_dirs = [os.path.abspath(os.sep), os.path.expanduser("~")]
+    if any(are_same_path(abs_path, d) for d in special_dirs):
         return [abs_path, False]
     return
 

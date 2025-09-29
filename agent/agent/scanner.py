@@ -1,19 +1,22 @@
-from constants import BATCH_SEGMENT_THRESHOLD, MAX_LIST_FILES_LIMIT_CODE_INDEX, EXTENSIONS, DIRS_TO_IGNORE, PARSING_CONCURRENCY, BATCH_PROCESSING_CONCURRENCY, MAX_FILE_SIZE, MAX_PENDING_BATCHES, MAX_BATCH_RETRIES, QDRANT_CODE_BLOCK_NAMESPACE, INITIAL_RETRY_DELAY_MS
-from dataclasses import dataclass
-from typing import Dict, Any, Coroutine, Callable
-from telemetry_service import TelemetryService
-import os
-from list_files import list_files, Ignore
-from pathlib import Path
-from file_processor import CodeBlock
-from cache_manager import CacheManager
-from file_processor import CodeParser
 import asyncio
-import logging
-from uuid import uuid5
 import json
-from typing import Optional
+import logging
+import os
 import random
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Coroutine, Dict, Optional
+from uuid import uuid5
+
+from .cache_manager import CacheManager
+from .constants import (BATCH_PROCESSING_CONCURRENCY, BATCH_SEGMENT_THRESHOLD,
+                        DIRS_TO_IGNORE, EXTENSIONS, INITIAL_RETRY_DELAY_MS,
+                        MAX_BATCH_RETRIES, MAX_FILE_SIZE,
+                        MAX_LIST_FILES_LIMIT_CODE_INDEX, MAX_PENDING_BATCHES,
+                        PARSING_CONCURRENCY, QDRANT_CODE_BLOCK_NAMESPACE)
+from .file_processor import CodeBlock, CodeParser
+from .list_files import Ignore, list_files
+from .telemetry_service import TelemetryService
 
 
 def generate_relative_file_path(file_path: str, workspace: str) -> str:
@@ -59,21 +62,17 @@ class DirectoryScanResult:
 
 def is_path_in_ignored_dir(path: str, ignore_config: Ignore) -> bool:
     normalized_path = os.path.normpath(path)
-    path_parts = normalized_path.split(os.sep)
-    for part in path_parts:
-        if not part:
-            continue
-        if ".*" in DIRS_TO_IGNORE and part.startswith(".") and part != ".":
+    path_parts = [part for part in normalized_path.split(os.sep) if part]
+
+    # Check for dot-directories if ".*" is in DIRS_TO_IGNORE
+    if ".*" in DIRS_TO_IGNORE:
+        if any(part.startswith(".") and part != "." for part in path_parts):
             return True
 
-        if part in DIRS_TO_IGNORE:
-            return True
+    # Check for any ignored directory in the path parts
+    if any(part in DIRS_TO_IGNORE for part in path_parts):
+        return True
 
-    for dir in DIRS_TO_IGNORE:
-        if dir == ".*":
-            continue
-        if f"{os.sep}{dir}{os.sep}" in normalized_path:
-            return True
     return False
 
 
@@ -102,14 +101,14 @@ class DirectoryScanner:
     def __init__(
         self,
         embedder: Embedder,
-        qdrant_client: VectorStoreClient,
+        vector_store_client: VectorStoreClient,
         code_parser: CodeParser,
         cache_manager: CacheManager,
         ignore_config: Ignore,
         batch_segment_threshold: Optional[int] = None
     ):
         self.embedder = embedder
-        self.qdrant_client = qdrant_client
+        self.vector_store_client = vector_store_client
         self.code_parser = code_parser
         self.cache_manager = cache_manager or CacheManager()
         self.batch_segment_threshold = batch_segment_threshold or BATCH_SEGMENT_THRESHOLD
@@ -122,7 +121,7 @@ class DirectoryScanner:
         on_error: Optional[Callable[[Exception], None]] = None,
         on_blocks_indexed: Optional[Callable[[int], None]] = None,
         on_file_parsed: Optional[Callable[[int], None]] = None
-    ) -> ScanResult:
+    ) -> Coroutine[Any, Any, ScanResult]:
         """
         Recursively scan a directory for code blocks in supported files.
 
@@ -135,35 +134,35 @@ class DirectoryScanner:
         Returns:
             ScanResult with stats and total block count
         """
+        print(f"Scanning directory: {directory}")
         directory_path = os.path.abspath(directory)
         scan_workspace = directory_path
+        # raise Exception(directory, directory_path)
 
         # Get all files recursively
         all_paths, _ = await list_files(directory_path, True, MAX_LIST_FILES_LIMIT_CODE_INDEX)
-
+        # raise Exception(all_paths)
         # Filter out directories
-        file_paths = [p for p in all_paths if os.path.isfile(p)]
-
+        file_paths = [p for p in all_paths if os.path.isfile(
+            os.path.join(directory_path, p))]
         # Initialize ignore controller
         # ignore_controller = RooIgnoreController(directory_path)
         # await ignore_controller.initialize()
 
         # Filter paths using .rooignore
-        # allowed_paths = ignore_controller.filter_paths(file_paths)
+        #  allowed_paths = ignore_controller.filter_paths(file_paths)
         allowed_paths = file_paths
 
         # Filter by supported extensions and ignored directories
         supported_paths = []
         for file_path in allowed_paths:
             ext = os.path.splitext(file_path)[1].lower()
-
             # Check if file is in an ignored directory
             if is_path_in_ignored_dir(file_path, self.ignore_config):
                 continue
 
             if ext in EXTENSIONS:
                 supported_paths.append(file_path)
-
         # Initialize tracking variables
         processed_files: set[str] = set()
         processed_count = 0
@@ -181,19 +180,21 @@ class DirectoryScanner:
         batch_semaphore = asyncio.Semaphore(BATCH_PROCESSING_CONCURRENCY)
 
         async def process_file(file_path: str) -> None:
+            print(f"Processing file: {file_path}")
             nonlocal processed_count, skipped_count, total_block_count
             nonlocal current_batch_blocks, current_batch_texts, current_batch_file_infos
 
             async with parse_semaphore:
                 try:
                     # Check file size
-                    file_stats = os.stat(file_path)
+                    file_stats = os.stat(
+                        os.path.join(directory_path, file_path))
                     if file_stats.st_size > MAX_FILE_SIZE:
                         skipped_count += 1
                         return
 
                     # Read file content
-                    with open(file_path, 'rb') as f:
+                    with open(os.path.join(directory_path, file_path), 'rb') as f:
                         content = f.read()
 
                     # Calculate current hash
@@ -213,6 +214,7 @@ class DirectoryScanner:
                     # File is new or changed - parse it
                     if self.code_parser:
                         blocks = await self.code_parser.parse_file(
+                            scan_workspace,
                             file_path,
                             {'content': content, 'file_hash': current_file_hash}
                         )
@@ -222,7 +224,7 @@ class DirectoryScanner:
                         processed_count += 1
 
                         # Process embeddings if configured
-                        if self.embedder and self.qdrant_client and blocks:
+                        if self.embedder and self.vector_store_client and blocks:
                             added_blocks_from_file = False
 
                             async with batch_lock:
@@ -305,9 +307,9 @@ class DirectoryScanner:
         for cached_file_path in old_hashes:
             if cached_file_path not in processed_files:
                 # File was deleted or is no longer supported
-                if self.qdrant_client:
+                if self.vector_store_client:
                     try:
-                        await self.qdrant_client.delete_points_by_file_path(cached_file_path)
+                        await self.vector_store_client.delete_points_by_file_path(cached_file_path)
                         await self.cache_manager.delete_hash(cached_file_path)
                     except Exception as error:
                         # Log with full stack trace
@@ -357,9 +359,9 @@ class DirectoryScanner:
                         if not info['is_new']
                     ]))
 
-                    if unique_file_paths and self.qdrant_client:
+                    if unique_file_paths and self.vector_store_client:
                         try:
-                            await self.qdrant_client.delete_points_by_multiple_file_paths(unique_file_paths)
+                            await self.vector_store_client.delete_points_by_multiple_file_paths(unique_file_paths)
                         except Exception as delete_error:
                             logging.error(
                                 f"Failed to delete points for batch: {delete_error}")
@@ -394,15 +396,14 @@ class DirectoryScanner:
                             })
 
                         # Upsert points
-                        if self.qdrant_client:
-                            await self.qdrant_client.upsert_points(points)
+                        if self.vector_store_client:
+                            await self.vector_store_client.upsert_points(points)
 
                         if on_blocks_indexed:
                             on_blocks_indexed(len(batch_blocks))
 
                         # Update hashes for successfully processed files
                         for file_info in batch_file_infos:
-                            print(file_info)
                             await self.cache_manager.update_file_hash(
                                 file_info['file_path'],
                                 file_info['file_hash']
@@ -436,22 +437,3 @@ class DirectoryScanner:
                         f"Failed to process batch after {MAX_BATCH_RETRIES} retries. "
                         f"Error: {error_message}"
                     ))
-
-
-async def main():
-    embedder = Embedder()
-    vector_store_client = VectorStoreClient()
-    code_parser = CodeParser()
-    cache_manager = CacheManager()
-    ignore_config = Ignore()
-    scanner = DirectoryScanner(
-        embedder,
-        vector_store_client,
-        code_parser,
-        cache_manager,
-        ignore_config,
-    )
-    await scanner.scan_directory("/Users/micmur/GITHUB/o8s/agent/codeparser")
-
-if __name__ == "__main__":
-    asyncio.run(main())

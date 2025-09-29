@@ -5,8 +5,8 @@ but is compatible with the parseFile function's capture processing
 """
 
 import re
-from typing import List, Optional
 from dataclasses import dataclass
+from typing import List, Optional
 
 
 @dataclass
