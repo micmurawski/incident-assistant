@@ -1,48 +1,29 @@
 import asyncio
 import hashlib
-import logging
 import os
-from abc import ABC, NotImplementedError
-from dataclasses import dataclass
-from functools import reduce
 from typing import Any, Coroutine, Optional
+from urllib.parse import urlparse
 
-from qdrant_client import QdrantClient
-from qdrant_client.models import CollectionInfo, Distance, VectorsConfig
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import (CollectionInfo, Distance, FieldCondition,
+                                  Filter, FilterSelector, MatchValue,
+                                  VectorsConfig)
 
-from .constants import CODEBASE_INDEX_DEFAULTS, QDRANT_DEFAULT_URL
+from agent.code_index.models import (IVectorStoreClient, PointStruct,
+                                     VectorStoreSearchResult)
+from agent.constants import CODEBASE_INDEX_DEFAULTS, QDRANT_DEFAULT_URL
+from agent.telemetry_service import get_telemetry_service
 
-
-@dataclass
-class Payload:
-    file_path: str
-    code_chunk: str
-    start_line: int
-    end_line: int
-    key: Any
-
-
-@dataclass
-class PointStruct:
-    id: str
-    vector: list[float]
-    payload: Payload
+logging = get_telemetry_service()
 
 
-@dataclass
-class VectorStoreSearchResult:
-    id: str
-    score: float
-    payload: dict[str, Any]
-
-
-class VectorStoreClient(ABC):
+class VectorStoreClient(IVectorStoreClient):
     def __init__(self, workspace_path: str,  vector_size: int = 384, api_key: Optional[str] = None, url: Optional[str] = QDRANT_DEFAULT_URL):
         host, port, use_https = self.parse_url(url)
-        self.client = QdrantClient(
+        self.client = AsyncQdrantClient(
             host=host,
             port=port,
-            use_https=use_https,
+            https=use_https,
             prefix=None,
             api_key=api_key,
             headers={
@@ -57,9 +38,10 @@ class VectorStoreClient(ABC):
         self.distance_metric = Distance.COSINE
 
     def parse_url(self, url: str) -> tuple[str, int, bool]:
-        if not url.startswith("http://") and not url.startswith("https://") and "://" not in url:
-            url = f"http://{url}"
-        host, port, use_https = url.split("://")
+        parsed = urlparse(url)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        use_https = parsed.scheme == "https"
         return host, int(port), use_https == "https"
 
     async def get_collection_info(self) -> Coroutine[Any, Any, CollectionInfo]:
@@ -68,7 +50,7 @@ class VectorStoreClient(ABC):
             return collection_info
         except Exception as e:
             logging.warning(
-                f"[VectorStore] Warning during getCollectionInfo for {self.collectionName}. Collection may not exist or another error occurred: {e}")
+                f"[VectorStore] Warning during getCollectionInfo for {self.collection_name}. Collection may not exist or another error occurred: {e}")
             return None
 
     async def initialize(self) -> Coroutine[Any, Any, bool]:
@@ -80,12 +62,11 @@ class VectorStoreClient(ABC):
                     self.collection_name,
                     vectors_config=dict(
                         size=self.vector_size, distance=self.distance_metric),
-                    hnsw_config=dict(m=64, ef_construction=512, on_disk=True)
+                    hnsw_config=dict(m=64, ef_construct=512, on_disk=True)
                 )
                 created = True
             else:
-                vector_config: VectorsConfig = collection_info.get(
-                    "config", {}).get("params", {}).get("vectors")
+                vector_config: VectorsConfig = collection_info.config.params.vectors
                 existing_vector_size = vector_config.size
 
                 if existing_vector_size == self.vector_size:
@@ -147,10 +128,10 @@ class VectorStoreClient(ABC):
     async def _create_payload_indexes(self) -> Coroutine[Any, Any, None]:
         for i in range(0, 5):
             try:
-                await self.client.create_payload_index(self.collection_name, field_name=f"pathSegments.{i}", field_schema="keyword")
+                await self.client.create_payload_index(self.collection_name, field_name=f"path_segments.{i}", field_schema="keyword")
             except Exception as e:
                 logging.warning(
-                    f"[VectorStore] Warning during createPayloadIndex for {self.collection_name}. Field {f'pathSegments.{i}'} may already exist or another error occurred: {e}")
+                    f"[VectorStore] Warning during createPayloadIndex for {self.collection_name}. Field {f'path_segments.{i}'} may already exist or another error occurred: {e}")
 
     async def delete_points_by_file_path(self, file_path: str) -> Coroutine[Any, Any, None]:
         return await self.delete_points_by_multiple_file_paths([file_path])
@@ -174,11 +155,20 @@ class VectorStoreClient(ABC):
                 normalized_rel_path = os.path.normpath(rel_path)
                 segments = [
                     seg for seg in normalized_rel_path.split(os.sep) if seg]
+
                 must_conditions = [
-                    {"key": f"pathSegments.{idx}", "match": {"value": segment}} for idx, segment in enumerate(segments)
+                    FieldCondition(key=f"path_segments.{idx}", match=MatchValue(value=segment)) for idx, segment in enumerate(segments)
                 ]
-                filters.append({"must": must_conditions})
-            await self.client.delete(self.collection_name, filter={"must": filters})
+                filters.append(Filter(must=must_conditions))
+
+            if len(filters) == 1:
+                filter_obj = filters[0]
+            else:
+                filter_obj = Filter(should=filters)
+            # Check if filters would match any points before attempting delete
+            # count_result = await self.client.count(self.collection_name, count_filter=filter_obj, exact=True)#####
+            # print(count_result.json())
+            await self.client.delete(self.collection_name, FilterSelector(filter=filter_obj), wait=True)
         except Exception as e:
             logging.error(
                 f"[VectorStore] Failed to delete points by multiple file paths {len(file_paths)} files in {self.collection_name}, sample file paths: {file_paths[:5]}. {e}")
@@ -191,12 +181,12 @@ class VectorStoreClient(ABC):
                 payload = point.payload
                 file_path = payload.file_path
                 if file_path:
-                    segments = [seg for seg in os.path.split(file_path) if seg]
+                    segments = [seg for seg in file_path.split(os.sep) if seg]
                     path_segments = {str(i): segment for i,
                                      segment in enumerate(segments)}
-                    new_payload = dict(payload)
-                    new_payload["pathSegments"] = path_segments
-                    new_point = dict(point)
+                    new_payload = payload.to_dict()
+                    new_payload["path_segments"] = path_segments
+                    new_point = point.to_dict()
                     new_point["payload"] = new_payload
                     processed_points.append(new_point)
                 else:
@@ -243,7 +233,7 @@ class VectorStoreClient(ABC):
                         filter = {
                             "must": [
                                 {
-                                    "key": f"pathSegments.{idx}", "match": {"value": segment}
+                                    "key": f"path_segments.{idx}", "match": {"value": segment}
                                 } for idx, segment in enumerate(segments)
                             ]
                         }
@@ -257,7 +247,7 @@ class VectorStoreClient(ABC):
                     "exact": False
                 },
                 "with_payload": {
-                    "include": ["file_path", "code_chunk", "start_line", "end_line", "pathSegments"]
+                    "include": ["file_path", "code_chunk", "start_line", "end_line", "path_segments"]
                 }
             }
             res = await self.client.search(self.collection_name, search_req)

@@ -1,10 +1,10 @@
 import asyncio
 import functools
+import json
 import os
-from re import A
-from typing import Any, Dict
+from typing import Any
 
-from .safe_writer import safe_write_json
+from agent.code_index.safe_writer import safe_write_json
 
 HOME_DIR = os.path.expanduser("~")
 
@@ -20,6 +20,7 @@ def async_debounce(wait_seconds):
     Useful for batching or rate-limiting expensive operations (e.g., saving to disk)
     that may be triggered frequently in a short period.
     """
+
     def decorator(fn):
         task = None
 
@@ -37,6 +38,7 @@ def async_debounce(wait_seconds):
                 except asyncio.CancelledError:
                     # Ignore cancellation, as this is expected for debouncing
                     return None
+
             # Schedule the new call and await it
             task = asyncio.create_task(call_it())
             try:
@@ -45,15 +47,46 @@ def async_debounce(wait_seconds):
             except asyncio.CancelledError:
                 # If the outer await is cancelled, propagate the cancellation
                 raise
+
         return debounced
+
     return decorator
 
 
 class CacheManager:
+    _instances: dict[str, "CacheManager"] = {}
+
+    @classmethod
+    def get_instance(cls, cache_dir: str = ".index_cache.json"):
+        if cache_dir not in cls._instances:
+            cls._instances[cache_dir] = CacheManager(cache_dir)
+        return cls._instances[cache_dir]
 
     def __init__(self, cache_dir: str = ".index_cache.json"):
+        self.lock = asyncio.Lock()
         self.cache_path = os.path.join(HOME_DIR, cache_dir)
+        print(f"Cache path: {self.cache_path}")
+        base_path = os.path.dirname(self.cache_path)
+        if not os.path.exists(base_path):
+            os.makedirs(base_path)
         self.file_hashes: dict[str, str] = {}
+        self._load_cache_from_disk()
+
+    def _load_cache_from_disk(self):
+        """Load the cache from disk into self.file_hashes."""
+        if os.path.exists(self.cache_path):
+            try:
+                with open(self.cache_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        self.file_hashes = data
+                    else:
+                        self.file_hashes = {}
+            except Exception as e:
+                print(f"Error loading cache from {self.cache_path}: {e}")
+                self.file_hashes = {}
+        else:
+            self.file_hashes = {}
 
     @staticmethod
     async def _safe_write_json(file_path: str, data: Any):
@@ -67,12 +100,14 @@ class CacheManager:
 
     async def _clear_cache(self):
         await self._safe_write_json(self.cache_path, {})
+        self.file_hashes = {}
 
     def get_file_hash(self, file_path: str) -> str:
         return self.file_hashes.get(file_path)
 
     async def update_file_hash(self, file_path: str, file_hash: str):
-        self.file_hashes[file_path] = file_hash
+        async with self.lock:
+            self.file_hashes[file_path] = file_hash
         await self._debounced_save_cache()
 
     async def delete_file_hash(self, file_path: str):
@@ -81,18 +116,17 @@ class CacheManager:
             await self._debounced_save_cache()
 
     def get_all_file_hashes(self) -> dict[str, str]:
-        return self.file_hashes
+        return self.file_hashes.copy()
 
     @async_debounce(1.5)
     async def _debounced_save_cache(self):
         await self._perform_save()
 
 
-
 if __name__ == "__main__":
 
     @async_debounce(1.5)
-    async def test_debounce(num:int):
+    async def test_debounce(num: int):
         await asyncio.sleep(num)
         print("Hello", num)
 

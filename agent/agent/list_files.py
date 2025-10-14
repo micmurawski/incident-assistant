@@ -7,7 +7,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Coroutine, Optional
 
-from .constants import DIRS_TO_IGNORE
+from agent.constants import DIRS_TO_IGNORE
 
 CRITICAL_IGNORE_PATTERNS = set(
     ["node_modules", ".git", "__pycache__", "venv", "env"]
@@ -308,7 +308,7 @@ async def scan_dir(current_path: str, context: ScanContext, dir_count: int, effe
                     if limit_reached:
                         return True
 
-    except Exception as e:
+    except Exception:
         return False
 
 

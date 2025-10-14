@@ -2,21 +2,23 @@ import asyncio
 import json
 import logging
 import os
-import random
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Coroutine, Dict, Optional
 from uuid import uuid5
 
-from .cache_manager import CacheManager
-from .constants import (BATCH_PROCESSING_CONCURRENCY, BATCH_SEGMENT_THRESHOLD,
-                        DIRS_TO_IGNORE, EXTENSIONS, INITIAL_RETRY_DELAY_MS,
-                        MAX_BATCH_RETRIES, MAX_FILE_SIZE,
-                        MAX_LIST_FILES_LIMIT_CODE_INDEX, MAX_PENDING_BATCHES,
-                        PARSING_CONCURRENCY, QDRANT_CODE_BLOCK_NAMESPACE)
-from .file_processor import CodeBlock, CodeParser
-from .list_files import Ignore, list_files
-from .telemetry_service import TelemetryService
+from agent.code_index.cache_manager import CacheManager
+from agent.code_index.file_processor import CodeBlock, CodeParser
+from agent.code_index.list_files import Ignore, list_files
+from agent.code_index.models import (EmbedderResponse, IEmbedder, Payload,
+                                     PointStruct)
+from agent.code_index.vector_store import VectorStoreClient
+from agent.constants import (BATCH_PROCESSING_CONCURRENCY,
+                             BATCH_SEGMENT_THRESHOLD, DIRS_TO_IGNORE,
+                             EXTENSIONS, INITIAL_RETRY_DELAY_MS,
+                             MAX_BATCH_RETRIES, MAX_FILE_SIZE,
+                             MAX_LIST_FILES_LIMIT_CODE_INDEX,
+                             PARSING_CONCURRENCY, QDRANT_CODE_BLOCK_NAMESPACE)
+from agent.telemetry_service import TelemetryService
 
 
 def generate_relative_file_path(file_path: str, workspace: str) -> str:
@@ -29,29 +31,6 @@ def generate_normalized_absolute_path(file_path: str, workspace: str) -> str:
     if os.path.isabs(file_path):
         return os.path.normpath(file_path)
     return os.path.normpath(os.path.join(workspace, file_path))
-
-
-class Embedder:
-    async def create_embeddings(self, texts: list[str]) -> dict[str, list[list[float]]]:
-        return {'embeddings': [[random.random() for _ in range(384)] for _ in texts]}
-
-
-@dataclass
-class PointStruct:
-    id: str
-    vector: list[float]
-    payload: dict[str, Any]
-
-
-class VectorStoreClient:
-    async def delete_points_by_file_path(self, file_path: str) -> None:
-        pass
-
-    async def delete_points_by_multiple_file_paths(self, file_paths: list[str]) -> None:
-        pass
-
-    async def upsert_points(self, points: list[PointStruct]) -> None:
-        pass
 
 
 @dataclass
@@ -100,7 +79,7 @@ class DirectoryScanner:
 
     def __init__(
         self,
-        embedder: Embedder,
+        embedder: IEmbedder,
         vector_store_client: VectorStoreClient,
         code_parser: CodeParser,
         cache_manager: CacheManager,
@@ -110,7 +89,7 @@ class DirectoryScanner:
         self.embedder = embedder
         self.vector_store_client = vector_store_client
         self.code_parser = code_parser
-        self.cache_manager = cache_manager or CacheManager()
+        self.cache_manager: CacheManager = cache_manager
         self.batch_segment_threshold = batch_segment_threshold or BATCH_SEGMENT_THRESHOLD
         self.telemetry = TelemetryService()
         self.ignore_config = ignore_config
@@ -134,7 +113,6 @@ class DirectoryScanner:
         Returns:
             ScanResult with stats and total block count
         """
-        print(f"Scanning directory: {directory}")
         directory_path = os.path.abspath(directory)
         scan_workspace = directory_path
         # raise Exception(directory, directory_path)
@@ -177,10 +155,10 @@ class DirectoryScanner:
 
         # Semaphores for concurrency control
         parse_semaphore = asyncio.Semaphore(PARSING_CONCURRENCY)
+        # update 
         batch_semaphore = asyncio.Semaphore(BATCH_PROCESSING_CONCURRENCY)
 
         async def process_file(file_path: str) -> None:
-            print(f"Processing file: {file_path}")
             nonlocal processed_count, skipped_count, total_block_count
             nonlocal current_batch_blocks, current_batch_texts, current_batch_file_infos
 
@@ -205,12 +183,11 @@ class DirectoryScanner:
                     cached_file_hash = self.cache_manager.get_file_hash(
                         file_path)
                     is_new_file = not cached_file_hash
-
                     if cached_file_hash == current_file_hash:
                         # File is unchanged
                         skipped_count += 1
                         return
-
+                    
                     # File is new or changed - parse it
                     if self.code_parser:
                         blocks = await self.code_parser.parse_file(
@@ -228,12 +205,13 @@ class DirectoryScanner:
                             added_blocks_from_file = False
 
                             async with batch_lock:
+                                block: CodeBlock
                                 for block in blocks:
                                     trimmed_content = block.content.strip()
                                     if trimmed_content:
                                         current_batch_blocks.append(block)
                                         current_batch_texts.append(
-                                            trimmed_content)
+                                            trimmed_content.decode('utf-8'))
                                         added_blocks_from_file = True
 
                                         # Check if batch threshold is met
@@ -310,7 +288,7 @@ class DirectoryScanner:
                 if self.vector_store_client:
                     try:
                         await self.vector_store_client.delete_points_by_file_path(cached_file_path)
-                        await self.cache_manager.delete_hash(cached_file_path)
+                        await self.cache_manager.delete_file_hash(cached_file_path)
                     except Exception as error:
                         # Log with full stack trace
                         logging.exception(
@@ -372,8 +350,8 @@ class DirectoryScanner:
 
                     # Create embeddings
                     if self.embedder:
-                        embedding_result = await self.embedder.create_embeddings(batch_texts)
-                        embeddings = embedding_result['embeddings']
+                        embedding_result: EmbedderResponse = await self.embedder.create_embeddings(batch_texts)
+                        embeddings = embedding_result.embeddings
 
                         # Prepare points for vector store
                         points = []
@@ -382,18 +360,21 @@ class DirectoryScanner:
                                 block.file_path, scan_workspace)
                             point_id = str(
                                 uuid5(QDRANT_CODE_BLOCK_NAMESPACE, block.segment_hash))
-
-                            points.append({
-                                'id': point_id,
-                                'vector': embeddings[i],
-                                'payload': {
-                                    'filePath': generate_relative_file_path(normalized_path, scan_workspace),
-                                    'codeChunk': block.content,
-                                    'startLine': block.start_line,
-                                    'endLine': block.end_line,
-                                    'segmentHash': block.segment_hash
-                                }
-                            })
+                            #print(block.content.decode('utf-8'), block.type)
+                            points.append(
+                                PointStruct(
+                                    id=point_id,
+                                    vector=embeddings[i],
+                                    payload=Payload(
+                                        file_path=generate_relative_file_path(normalized_path, scan_workspace),
+                                        code_chunk=block.content.decode('utf-8'),
+                                        start_line=block.start_line,
+                                        end_line=block.end_line,
+                                        segment_hash=block.segment_hash,
+                                        type=block.type
+                                    )
+                                )
+                            )
 
                         # Upsert points
                         if self.vector_store_client:

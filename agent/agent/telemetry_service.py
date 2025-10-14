@@ -1,33 +1,34 @@
+import logging
+
+
 class TelemetryService:
     def __init__(self):
         self.telemetry_data = {}
 
     def echo(self, message: str):
-        print(message)
+        logging.info(message)
 
     def error(self, message: str):
-        print(f"Error: {message}")
+        logging.error(message)
 
     def warning(self, message: str):
-        print(f"Warning: {message}")
+        logging.warning(message)
 
     def info(self, message: str):
-        print(f"Info: {message}")
+        logging.info(message)
 
     def debug(self, message: str):
-        print(f"Debug: {message}")
-
-    def trace(self, message: str):
-        print(f"Trace: {message}")
+        logging.debug(message)
 
     def fatal(self, message: str):
-        print(f"Fatal: {message}")
+        logging.fatal(message)
 
     def critical(self, message: str):
-        print(f"Critical: {message}")
+        logging.critical(message)
 
     def success(self, message: str):
-        print(f"Success: {message}")
+        logging.info(message)
 
-    def failure(self, message: str):
-        print(f"Failure: {message}")
+
+def get_telemetry_service() -> TelemetryService:
+    return TelemetryService()

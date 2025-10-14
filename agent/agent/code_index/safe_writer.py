@@ -6,7 +6,6 @@ import os
 import random
 import string
 import time
-from pathlib import Path
 from typing import Any, Optional
 
 import aiofiles
@@ -163,7 +162,7 @@ async def safe_write_json(file_path: str, data: Any) -> None:
         raise dir_error
         
     # Acquire the lock before any file operations
-    async with FileLock(absolute_file_path) as lock:
+    async with FileLock(absolute_file_path):
         # Variables to hold the actual paths of temp files if they are created
         actual_temp_new_file_path: Optional[str] = None
         actual_temp_backup_file_path: Optional[str] = None

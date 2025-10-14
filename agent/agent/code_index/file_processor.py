@@ -3,16 +3,16 @@ import os
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Coroutine, Dict, List, Literal, Optional
+from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 from tree_sitter import Node, Parser, QueryCursor, Tree
 
-from .code_analysis.import_resolvers.base import DepInfo
-from .code_analysis.loader import TreeSitterLoader
-from .code_analysis.markdown_parser import parse_markdown
-from .constants import (EXTENSIONS, FALLBACK_EXTENSION, MAX_BLOCK_CHARS,
-                        MAX_CHARS_TOLERANCE_FACTOR, MIN_BLOCK_CHARS,
-                        MIN_CHUNK_REMAINDER_CHARS)
+from agent.code_index.code_analysis.import_resolvers.base import DepInfo
+from agent.code_index.code_analysis.loader import TreeSitterLoader
+from agent.code_index.code_analysis.markdown_parser import parse_markdown
+from agent.constants import (EXTENSIONS, FALLBACK_EXTENSION, MAX_BLOCK_CHARS,
+                             MAX_CHARS_TOLERANCE_FACTOR, MIN_BLOCK_CHARS,
+                             MIN_CHUNK_REMAINDER_CHARS)
 
 Options = Optional[Dict[str, Any]]
 
@@ -52,6 +52,7 @@ class CodeBlock:
     segment_hash: str
     identifier: Optional[str] = None
     dep_infos: Optional[List[DepInfo]] = field(default_factory=list)
+    
 
     def to_file(self):
         path = os.path.join("store", f"{self.file_hash}-{self.segment_hash}")
@@ -64,29 +65,6 @@ class CodeBlock:
             f.write(f"DEP_INFOS: {self.dep_infos}\n")
 
             f.write(self.content.decode('utf-8'))
-
-
-@dataclass
-class PointStruct:
-    id: str
-    vector: list[float]
-    payload: dict[str, Any]
-
-
-@dataclass
-class FileProcessingResult:
-    path: str
-    status: Literal["success", "skipped", "error",
-                    "processed_for_batching", "local_error"]
-    error: Optional[Exception]
-    reason: Optional[str]
-    new_hash: Optional[str]
-    points_to_upsert: List[PointStruct]
-
-
-class IFileWatcher:
-    def process_file(self, file_path: str) -> FileProcessingResult:
-        raise NotImplementedError
 
 
 class CodeParser:
@@ -138,8 +116,11 @@ class CodeParser:
 
         # TODO: Add loading of parsers
         if ext not in self.loaded_parsers:
-            self.loaded_parsers[ext] = TreeSitterLoader.load_parser(ext)
-
+            parser = TreeSitterLoader.load_parser(ext)
+            if parser is None:
+                return self.parse_markdown(file_path, content, file_hash, seen_segment_hashes)
+            self.loaded_parsers[ext] = parser
+        
         language: dict[str, Any] = self.loaded_parsers[ext]
         cursor: QueryCursor = language["cursor"]
         parser: Parser = language["parser"]
@@ -274,7 +255,7 @@ class CodeParser:
                             segment_hash=segment_hash
                         )
                     )
-                    #chunks[-1].to_file()
+                    # chunks[-1].to_file()
                 current_chunk_lines = []
                 current_chunk_length = 0
                 chunk_start_line_index = end_line_index + 1

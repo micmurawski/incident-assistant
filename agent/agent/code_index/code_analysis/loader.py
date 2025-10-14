@@ -1,4 +1,6 @@
+import logging
 import os
+from typing import Any
 
 from tree_sitter import Language, Parser, Query, QueryCursor
 
@@ -7,7 +9,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 class TreeSitterLoader:
     @staticmethod
-    def load_parser(ext: str):
+    def load_parser(ext: str) -> dict[str, Any] | None:
 
         match ext:
             case "py":
@@ -47,8 +49,13 @@ class TreeSitterLoader:
                 from .import_resolvers.go import \
                     GoImportResolver as import_resolver_class
                 from .queries.go import QUERY
+            case "toml":
+                from tree_sitter_toml import language
+                import_resolver_class = None
+                from .queries.toml import QUERY
             case _:
-                raise ValueError(f"Unsupported language: {ext}")
+                logging.error(f"Unsupported language: {ext}")
+                return None
         lang_ptr = Language(language())
         parser = Parser(lang_ptr)
         query = Query(lang_ptr, QUERY)

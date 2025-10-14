@@ -1,0 +1,334 @@
+import locale
+import os
+import re
+from dataclasses import dataclass, field
+from typing import Literal, Optional
+
+from agent.list_files import Ignore, is_ignored_by_gitignore, list_files
+
+
+@dataclass
+class FileOpsResult:
+    path: str
+    content: str | None = field(default=None)
+    diff: str | None = field(default=None)
+    status: Literal["success", "error"] = field(default="success")
+    error: Optional[Exception] = field(default=None)
+    reason: Optional[str] = field(default=None)
+
+    @property
+    def changed(self) -> bool:
+        return self.diff is not None
+
+
+class FileOpsManager:
+    def __init__(self, cwd: str):
+        if not os.path.exists(cwd):
+            raise Exception(f"The path {cwd} does not exist.")
+        if not os.path.isdir(cwd):
+            raise Exception(f"The path {cwd} is not a directory.")
+        self.cwd = cwd
+        self.ignore = Ignore()
+
+    async def read_file(
+        self,
+        path: str,
+        start_line: str | None = None,
+        end_line: str | None = None,
+        number_lines: bool = False,
+    ) -> FileOpsResult:
+        full_path = os.path.join(self.cwd, path)
+        path_exists = os.path.exists(full_path)
+        is_file = os.path.isfile(full_path)
+        if not path_exists:
+            raise Exception(f"The path: {path} does not exists.")
+        if not is_file:
+            raise Exception(f"The path {path} is not file.")
+
+        lines = open(full_path).read().split("\n")
+        start = max((start_line or 1) - 1, 0)
+        end = min((end_line or len(lines)) - 1, len(lines) - 1)
+        target_content = lines[start: end + 1]
+        if number_lines:
+            digits = len(str(start_line + len(target_content)))
+            mag = digits
+            for i in range(len(target_content)):
+                target_content[i] = f"{' '*digits}{i+start_line}: {target_content[i]}"
+                if i + start_line + 2 > (10**mag):
+                    mag += 1
+                    digits -= 1
+        return FileOpsResult(
+            path=path,
+            content="\n".join(target_content),
+        )
+
+    async def list_files_tool(
+        self,
+        path: str,
+        recursive: bool
+    ) -> FileOpsResult:
+
+        full_path = os.path.join(self.cwd, path)
+        if not os.path.exists(path):
+            raise Exception(f"The path {path} does not exist.")
+
+        files, did_hit_limit = list_files(
+            full_path,
+            recursive,
+            200
+        )
+        files = list(
+            filter(
+                lambda f: is_ignored_by_gitignore(full_path, f, self.ignore),
+                files
+            )
+        )
+
+        result = self._format_files_list(
+            full_path,
+            files,
+            did_hit_limit
+        )
+        return FileOpsResult(
+            path=path,
+            content=result,
+        )
+
+    @staticmethod
+    def _format_files_list(
+        absolute_path: str,
+        files: list[str],
+        did_hit_limit: bool
+    ) -> str:
+        _files = []
+        for file in files:
+            rel_path = os.path.relpath(absolute_path, file)
+
+            if file.endswith(os.sep):
+                rel_path += os.sep
+            _files.append(rel_path)
+
+        def _sort(a: str, b: str):
+            a_parts = a.split(os.sep)
+            b_parts = b.split(os.sep)
+            for i in range(min(len(a_parts), len(b_parts))):
+                if a_parts[i] != b_parts[i]:
+                    if i + 1 == len(a_parts) and i + 1 < len(b_parts):
+                        return -1
+                    if i + 1 == len(b_parts) and i + 1 < len(a_parts):
+                        return 1
+                    return locale.strxfrm(a_parts[i]).lower() if not a_parts[i].isdigit() else int(a_parts[i])
+            return len(a_parts) - len(b_parts)
+
+        res = "\n".join(sorted(_files, key=_sort))
+        if not res:
+            return "No files found."
+        if did_hit_limit:
+            res += "\n\n File list truncated. Use list_files on specific subdirectory"
+        return res
+
+    async def search_and_replace(
+        self,
+        path: str,
+        search: str,
+        replace: str,
+        ignore_case: bool,
+        use_regex: bool,
+        start_line: int | None = None,
+        end_line: int | None = None
+    ) -> FileOpsResult:
+
+        full_path = os.path.join(self.cwd, path)
+        path_exists = os.path.exists(full_path)
+        is_file = os.path.isfile(full_path)
+
+        if not path_exists:
+            raise Exception(f"The path: {path} does not exists.")
+
+        if not is_file:
+            raise Exception(f"The path {path} is not file.")
+
+        flags = "gi" if ignore_case else "g"
+        search_pattern = search if use_regex else escape_regex(search)
+
+        new_content: str
+        if start_line is not None or end_line is not None:
+            lines = open(full_path).readlines()
+            start = max((start_line or 1) - 1, 0)
+            end = min((end_line or len(lines)) - 1, len(lines) - 1)
+
+            before_lines = lines[0: start]
+            after_lines = lines[end+1:]
+
+            target_content = lines[start: end + 1]
+            modified_content = map(
+                lambda line: re.sub(
+                    search_pattern, replace, line, flags=flags),
+                target_content
+            )
+            new_content = "\n".join(
+                [*before_lines, *modified_content, *after_lines])
+        else:
+            new_content = re.sub(
+                search_pattern,
+                replace,
+                open(full_path).read(),
+                flags=flags
+            )
+        with open(full_path, "w") as file:
+            file.write(new_content)
+
+        return FileOpsResult(
+            path=path,
+            diff=_generate_diff(lines, new_content),
+        )
+
+    async def write_to_file(
+        self,
+        path: str,
+        new_content: str,
+        create_if_not_exists: bool = True,
+    ) -> FileOpsResult:
+        full_path = os.path.join(self.cwd, path)
+
+        if new_content.startswith("```"):
+            new_content = "\n".join(new_content.split("\n")[1:])
+
+        if new_content.endswith("```"):
+            new_content = "\n".join(new_content.split("\n")[:-1])
+
+        # if not "claude" in context.model:
+        #    new_content = unescape_html_entities(new_content)
+
+        if create_if_not_exists:
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+
+        with open(full_path, "w") as file:
+            file.write(new_content)
+
+        return FileOpsResult(
+            path=path,
+            diff=_generate_diff(open(full_path).read(), new_content),
+        )
+
+    @staticmethod
+    def _insert_content(content: list[str], insert_groups: list[dict]) -> list[str]:
+        sorted_insert_groups = sorted(insert_groups, key=lambda x: x["index"])
+        last_offset = 0
+        for insert_group in sorted_insert_groups:
+            idx = insert_group["index"] + last_offset
+            content = [
+                *content[:idx],
+                *insert_group["content"],
+                *content[idx:]
+            ]
+            last_offset += len(insert_group["content"])
+        return content
+
+    async def append_to_file(
+        self,
+        path: str,
+        content: str,
+    ) -> FileOpsResult:
+        full_path = os.path.join(self.cwd, path)
+        path_exists = os.path.exists(full_path)
+        is_file = os.path.isfile(full_path)
+        if not path_exists:
+            raise Exception(f"The path: {path} does not exist.")
+        if not is_file:
+            raise Exception(f"The path {path} is not file.")
+
+        lines = open(full_path).read().split("\n")
+        res = "\n".join(
+            self._insert_content(
+                lines,
+                [
+                    {
+                        "index": len(lines) - 1,
+                        "content": content.split("\n")
+                    }
+                ]
+            )
+        )
+        with open(full_path, "w") as file:
+            file.write(res)
+
+        return FileOpsResult(
+            path=path,
+            diff=_generate_diff(lines, res),
+        )
+
+
+def escape_regex(reg: str) -> str:
+    return reg.replace("[.*+?^${}()|[\]\\]", "\\$&")
+
+
+def _generate_diff(old_content: str, new_content: str) -> str:
+    original_lines = old_content.split('\n')
+    modified_lines = new_content.split('\n')
+    diff: list[str] = []
+
+    i = 0
+    j = 0
+
+    while i < len(original_lines) or j < len(modified_lines):
+        if i >= len(original_lines):
+            diff.append(f"+ {modified_lines[j]}")
+            j += 1
+        elif j >= len(modified_lines):
+            diff.append(f"- {original_lines[i]}")
+            i += 1
+        elif original_lines[i] == modified_lines[j]:
+            diff.append(f"  {original_lines[i]}")
+            i += 1
+            j += 1
+        else:
+            diff.append(f"- {original_lines[i]}")
+            diff.append(f"+ {modified_lines[j]}")
+            i += 1
+            j += 1
+    return '\n'.join(diff)
+
+
+def _generate_diff(old_content: str, new_content: str, use_ansi_color: bool = False) -> str:
+    # ANSI color codes
+    RED = '\033[91m-' if use_ansi_color else '-'
+    GREEN = '\033[92m+' if use_ansi_color else '+'
+    RESET = '\033[0m' if use_ansi_color else ''
+
+    original_lines = old_content.split('\n')
+    modified_lines = new_content.split('\n')
+    diff: list[str] = []
+
+    i = 0
+    j = 0
+
+    while i < len(original_lines) or j < len(modified_lines):
+        if i >= len(original_lines):
+            diff.append(f"{GREEN} {modified_lines[j]}{RESET}")
+            j += 1
+        elif j >= len(modified_lines):
+            diff.append(f"{RED} {original_lines[i]}{RESET}")
+            i += 1
+        elif original_lines[i] == modified_lines[j]:
+            diff.append(f"  {original_lines[i]}")
+            i += 1
+            j += 1
+        else:
+            diff.append(f"{RED} {original_lines[i]}{RESET}")
+            diff.append(f"{GREEN} {modified_lines[j]}{RESET}")
+            i += 1
+            j += 1
+    return '\n'.join(diff)
+
+
+old = [
+    "import numpy as np"
+]
+
+new = [
+    "import numpy",
+    "import pandas as pd"
+]
+
+print(_generate_diff('\n'.join(old), '\n'.join(new), use_ansi_color=False))
