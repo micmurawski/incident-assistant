@@ -204,27 +204,27 @@ async def truncate_conversation_if_needed(
                 error = result["error"]
                 cost = result.get("cost", 0)
             else:
-                return {**result, "prev_context_tokens": prev_context_tokens}
+                return TruncateResponse(**result, prev_context_tokens=prev_context_tokens)
 
     # Fall back to sliding window truncation if needed
     if prev_context_tokens > allowed_tokens:
         truncated_messages = truncate_conversation(messages, 0.5)
-        return {
-            "messages": truncated_messages,
-            "prev_context_tokens": prev_context_tokens,
-            "summary": "",
-            "cost": cost,
-            "error": error,
-        }
+        return TruncateResponse(
+            messages=truncated_messages,
+            prev_context_tokens=prev_context_tokens,
+            summary="",
+            cost=cost,
+            error=error,
+        )
 
     # No truncation or condensation needed
-    return {
-        "messages": messages,
-        "summary": "",
-        "cost": cost,
-        "prev_context_tokens": prev_context_tokens,
-        "error": error,
-    }
+    return TruncateResponse(
+        messages=messages,
+        summary="",
+        cost=cost,
+        prev_context_tokens=prev_context_tokens,
+        error=error,
+    )
 
 
 def get_messages_since_last_summary(messages: List[AnthropicMessage]) -> List[AnthropicMessage]:
