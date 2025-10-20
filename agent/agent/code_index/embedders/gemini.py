@@ -51,12 +51,18 @@ class GeminiEmbedder(IEmbedder):
                     model=self.model,
                     contents=texts,
                 )
-                return EmbedderResponse(embeddings=response.text, usage=Usage(prompt_tokens=response.usage_metadata.prompt_token_count, total_tokens=response.usage_metadata.total_token_count))
+                return EmbedderResponse(
+                    embeddings=response.text,
+                    usage=Usage(
+                        prompt_tokens=response.usage_metadata.prompt_token_count,
+                        total_tokens=response.usage_metadata.total_token_count,
+                    ),
+                )
             except Exception as e:
                 logging.error(f"Error creating embeddings: {e}")
                 has_more_attempts = attempt < MAX_BATCH_RETRIES - 1
                 if has_more_attempts:
-                    base_delay = INITIAL_RETRY_DELAY_MS * (2 ** attempt)
+                    base_delay = INITIAL_RETRY_DELAY_MS * (2**attempt)
                     global_delay = await self.get_global_rate_limit_delay()
                     delay = max(base_delay, global_delay)
                     logging.warning(

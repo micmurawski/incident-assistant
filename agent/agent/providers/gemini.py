@@ -1,20 +1,14 @@
 from typing import Any, AsyncIterator, Dict, List, Optional
 
-from agent.providers.base import (
-    ApiHandler,
-    ReasoningChunk,
-    StreamChunk,
-    TextChunk,
-    UsageChunk,
-    GroundingChunk,
-    AnthropicMessage,
-)
+from google import genai
+from google.genai import types
+
+from agent.providers.base import AnthropicMessage, ApiHandler
+from agent.providers.formatters.gemini_format import convert_to_gemini_messages
 from agent.providers.models import GEMINI_DEFAULT_MODEL_ID, GEMINI_MODELS
 from agent.providers.params import get_model_params
-from google import genai
-from agent.providers.formatters.gemini_format import convert_to_gemini_messages
-from google.genai import types
 from agent.providers.settings import ModelInfo
+from agent.types import GroundingChunk, ReasoningChunk, StreamChunk, TextChunk, UsageChunk
 
 
 class GeminiHandler(ApiHandler):
@@ -397,6 +391,7 @@ class GeminiHandler(ApiHandler):
 
 async def main():
     import os
+
     handler = GeminiHandler(
         api_key=os.getenv("GEMINI_API_KEY"),
         model_id="gemini-2.5-flash-preview-05-20:thinking",

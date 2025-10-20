@@ -13,12 +13,12 @@ class GoImportResolver:
 
     def _find_go_path(self) -> Optional[str]:
         """Find GOPATH from environment or default location"""
-        gopath = os.environ.get('GOPATH')
+        gopath = os.environ.get("GOPATH")
         if gopath and os.path.exists(gopath):
             return gopath
 
         # Default GOPATH
-        default_gopath = os.path.expanduser('~/go')
+        default_gopath = os.path.expanduser("~/go")
         if os.path.exists(default_gopath):
             return default_gopath
         return None
@@ -26,8 +26,7 @@ class GoImportResolver:
     def _find_go_mod_cache(self) -> Optional[str]:
         """Find Go module cache directory"""
         try:
-            result = subprocess.run(['go', 'env', 'GOMODCACHE'],
-                                    capture_output=True, text=True, timeout=10)
+            result = subprocess.run(["go", "env", "GOMODCACHE"], capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 cache_path = result.stdout.strip()
                 if os.path.exists(cache_path):
@@ -36,7 +35,7 @@ class GoImportResolver:
             pass
 
         # Fallback to default location
-        default_cache = os.path.expanduser('~/go/pkg/mod')
+        default_cache = os.path.expanduser("~/go/pkg/mod")
         if os.path.exists(default_cache):
             return default_cache
         return None
@@ -55,7 +54,7 @@ class GoImportResolver:
         """Find go.mod file by walking up the directory tree"""
         current_dir = os.path.abspath(start_dir)
         while current_dir != os.path.dirname(current_dir):
-            go_mod_path = os.path.join(current_dir, 'go.mod')
+            go_mod_path = os.path.join(current_dir, "go.mod")
             if os.path.exists(go_mod_path):
                 return go_mod_path
             current_dir = os.path.dirname(current_dir)
@@ -65,21 +64,20 @@ class GoImportResolver:
         """Parse go.mod file to get module name and dependencies"""
         module_info = {}
         try:
-            with open(go_mod_path, 'r', encoding='utf-8') as f:
+            with open(go_mod_path, "r", encoding="utf-8") as f:
                 content = f.read()
 
             # Extract module name
-            module_match = re.search(r'^module\s+(.+)$', content, re.MULTILINE)
+            module_match = re.search(r"^module\s+(.+)$", content, re.MULTILINE)
             if module_match:
-                module_info['module'] = module_match.group(1).strip()
+                module_info["module"] = module_match.group(1).strip()
 
             # Extract dependencies
-            require_block = re.search(
-                r'require\s*\((.*?)\)', content, re.DOTALL)
+            require_block = re.search(r"require\s*\((.*?)\)", content, re.DOTALL)
             if require_block:
-                for line in require_block.group(1).split('\n'):
+                for line in require_block.group(1).split("\n"):
                     line = line.strip()
-                    if line and not line.startswith('//'):
+                    if line and not line.startswith("//"):
                         parts = line.split()
                         if len(parts) >= 2:
                             module_info[parts[0]] = parts[1]
@@ -109,35 +107,33 @@ class GoImportResolver:
             go_mod_path = self.find_go_mod_file(project_root)
             if go_mod_path:
                 module_info = self.parse_go_mod(go_mod_path)
-                module_name = module_info.get('module', '')
+                module_name = module_info.get("module", "")
 
                 # Check if it's an internal import
                 if import_path.startswith(module_name):
-                    relative_path = import_path[len(module_name):].lstrip('/')
-                    internal_path = os.path.join(
-                        os.path.dirname(go_mod_path), relative_path)
+                    relative_path = import_path[len(module_name) :].lstrip("/")
+                    internal_path = os.path.join(os.path.dirname(go_mod_path), relative_path)
 
                     # Look for Go files in the package directory
                     if os.path.isdir(internal_path):
                         for file in os.listdir(internal_path):
-                            if file.endswith('.go') and not file.endswith('_test.go'):
+                            if file.endswith(".go") and not file.endswith("_test.go"):
                                 return os.path.join(internal_path, file)
 
         # Try GOPATH/src
         if self.go_path:
-            gopath_src = os.path.join(self.go_path, 'src', import_path)
+            gopath_src = os.path.join(self.go_path, "src", import_path)
             if os.path.isdir(gopath_src):
                 for file in os.listdir(gopath_src):
-                    if file.endswith('.go') and not file.endswith('_test.go'):
+                    if file.endswith(".go") and not file.endswith("_test.go"):
                         return os.path.join(gopath_src, file)
 
         # Try Go module cache
         if self.go_mod_cache:
             # Convert import path to module cache format
             cache_patterns = [
-                os.path.join(self.go_mod_cache, import_path + '@*'),
-                os.path.join(self.go_mod_cache,
-                             import_path.replace('/', '!') + '@*')
+                os.path.join(self.go_mod_cache, import_path + "@*"),
+                os.path.join(self.go_mod_cache, import_path.replace("/", "!") + "@*"),
             ]
 
             for pattern in cache_patterns:
@@ -147,7 +143,7 @@ class GoImportResolver:
                     latest_match = max(matches)
                     if os.path.isdir(latest_match):
                         for file in os.listdir(latest_match):
-                            if file.endswith('.go') and not file.endswith('_test.go'):
+                            if file.endswith(".go") and not file.endswith("_test.go"):
                                 return os.path.join(latest_match, file)
 
         return None
@@ -155,10 +151,32 @@ class GoImportResolver:
     def _is_stdlib_package(self, import_path: str) -> bool:
         """Check if the import is a standard library package"""
         stdlib_packages = {
-            'fmt', 'os', 'io', 'net', 'http', 'strings', 'strconv', 'time',
-            'encoding/json', 'database/sql', 'context', 'sync', 'log',
-            'errors', 'bufio', 'bytes', 'crypto', 'html', 'math', 'reflect',
-            'regexp', 'sort', 'path', 'net/http', 'net/url', 'encoding/xml'
+            "fmt",
+            "os",
+            "io",
+            "net",
+            "http",
+            "strings",
+            "strconv",
+            "time",
+            "encoding/json",
+            "database/sql",
+            "context",
+            "sync",
+            "log",
+            "errors",
+            "bufio",
+            "bytes",
+            "crypto",
+            "html",
+            "math",
+            "reflect",
+            "regexp",
+            "sort",
+            "path",
+            "net/http",
+            "net/url",
+            "encoding/xml",
         }
 
         # Check if it's a known stdlib package or starts with a stdlib prefix
@@ -166,11 +184,11 @@ class GoImportResolver:
             return True
 
         for stdlib_pkg in stdlib_packages:
-            if import_path.startswith(stdlib_pkg + '/'):
+            if import_path.startswith(stdlib_pkg + "/"):
                 return True
 
         # Heuristic: if it doesn't contain a dot, it's likely stdlib
-        return '.' not in import_path
+        return "." not in import_path
 
 
 def resolve_go_import(import_statement: str, project_root: Optional[str] = None) -> Optional[str]:
@@ -182,12 +200,7 @@ if __name__ == "__main__":
     # Test Go resolver
     print("=== Go Import Resolver ===")
     go_resolver = GoImportResolver()
-    go_imports = [
-        "fmt",
-        "github.com/gin-gonic/gin",
-        "encoding/json",
-        "net/http"
-    ]
+    go_imports = ["fmt", "github.com/gin-gonic/gin", "encoding/json", "net/http"]
 
     for imp in go_imports:
         result = go_resolver.resolve_import(imp, "./go-project")

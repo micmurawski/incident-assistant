@@ -1,7 +1,7 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional, TypedDict, Required
-from agent.providers.base import ApiHandler, AnthropicMessage
+from typing import Dict, List, Optional, Required, TypedDict
 
+from agent.providers.base import AnthropicMessage, ApiHandler
 
 TOKEN_BUFFER_PERCENTAGE = 0.1
 N_MESSAGES_TO_KEEP = 3

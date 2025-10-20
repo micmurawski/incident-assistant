@@ -1,8 +1,9 @@
 from typing import Any
 
-from agent.providers.base import ModelInfo
-from agent.providers.models import OLLAMA_DEFAULT_MODEL_INFO
 from httpx import AsyncClient, Client
+
+from agent.providers.models import OLLAMA_DEFAULT_MODEL_INFO
+from agent.providers.settings import ModelInfo
 
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 

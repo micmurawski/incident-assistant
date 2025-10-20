@@ -8,16 +8,21 @@ from uuid import uuid5
 
 from agent.code_index.cache_manager import CacheManager
 from agent.code_index.file_processor import CodeBlock, CodeParser
-from agent.code_index.list_files import Ignore, list_files
-from agent.code_index.models import (EmbedderResponse, IEmbedder, Payload,
-                                     PointStruct)
+from agent.code_index.models import EmbedderResponse, IEmbedder, Payload, PointStruct
 from agent.code_index.vector_store import VectorStoreClient
-from agent.constants import (BATCH_PROCESSING_CONCURRENCY,
-                             BATCH_SEGMENT_THRESHOLD, DIRS_TO_IGNORE,
-                             EXTENSIONS, INITIAL_RETRY_DELAY_MS,
-                             MAX_BATCH_RETRIES, MAX_FILE_SIZE,
-                             MAX_LIST_FILES_LIMIT_CODE_INDEX,
-                             PARSING_CONCURRENCY, QDRANT_CODE_BLOCK_NAMESPACE)
+from agent.constants import (
+    BATCH_PROCESSING_CONCURRENCY,
+    BATCH_SEGMENT_THRESHOLD,
+    DIRS_TO_IGNORE,
+    EXTENSIONS,
+    INITIAL_RETRY_DELAY_MS,
+    MAX_BATCH_RETRIES,
+    MAX_FILE_SIZE,
+    MAX_LIST_FILES_LIMIT_CODE_INDEX,
+    PARSING_CONCURRENCY,
+    QDRANT_CODE_BLOCK_NAMESPACE,
+)
+from agent.list_files import Ignore, list_files
 from agent.telemetry_service import TelemetryService
 
 
@@ -55,14 +60,10 @@ def is_path_in_ignored_dir(path: str, ignore_config: Ignore) -> bool:
     return False
 
 
-def generate_normalized_abs_path(path: str, root_path: str) -> str:
-    resolved_path = os.path.resolve(root_path, path)
-    return os.path.normpath(resolved_path)
-
-
 @dataclass
 class ScanStats:
     """Statistics from directory scanning."""
+
     processed: int
     skipped: int
 
@@ -70,6 +71,7 @@ class ScanStats:
 @dataclass
 class ScanResult:
     """Result of directory scanning."""
+
     stats: ScanStats
     total_block_count: int
 
@@ -84,7 +86,7 @@ class DirectoryScanner:
         code_parser: CodeParser,
         cache_manager: CacheManager,
         ignore_config: Ignore,
-        batch_segment_threshold: Optional[int] = None
+        batch_segment_threshold: Optional[int] = None,
     ):
         self.embedder = embedder
         self.vector_store_client = vector_store_client
@@ -99,7 +101,7 @@ class DirectoryScanner:
         directory: str,
         on_error: Optional[Callable[[Exception], None]] = None,
         on_blocks_indexed: Optional[Callable[[int], None]] = None,
-        on_file_parsed: Optional[Callable[[int], None]] = None
+        on_file_parsed: Optional[Callable[[int], None]] = None,
     ) -> Coroutine[Any, Any, ScanResult]:
         """
         Recursively scan a directory for code blocks in supported files.
@@ -121,8 +123,7 @@ class DirectoryScanner:
         all_paths, _ = await list_files(directory_path, True, MAX_LIST_FILES_LIMIT_CODE_INDEX)
         # raise Exception(all_paths)
         # Filter out directories
-        file_paths = [p for p in all_paths if os.path.isfile(
-            os.path.join(directory_path, p))]
+        file_paths = [p for p in all_paths if os.path.isfile(os.path.join(directory_path, p))]
         # Initialize ignore controller
         # ignore_controller = RooIgnoreController(directory_path)
         # await ignore_controller.initialize()
@@ -155,7 +156,7 @@ class DirectoryScanner:
 
         # Semaphores for concurrency control
         parse_semaphore = asyncio.Semaphore(PARSING_CONCURRENCY)
-        # update 
+        # update
         batch_semaphore = asyncio.Semaphore(BATCH_PROCESSING_CONCURRENCY)
 
         async def process_file(file_path: str) -> None:
@@ -165,14 +166,13 @@ class DirectoryScanner:
             async with parse_semaphore:
                 try:
                     # Check file size
-                    file_stats = os.stat(
-                        os.path.join(directory_path, file_path))
+                    file_stats = os.stat(os.path.join(directory_path, file_path))
                     if file_stats.st_size > MAX_FILE_SIZE:
                         skipped_count += 1
                         return
 
                     # Read file content
-                    with open(os.path.join(directory_path, file_path), 'rb') as f:
+                    with open(os.path.join(directory_path, file_path), "rb") as f:
                         content = f.read()
 
                     # Calculate current hash
@@ -180,20 +180,17 @@ class DirectoryScanner:
                     processed_files.add(file_path)
 
                     # Check against cache
-                    cached_file_hash = self.cache_manager.get_file_hash(
-                        file_path)
+                    cached_file_hash = self.cache_manager.get_file_hash(file_path)
                     is_new_file = not cached_file_hash
                     if cached_file_hash == current_file_hash:
                         # File is unchanged
                         skipped_count += 1
                         return
-                    
+
                     # File is new or changed - parse it
                     if self.code_parser:
                         blocks = await self.code_parser.parse_file(
-                            scan_workspace,
-                            file_path,
-                            {'content': content, 'file_hash': current_file_hash}
+                            scan_workspace, file_path, {"content": content, "file_hash": current_file_hash}
                         )
                         file_block_count = len(blocks)
                         if on_file_parsed:
@@ -210,8 +207,7 @@ class DirectoryScanner:
                                     trimmed_content = block.content.strip()
                                     if trimmed_content:
                                         current_batch_blocks.append(block)
-                                        current_batch_texts.append(
-                                            trimmed_content.decode('utf-8'))
+                                        current_batch_texts.append(trimmed_content.decode("utf-8"))
                                         added_blocks_from_file = True
 
                                         # Check if batch threshold is met
@@ -234,33 +230,26 @@ class DirectoryScanner:
                                                     scan_workspace,
                                                     batch_semaphore,
                                                     on_error,
-                                                    on_blocks_indexed
+                                                    on_blocks_indexed,
                                                 )
                                             )
 
                                 # Add file info once per file
                                 if added_blocks_from_file:
                                     total_block_count += file_block_count
-                                    current_batch_file_infos.append({
-                                        'file_path': file_path,
-                                        'file_hash': current_file_hash,
-                                        'is_new': is_new_file
-                                    })
+                                    current_batch_file_infos.append(
+                                        {"file_path": file_path, "file_hash": current_file_hash, "is_new": is_new_file}
+                                    )
                         else:
                             # Update hash if not being processed in batch
                             await self.cache_manager.update_file_hash(file_path, current_file_hash)
 
                 except Exception as error:
                     # Log with full stack trace
-                    logging.exception(
-                        f"Error processing file {file_path}: {error}")
-                    self.telemetry.echo(json.dumps({
-                        'error': str(error),
-                        'location': 'scanDirectory:processFile'
-                    }))
+                    logging.exception(f"Error processing file {file_path}: {error}")
+                    self.telemetry.echo(json.dumps({"error": str(error), "location": "scanDirectory:processFile"}))
                     if on_error:
-                        on_error(
-                            Exception(f"{error} (Workspace: {scan_workspace}, File: {file_path})"))
+                        on_error(Exception(f"{error} (Workspace: {scan_workspace}, File: {file_path})"))
                     raise error
 
         # Process all files concurrently
@@ -277,7 +266,7 @@ class DirectoryScanner:
                     scan_workspace,
                     batch_semaphore,
                     on_error,
-                    on_blocks_indexed
+                    on_blocks_indexed,
                 )
 
         # Handle deleted files
@@ -291,22 +280,20 @@ class DirectoryScanner:
                         await self.cache_manager.delete_file_hash(cached_file_path)
                     except Exception as error:
                         # Log with full stack trace
-                        logging.exception(
-                            f"Failed to delete points for {cached_file_path}: {error}")
-                        self.telemetry.echo(json.dumps({
-                            'error': str(error),
-                            'location': 'scanDirectory:deleteRemovedFiles'
-                        }))
+                        logging.exception(f"Failed to delete points for {cached_file_path}: {error}")
+                        self.telemetry.echo(
+                            json.dumps({"error": str(error), "location": "scanDirectory:deleteRemovedFiles"})
+                        )
                         if on_error:
-                            on_error(Exception(
-                                f"Failed to delete points for {cached_file_path} "
-                                f"(Workspace: {scan_workspace})"
-                            ))
+                            on_error(
+                                Exception(
+                                    f"Failed to delete points for {cached_file_path} (Workspace: {scan_workspace})"
+                                )
+                            )
                         raise error
 
         return ScanResult(
-            stats=ScanStats(processed=processed_count, skipped=skipped_count),
-            total_block_count=total_block_count
+            stats=ScanStats(processed=processed_count, skipped=skipped_count), total_block_count=total_block_count
         )
 
     async def _process_batch(
@@ -317,7 +304,7 @@ class DirectoryScanner:
         scan_workspace: str,
         batch_semaphore: asyncio.Semaphore,
         on_error: Optional[Callable[[Exception], None]] = None,
-        on_blocks_indexed: Optional[Callable[[int], None]] = None
+        on_blocks_indexed: Optional[Callable[[int], None]] = None,
     ) -> None:
         """Process a batch of code blocks."""
         if not batch_blocks:
@@ -332,17 +319,15 @@ class DirectoryScanner:
                 attempts += 1
                 try:
                     # Delete existing points for modified files
-                    unique_file_paths = list(set([
-                        info['file_path'] for info in batch_file_infos
-                        if not info['is_new']
-                    ]))
+                    unique_file_paths = list(
+                        set([info["file_path"] for info in batch_file_infos if not info["is_new"]])
+                    )
 
                     if unique_file_paths and self.vector_store_client:
                         try:
                             await self.vector_store_client.delete_points_by_multiple_file_paths(unique_file_paths)
                         except Exception as delete_error:
-                            logging.error(
-                                f"Failed to delete points for batch: {delete_error}")
+                            logging.error(f"Failed to delete points for batch: {delete_error}")
                             raise Exception(
                                 f"Failed to delete points for {len(unique_file_paths)} files. "
                                 f"Workspace: {scan_workspace}. {delete_error}"
@@ -356,23 +341,21 @@ class DirectoryScanner:
                         # Prepare points for vector store
                         points = []
                         for i, block in enumerate(batch_blocks):
-                            normalized_path = generate_normalized_absolute_path(
-                                block.file_path, scan_workspace)
-                            point_id = str(
-                                uuid5(QDRANT_CODE_BLOCK_NAMESPACE, block.segment_hash))
-                            #print(block.content.decode('utf-8'), block.type)
+                            normalized_path = generate_normalized_absolute_path(block.file_path, scan_workspace)
+                            point_id = str(uuid5(QDRANT_CODE_BLOCK_NAMESPACE, block.segment_hash))
+                            # print(block.content.decode('utf-8'), block.type)
                             points.append(
                                 PointStruct(
                                     id=point_id,
                                     vector=embeddings[i],
                                     payload=Payload(
                                         file_path=generate_relative_file_path(normalized_path, scan_workspace),
-                                        code_chunk=block.content.decode('utf-8'),
+                                        code_chunk=block.content.decode("utf-8"),
                                         start_line=block.start_line,
                                         end_line=block.end_line,
                                         segment_hash=block.segment_hash,
-                                        type=block.type
-                                    )
+                                        type=block.type,
+                                    ),
                                 )
                             )
 
@@ -385,36 +368,33 @@ class DirectoryScanner:
 
                         # Update hashes for successfully processed files
                         for file_info in batch_file_infos:
-                            await self.cache_manager.update_file_hash(
-                                file_info['file_path'],
-                                file_info['file_hash']
-                            )
+                            await self.cache_manager.update_file_hash(file_info["file_path"], file_info["file_hash"])
 
                         success = True
 
                 except Exception as error:
                     last_error = error
                     # Log with full stack trace
-                    logging.exception(
-                        f"Error processing batch (attempt {attempts}): {error}")
-                    self.telemetry.echo(json.dumps({
-                        'error': str(error),
-                        'location': 'processBatch:retry',
-                        'attemptNumber': attempts,
-                        'batchSize': len(batch_blocks)
-                    }))
+                    logging.exception(f"Error processing batch (attempt {attempts}): {error}")
+                    self.telemetry.echo(
+                        json.dumps(
+                            {
+                                "error": str(error),
+                                "location": "processBatch:retry",
+                                "attemptNumber": attempts,
+                                "batchSize": len(batch_blocks),
+                            }
+                        )
+                    )
 
                     if attempts < MAX_BATCH_RETRIES:
-                        delay = INITIAL_RETRY_DELAY_MS * \
-                            (2 ** (attempts - 1)) / 1000
+                        delay = INITIAL_RETRY_DELAY_MS * (2 ** (attempts - 1)) / 1000
                         await asyncio.sleep(delay)
 
             if not success and last_error:
-                logging.error(
-                    f"Failed to process batch after {MAX_BATCH_RETRIES} attempts")
+                logging.error(f"Failed to process batch after {MAX_BATCH_RETRIES} attempts")
                 if on_error:
                     error_message = str(last_error)
-                    on_error(Exception(
-                        f"Failed to process batch after {MAX_BATCH_RETRIES} retries. "
-                        f"Error: {error_message}"
-                    ))
+                    on_error(
+                        Exception(f"Failed to process batch after {MAX_BATCH_RETRIES} retries. Error: {error_message}")
+                    )

@@ -1,70 +1,75 @@
 import uuid
 
-EXTENSIONS = list(map(lambda e: f".{e}", [
-    "tla",
-    "js",
-    "jsx",
-    "ts",
-    "vue",
-    "tsx",
-    "py",
-    # Rust
-    "rs",
-    "go",
-    # C
-    "c",
-    "h",
-    # C++
-    "cpp",
-    "hpp",
-    # C#
-    "cs",
-    # Ruby
-    "rb",
-    "java",
-    "php",
-    "swift",
-    # Solidity
-    "sol",
-    # Kotlin
-    "kt",
-    "kts",
-    # Elixir
-    "ex",
-    "exs",
-    # Elisp
-    "el",
-    # HTML
-    "html",
-    "htm",
-    # Markdown
-    "md",
-    "markdown",
-    # JSON
-    "json",
-    # CSS
-    "css",
-    # SystemRDL
-    "rdl",
-    # OCaml
-    "ml",
-    "mli",
-    # Lua
-    "lua",
-    # Scala
-    "scala",
-    # TOML
-    "toml",
-    # Zig
-    "zig",
-    # Elm
-    "elm",
-    # Embedded Template
-    "ejs",
-    "erb",
-    # Visual Basic .NET
-    "vb",
-]))
+EXTENSIONS = list(
+    map(
+        lambda e: f".{e}",
+        [
+            "tla",
+            "js",
+            "jsx",
+            "ts",
+            "vue",
+            "tsx",
+            "py",
+            # Rust
+            "rs",
+            "go",
+            # C
+            "c",
+            "h",
+            # C++
+            "cpp",
+            "hpp",
+            # C#
+            "cs",
+            # Ruby
+            "rb",
+            "java",
+            "php",
+            "swift",
+            # Solidity
+            "sol",
+            # Kotlin
+            "kt",
+            "kts",
+            # Elixir
+            "ex",
+            "exs",
+            # Elisp
+            "el",
+            # HTML
+            "html",
+            "htm",
+            # Markdown
+            "md",
+            "markdown",
+            # JSON
+            "json",
+            # CSS
+            "css",
+            # SystemRDL
+            "rdl",
+            # OCaml
+            "ml",
+            "mli",
+            # Lua
+            "lua",
+            # Scala
+            "scala",
+            # TOML
+            "toml",
+            # Zig
+            "zig",
+            # Elm
+            "elm",
+            # Embedded Template
+            "ejs",
+            "erb",
+            # Visual Basic .NET
+            "vb",
+        ],
+    )
+)
 
 FALLBACK_EXTENSION = [
     ".vb",  # Visual Basic .NET - no dedicated WASM parser
@@ -90,6 +95,7 @@ DIRS_TO_IGNORE = [
     ".git",
     ".*",
 ]
+DEFAULT_MIN_COMPONENT_LINES_VALUE = 4
 
 MIN_BLOCK_CHARS = 50
 MAX_BLOCK_CHARS = 1000
@@ -107,7 +113,7 @@ MAX_FILE_SIZE = 1 * 1024 * 1024  # 1MB
 MAX_PENDING_BATCHES = 20
 MAX_BATCH_RETRIES = 3
 
-QDRANT_CODE_BLOCK_NAMESPACE = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8')
+QDRANT_CODE_BLOCK_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 QDRANT_DEFAULT_URL = "http://localhost:6333"
 INITIAL_RETRY_DELAY_MS = 500
 MAX_ITEM_TOKENS = 8191

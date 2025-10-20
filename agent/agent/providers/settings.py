@@ -1,7 +1,7 @@
-from typing import TypedDict, Literal, Any
+from typing import Any, Literal, TypedDict
+
 from anthropic.types.thinking_config_param import ThinkingConfigParam
 from openai.types.shared_params.reasoning import Reasoning as OpenAIReasoning
-from google.genai.types import GenerateContentConfig
 
 
 class OpenAiReasoningParam(TypedDict):
@@ -50,10 +50,6 @@ class AnthropicSettings(ApiModelIdProviderSettings):
     anthropic_base_url: str
     anthropic_use_auth_token: bool
     anthropic_beta_1m_context: bool
-
-
-class ModelInfo(TypedDict, total=False):
-    max_tokens: int | None
 
 
 class OpenAISettings(ApiModelIdProviderSettings):

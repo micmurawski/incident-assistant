@@ -45,17 +45,17 @@ class CodeIndexStateManager:
             self._current_item_unit = "files"
             self._status = "indexing"
 
-            #message: str
-            #if total_files > 0 and processed_files < total_files:
+            # message: str
+            # if total_files > 0 and processed_files < total_files:
             #    message = f"Processing {processed_files} / {total_files} {self._current_item_unit}, Current: {current_file_basename or "..."}"
-            #elif total_files > 0 and processed_files == total_files:
+            # elif total_files > 0 and processed_files == total_files:
             #    message = f"Finished processing {total_files} {self._current_item_unit} from queue."
-            #else:
+            # else:
             #    message = "File queue processed"
 
-            #old_status = self._status
-            #old_message = self._status_message
-            #self._status_message = message
+            # old_status = self._status
+            # old_message = self._status_message
+            # self._status_message = message
 
             # if old_status != self._system_status or old_message != self._status_message or self._status != "indexing":
             #    # fire emmiter

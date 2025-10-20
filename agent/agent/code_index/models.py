@@ -29,7 +29,7 @@ class Payload:
             start_line=data["start_line"],
             end_line=data["end_line"],
             segment_hash=data["segment_hash"],
-            type=data["type"]
+            type=data["type"],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,7 +39,7 @@ class Payload:
             "start_line": self.start_line,
             "end_line": self.end_line,
             "segment_hash": self.segment_hash,
-            "type": self.type
+            "type": self.type,
         }
 
 
@@ -51,18 +51,10 @@ class PointStruct:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PointStruct":
-        return cls(
-            id=data["id"],
-            vector=data["vector"],
-            payload=Payload.from_dict(data["payload"])
-        )
+        return cls(id=data["id"], vector=data["vector"], payload=Payload.from_dict(data["payload"]))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "vector": self.vector,
-            "payload": self.payload.to_dict()
-        }
+        return {"id": self.id, "vector": self.vector, "payload": self.payload.to_dict()}
 
 
 @dataclass
@@ -130,7 +122,9 @@ class EmbedderResponse:
 
 class IEmbedder(ABC):
     @abstractmethod
-    async def create_embeddings(self, texts: list[str], model: str | None = None) -> Coroutine[Any, Any, EmbedderResponse]:
+    async def create_embeddings(
+        self, texts: list[str], model: str | None = None
+    ) -> Coroutine[Any, Any, EmbedderResponse]:
         pass
 
     @abstractmethod
@@ -145,8 +139,7 @@ class IEmbedder(ABC):
 @dataclass
 class FileProcessingResult:
     path: str
-    status: Literal["success", "skipped", "error",
-                    "processed_for_batching", "local_error"]
+    status: Literal["success", "skipped", "error", "processed_for_batching", "local_error"]
     error: Optional[Exception]
     reason: Optional[str]
     new_hash: Optional[str]
@@ -157,3 +150,8 @@ class IFileWatcher(ABC):
     @abstractmethod
     async def process_file(self, file_path: str) -> Coroutine[Any, Any, FileProcessingResult]:
         pass
+
+
+class IConfigurationManager(ABC):
+    current_search_results: int
+    current_search_min_score: float

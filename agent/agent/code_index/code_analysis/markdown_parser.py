@@ -12,21 +12,24 @@ from typing import List, Optional
 @dataclass
 class Position:
     """Position information for a node"""
+
     row: int
 
 
 @dataclass
 class MockNode:
     """Interface to mimic tree-sitter node structure"""
+
     start_position: Position
     end_position: Position
     text: str
-    parent: Optional['MockNode'] = None
+    parent: Optional["MockNode"] = None
 
 
 @dataclass
 class MockCapture:
     """Interface to mimic tree-sitter capture structure"""
+
     node: MockNode
     name: str
     pattern_index: int
@@ -45,16 +48,16 @@ def parse_markdown(content: bytes) -> List[MockCapture]:
     if not content or content.strip() == "":
         return []
 
-    lines = content.decode('utf-8').split('\n')
+    lines = content.decode("utf-8").split("\n")
     captures: List[MockCapture] = []
 
     # Regular expressions for different header types
-    atx_header_regex = re.compile(r'^(#{1,6})\s+(.+)$')
+    atx_header_regex = re.compile(r"^(#{1,6})\s+(.+)$")
     # Setext headers must have at least 3 = or - characters
-    setext_h1_regex = re.compile(r'^={3,}\s*$')
-    setext_h2_regex = re.compile(r'^-{3,}\s*$')
+    setext_h1_regex = re.compile(r"^={3,}\s*$")
+    setext_h2_regex = re.compile(r"^-{3,}\s*$")
     # Valid setext header text line should be plain text (not empty, not indented, not a special element)
-    valid_setext_text_regex = re.compile(r'^\s*[^#<>!\[\]`\t]+[^\n]$')
+    valid_setext_text_regex = re.compile(r"^\s*[^#<>!\[\]`\t]+[^\n]$")
 
     # Find all headers in the document
     for i, line in enumerate(lines):
@@ -65,25 +68,13 @@ def parse_markdown(content: bytes) -> List[MockCapture]:
             text = atx_match.group(2).strip()
 
             # Create a mock node for this header
-            node = MockNode(
-                start_position=Position(row=i),
-                end_position=Position(row=i),
-                text=text
-            )
+            node = MockNode(start_position=Position(row=i), end_position=Position(row=i), text=text)
 
             # Create a mock capture for this header
-            captures.append(MockCapture(
-                node=node,
-                name=f"name.definition.header.h{level}",
-                pattern_index=0
-            ))
+            captures.append(MockCapture(node=node, name=f"name.definition.header.h{level}", pattern_index=0))
 
             # Also create a definition capture
-            captures.append(MockCapture(
-                node=node,
-                name=f"definition.header.h{level}",
-                pattern_index=0
-            ))
+            captures.append(MockCapture(node=node, name=f"definition.header.h{level}", pattern_index=0))
 
             continue
 
@@ -94,25 +85,13 @@ def parse_markdown(content: bytes) -> List[MockCapture]:
                 text = lines[i - 1].strip()
 
                 # Create a mock node for this header
-                node = MockNode(
-                    start_position=Position(row=i - 1),
-                    end_position=Position(row=i),
-                    text=text
-                )
+                node = MockNode(start_position=Position(row=i - 1), end_position=Position(row=i), text=text)
 
                 # Create a mock capture for this header
-                captures.append(MockCapture(
-                    node=node,
-                    name="name.definition.header.h1",
-                    pattern_index=0
-                ))
+                captures.append(MockCapture(node=node, name="name.definition.header.h1", pattern_index=0))
 
                 # Also create a definition capture
-                captures.append(MockCapture(
-                    node=node,
-                    name="definition.header.h1",
-                    pattern_index=0
-                ))
+                captures.append(MockCapture(node=node, name="definition.header.h1", pattern_index=0))
 
                 continue
 
@@ -121,25 +100,13 @@ def parse_markdown(content: bytes) -> List[MockCapture]:
                 text = lines[i - 1].strip()
 
                 # Create a mock node for this header
-                node = MockNode(
-                    start_position=Position(row=i - 1),
-                    end_position=Position(row=i),
-                    text=text
-                )
+                node = MockNode(start_position=Position(row=i - 1), end_position=Position(row=i), text=text)
 
                 # Create a mock capture for this header
-                captures.append(MockCapture(
-                    node=node,
-                    name="name.definition.header.h2",
-                    pattern_index=0
-                ))
+                captures.append(MockCapture(node=node, name="name.definition.header.h2", pattern_index=0))
 
                 # Also create a definition capture
-                captures.append(MockCapture(
-                    node=node,
-                    name="definition.header.h2",
-                    pattern_index=0
-                ))
+                captures.append(MockCapture(node=node, name="definition.header.h2", pattern_index=0))
 
                 continue
 
@@ -159,8 +126,7 @@ def parse_markdown(content: bytes) -> List[MockCapture]:
     for i, header_pair in enumerate(header_captures):
         if i < len(header_captures) - 1:
             # End position is the start of the next header minus 1
-            next_header_start_row = header_captures[i +
-                                                    1][0].node.start_position.row
+            next_header_start_row = header_captures[i + 1][0].node.start_position.row
             for capture in header_pair:
                 capture.node.end_position.row = next_header_start_row - 1
         else:
@@ -202,7 +168,7 @@ def format_markdown_captures(captures: List[MockCapture], min_section_lines: int
             header_level = 1
 
             # Check if the name contains a header level (e.g., 'definition.header.h2')
-            header_match = re.search(r'\.h(\d)$', capture.name)
+            header_match = re.search(r"\.h(\d)$", capture.name)
             if header_match and header_match.group(1):
                 header_level = int(header_match.group(1))
 

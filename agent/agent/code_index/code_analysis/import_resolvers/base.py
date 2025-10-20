@@ -13,9 +13,9 @@ class DepInfo:
     @classmethod
     def from_dict(cls, data: dict[str, str]) -> "DepInfo":
         return cls(
-            file_path=data['file_path'],
-            import_path=data['import_path'],
-            ref=data['ref'],
-            resolved_path=data['resolved_path'],
-            is_builtin=data.get('is_builtin', False)
+            file_path=data["file_path"],
+            import_path=data["import_path"],
+            ref=data["ref"],
+            resolved_path=data["resolved_path"],
+            is_builtin=data.get("is_builtin", False),
         )

@@ -26,6 +26,6 @@ def execute_command(command: str, args: list[str], cwd: str = None) -> CommandOp
     return CommandOpsResult(
         status="success",
         return_code=process.returncode,
-        output=stdout.decode('utf-8'),
-        error=stderr.decode('utf-8'),
+        output=stdout.decode("utf-8"),
+        error=stderr.decode("utf-8"),
     )

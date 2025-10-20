@@ -1,8 +1,7 @@
 import asyncio
 
 from agent.cache_manager import CacheManager
-from agent.scanner import (CodeParser, DirectoryScanner, Embedder, Ignore,
-                           VectorStoreClient)
+from agent.scanner import CodeParser, DirectoryScanner, Embedder, Ignore, VectorStoreClient
 
 
 async def main():
@@ -20,6 +19,7 @@ async def main():
     )
     result = await scanner.scan_directory("/Users/micmur/GITHUB/o8s/agent/agent")
     print(result)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

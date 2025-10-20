@@ -17,8 +17,7 @@ def collect_jars_from_path(path_pattern: str, only_latest: bool = True) -> Dict[
             artifact_id = path_parts[-3]
             version_str = path_parts[-2]
             filename = path_parts[-1]
-            filename_match = re.search(
-                f"{artifact_id}-([\\d.]+(?:-[\\w]+)?)\\.jar", filename)
+            filename_match = re.search(f"{artifact_id}-([\\d.]+(?:-[\\w]+)?)\\.jar", filename)
             if filename_match:
                 version_str = filename_match.group(1)
             artifacts[artifact_id].append((version_str, jar_path))
@@ -32,8 +31,7 @@ def collect_jars_from_path(path_pattern: str, only_latest: bool = True) -> Dict[
     res = []
     for artifact_id, versions in artifacts.items():
         try:
-            sorted_versions = sorted(
-                versions, key=lambda x: version.parse(x[0]), reverse=True)
+            sorted_versions = sorted(versions, key=lambda x: version.parse(x[0]), reverse=True)
             latest_version, latest_path = sorted_versions[0]
             res.append(latest_path)
         except Exception as e:
@@ -54,18 +52,12 @@ class JavaImportResolver:
         mac_locations = [
             "/Library/Java/JavaVirtualMachines",
             f"{os.path.expanduser('~')}/Library/Java/JavaVirtualMachines",
-            "/System/Library/Java/JavaVirtualMachines"
-        ] + glob.glob('/Library/Java/JavaVirtualMachines/*/Contents/Home/lib/src.zip')
+            "/System/Library/Java/JavaVirtualMachines",
+        ] + glob.glob("/Library/Java/JavaVirtualMachines/*/Contents/Home/lib/src.zip")
 
-        linux_locations = [
-            "/usr/lib/jvm",
-            "/usr/java"
-        ]
+        linux_locations = ["/usr/lib/jvm", "/usr/java"]
 
-        windows_locations = [
-            "C:/Program Files/Java",
-            "C:/Program Files (x86)/Java"
-        ]
+        windows_locations = ["C:/Program Files/Java", "C:/Program Files (x86)/Java"]
 
         all_locations = mac_locations + linux_locations + windows_locations
         for location in all_locations:
@@ -85,7 +77,7 @@ class JavaImportResolver:
         if import_path.startswith("import "):
             import_path = import_path[7:]
         if import_path.endswith(";"):
-            import_path = import_path[:-1]    # Handle static imports
+            import_path = import_path[:-1]  # Handle static imports
         if import_path.startswith("static "):
             import_path = import_path[7:]
         is_wildcard = import_path.endswith(".*")
@@ -101,7 +93,7 @@ class JavaImportResolver:
                 os.path.join(project_root, "src/test/java"),
                 os.path.join(project_root, "src"),
                 os.path.join(project_root, "source"),
-                project_root
+                project_root,
             ]
 
             for pattern in src_patterns:
@@ -110,8 +102,7 @@ class JavaImportResolver:
 
         if project_root:
             maven_repo = os.path.expanduser("~/.m2/repository")
-            classpath_entries += collect_jars_from_path(
-                os.path.join(maven_repo, "**/*.jar"), only_latest=False)
+            classpath_entries += collect_jars_from_path(os.path.join(maven_repo, "**/*.jar"), only_latest=False)
             # if os.path.isdir(maven_repo):
             #    for root, _, files in os.walk(maven_repo):
             #        for file in files:
@@ -128,14 +119,13 @@ class JavaImportResolver:
             lib_dirs = [
                 os.path.join(project_root, "lib"),
                 os.path.join(project_root, "libs"),
-                os.path.join(project_root, "dependencies")
+                os.path.join(project_root, "dependencies"),
             ]
             for lib_dir in lib_dirs:
                 if os.path.isdir(lib_dir):
                     for file in os.listdir(lib_dir):
                         if file.endswith(".jar"):
-                            classpath_entries.append(
-                                os.path.join(lib_dir, file))
+                            classpath_entries.append(os.path.join(lib_dir, file))
 
         classpath_entries.extend(self.jdk_paths)
         return classpath_entries
@@ -166,7 +156,7 @@ class JavaImportResolver:
 
         if jar_path not in self.jar_cache:
             try:
-                with zipfile.ZipFile(jar_path, 'r') as jar:
+                with zipfile.ZipFile(jar_path, "r") as jar:
                     self.jar_cache[jar_path] = jar.namelist()
             except zipfile.BadZipFile:
                 self.jar_cache[jar_path] = []
@@ -176,7 +166,7 @@ class JavaImportResolver:
 
         if rel_path in jar_contents:
             with tempfile.NamedTemporaryFile(suffix=".java", delete=False) as temp:
-                with zipfile.ZipFile(jar_path, 'r') as jar:
+                with zipfile.ZipFile(jar_path, "r") as jar:
                     temp.write(jar.read(rel_path))
                 return temp.name
 
@@ -184,14 +174,14 @@ class JavaImportResolver:
         for jar_entry in jar_contents:
             if jar_entry.lower() == rel_path_lower:
                 with tempfile.NamedTemporaryFile(suffix=".java", delete=False) as temp:
-                    with zipfile.ZipFile(jar_path, 'r') as jar:
+                    with zipfile.ZipFile(jar_path, "r") as jar:
                         temp.write(jar.read(jar_entry))
                     return temp.name
 
         rel_path = os.path.join("java.base", rel_path)
         if rel_path in jar_contents:
             with tempfile.NamedTemporaryFile(suffix=".java", delete=False) as temp:
-                with zipfile.ZipFile(jar_path, 'r') as jar:
+                with zipfile.ZipFile(jar_path, "r") as jar:
                     temp.write(jar.read(rel_path))
                 return temp.name
 
@@ -200,14 +190,13 @@ class JavaImportResolver:
         for jar_entry in jar_contents:
             if jar_entry.lower() == rel_path_lower:
                 with tempfile.NamedTemporaryFile(suffix=".java", delete=False) as temp:
-                    with zipfile.ZipFile(jar_path, 'r') as jar:
+                    with zipfile.ZipFile(jar_path, "r") as jar:
                         temp.write(jar.read(jar_entry))
                     return temp.name
         return None
 
     def resolve_import(self, import_statement: str, project_root: Optional[str] = None) -> Optional[str]:
-        import_path, is_wildcard = self.clean_import_statement(
-            import_statement)
+        import_path, is_wildcard = self.clean_import_statement(import_statement)
         if is_wildcard:
             return None
 
@@ -248,12 +237,11 @@ class JavaImportResolver:
 
     def verify_class_in_file(self, file_path: str, class_name: str) -> bool:
         try:
-            with open(file_path, 'r', encoding='utf-8') as file:
+            with open(file_path, "r", encoding="utf-8") as file:
                 content = file.read()
 
                 class_pattern = re.compile(
-                    r'(public|private|protected)?\s*(class|interface|enum)\s+' +
-                    re.escape(class_name) + r'\b'
+                    r"(public|private|protected)?\s*(class|interface|enum)\s+" + re.escape(class_name) + r"\b"
                 )
 
                 return bool(class_pattern.search(content))
@@ -271,8 +259,11 @@ if __name__ == "__main__":
     resolver = JavaImportResolver()
     from sme_agent.dependencies_analyzer.code_extractor import CodeExtractor
     from sme_agent.dependencies_analyzer.import_parser import ImportParser
+
     file_content = open(
-        "/Users/micmur/GITHUB/o8s/services/robot-shop/shipping/src/main/java/com/instana/robotshop/shipping/ShippingServiceApplication.java", "r").read()
+        "/Users/micmur/GITHUB/o8s/services/robot-shop/shipping/src/main/java/com/instana/robotshop/shipping/ShippingServiceApplication.java",
+        "r",
+    ).read()
     for imp in ImportParser().parse_imports(file_content, "java"):
         name = imp["name"]
         res = resolve_java_import(name, "../services/robot-shop/shipping")

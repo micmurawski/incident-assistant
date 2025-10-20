@@ -9,8 +9,7 @@ from typing import Any, Coroutine
 import aiohttp
 import openai
 
-from agent.constants import (INITIAL_RETRY_DELAY_MS, MAX_BATCH_RETRIES,
-                             MAX_ITEM_TOKENS)
+from agent.constants import INITIAL_RETRY_DELAY_MS, MAX_BATCH_RETRIES, MAX_ITEM_TOKENS
 from agent.models import EmbedderInfo, EmbedderResponse, IEmbedder, Usage
 
 from .models import get_model_query_prefix
@@ -27,15 +26,12 @@ class OpenAICompatibleEmbedder(IEmbedder):
     def __init__(self, base_url: str, api_key: str, model: str | None = None, max_item_tokens: int = 1000):
         self.base_url = base_url
         self.api_key = api_key
-        self.embeddings_client = openai.OpenAI(
-            base_url=base_url, api_key=api_key
-        )
+        self.embeddings_client = openai.OpenAI(base_url=base_url, api_key=api_key)
         self.model = model or "text-embedding-3-small"
         self.max_item_tokens = max_item_tokens or MAX_ITEM_TOKENS
 
     async def create_embeddings(self, texts: list[str], model: str | None = None) -> EmbedderResponse:
-        query_prefix = get_model_query_prefix(
-            "openai-compatible", model or self.model)
+        query_prefix = get_model_query_prefix("openai-compatible", model or self.model)
         processed_texts = []
         if query_prefix:
             for idx, text in enumerate(texts):
@@ -43,11 +39,11 @@ class OpenAICompatibleEmbedder(IEmbedder):
                     processed_texts.append(text)
                 else:
                     prefixed_text = f"{query_prefix}{text}"
-                    estimated_tokens = math.ceil(
-                        len(prefixed_text.split()) / 4)
+                    estimated_tokens = math.ceil(len(prefixed_text.split()) / 4)
                     if estimated_tokens > MAX_ITEM_TOKENS:
                         logging.error(
-                            f"Estimated tokens {estimated_tokens} is greater than max item tokens {MAX_ITEM_TOKENS}")
+                            f"Estimated tokens {estimated_tokens} is greater than max item tokens {MAX_ITEM_TOKENS}"
+                        )
                         processed_texts.append(text)
                     processed_texts.append(prefixed_text)
         else:
@@ -64,8 +60,7 @@ class OpenAICompatibleEmbedder(IEmbedder):
                 txt = remaining_texts[i]
                 item_tokens = math.ceil(len(txt) / 4)
                 if item_tokens > self.max_item_tokens:
-                    logging.warning(
-                        f"Text {txt} is too long to embed. Skipping.")
+                    logging.warning(f"Text {txt} is too long to embed. Skipping.")
                     processed_indices.append(i)
                     continue
                 if current_batch_tokens + item_tokens <= self.max_item_tokens:
@@ -80,9 +75,9 @@ class OpenAICompatibleEmbedder(IEmbedder):
 
             if len(current_batch) > 0:
                 batch_result = await self._embed_batch_with_retries(current_batch, model or self.model)
-                all_embeddings.extend(batch_result['embeddings'])
-                usage['promptTokens'] += batch_result['usage']['promptTokens']
-                usage['totalTokens'] += batch_result['usage']['totalTokens']
+                all_embeddings.extend(batch_result["embeddings"])
+                usage["promptTokens"] += batch_result["usage"]["promptTokens"]
+                usage["totalTokens"] += batch_result["usage"]["totalTokens"]
 
         return EmbedderResponse(embeddings=all_embeddings, usage=usage)
 
@@ -106,12 +101,10 @@ class OpenAICompatibleEmbedder(IEmbedder):
                 "api-key": self.api_key,
                 "Authorization": f"Bearer {self.api_key}",
             },
-            json={"model": model, "input": batch_texts,
-                  "encoding_format": "base64"},
+            json={"model": model, "input": batch_texts, "encoding_format": "base64"},
         )
         if not response.ok:
-            raise Exception(
-                f"embeddings:openai-compatible.requestFailed: {response.status} {response.reason}")
+            raise Exception(f"embeddings:openai-compatible.requestFailed: {response.status} {response.reason}")
 
         return await response.json()
 
@@ -126,9 +119,8 @@ class OpenAICompatibleEmbedder(IEmbedder):
         return EmbedderInfo(name="openai-compatible", model=self.model)
 
     async def _embed_batch_with_retries(
-            self,
-            batch_texts: list[str],
-            model: str | None = None) -> Coroutine[Any, Any, dict[str, list[list[float]]]]:
+        self, batch_texts: list[str], model: str | None = None
+    ) -> Coroutine[Any, Any, dict[str, list[list[float]]]]:
         model_to_use = model or self.model
         for attempt in range(MAX_BATCH_RETRIES):
             await self._wait_for_global_rate_limit()
@@ -139,23 +131,22 @@ class OpenAICompatibleEmbedder(IEmbedder):
                     response = await self.embeddings_client.embeddings.create(input=batch_texts, model=model_to_use)
 
                 processed_embeddings = []
-                for item in response.get('data', []):
-                    if isinstance(item.get('embedding'), str):
-                        buffer = base64.b64decode(item['embedding'])
+                for item in response.get("data", []):
+                    if isinstance(item.get("embedding"), str):
+                        buffer = base64.b64decode(item["embedding"])
                         float_count = len(buffer) // 4
-                        float32_list = list(struct.unpack(
-                            '<' + 'f' * float_count, buffer))
+                        float32_list = list(struct.unpack("<" + "f" * float_count, buffer))
                         new_item = dict(item)
-                        new_item['embedding'] = float32_list
+                        new_item["embedding"] = float32_list
                         processed_embeddings.append(new_item)
                     else:
                         processed_embeddings.append(item)
-                return {'embeddings': processed_embeddings, 'usage': response['usage']}
+                return {"embeddings": processed_embeddings, "usage": response["usage"]}
             except Exception as e:
                 logging.error(f"Error creating embeddings: {e}")
                 has_more_attempts = attempt < MAX_BATCH_RETRIES - 1
                 if has_more_attempts:
-                    base_delay = INITIAL_RETRY_DELAY_MS * (2 ** attempt)
+                    base_delay = INITIAL_RETRY_DELAY_MS * (2**attempt)
                     global_delay = await self.get_global_rate_limit_delay()
                     delay = max(base_delay, global_delay)
                     logging.warning(

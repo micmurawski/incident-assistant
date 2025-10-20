@@ -1,3 +1,6 @@
+from abc import ABC, abstractmethod
+from typing import Optional
+
 EMBEDDING_MODEL_PROFILES = {
     "ollama": {
         "nomic-embed-text": {"dimension": 768, "scoreThreshold": 0.4},
@@ -27,7 +30,7 @@ EMBEDDING_MODEL_PROFILES = {
             "scoreThreshold": 0.15,
             "queryPrefix": "Represent this query for searching relevant code: ",
         },
-    }
+    },
 }
 
 

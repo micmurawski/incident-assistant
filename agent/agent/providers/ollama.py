@@ -1,26 +1,20 @@
 from typing import Any, Coroutine, Optional
 
-from agent.providers.base import (
-    ApiHandler,
-    ApiHandlerCreateMessageMetadata,
-    AsyncIterator,
-    StreamChunk,
-    TextChunk,
-    ReasoningChunk,
-    UsageChunk,
-)
+from anthropic.types.message_param import MessageParam
+from openai import AsyncOpenAI
+from openai.types.chat.chat_completion import ChatCompletion
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
+
+from agent.providers.base import ApiHandler, ApiHandlerCreateMessageMetadata, AsyncIterator
 from agent.providers.fetcher import fetch_ollama_model
 from agent.providers.formatters.open_ai_format import convert_to_openai_messages
 from agent.providers.formatters.r1_format import convert_to_r1_format
 from agent.providers.formatters.xml_matcher import XmlMatcher
+from agent.providers.settings import ModelInfo
 from agent.providers.utils.error_handling import handle_open_ai_error
 from agent.providers.utils.tiktoken import count_tokens
-from anthropic.types.message_param import MessageParam
-from agent.providers.settings import ModelInfo
-from openai import AsyncOpenAI
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
-from openai.types.chat.chat_completion import ChatCompletion
-from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
+from agent.types import ReasoningChunk, StreamChunk, TextChunk, UsageChunk
 
 
 class OllamaHandler(ApiHandler):
