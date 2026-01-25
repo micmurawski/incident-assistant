@@ -1,4 +1,4 @@
-from typing import Annotated, Optional, TypedDict
+from typing import Annotated, Optional
 
 from .base import tool
 

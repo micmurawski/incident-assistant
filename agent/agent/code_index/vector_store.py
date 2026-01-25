@@ -5,17 +5,12 @@ from typing import Any, Coroutine, Optional
 from urllib.parse import urlparse
 
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import (
-    CollectionInfo,
-    Distance,
-    FieldCondition,
-    Filter,
-    FilterSelector,
-    MatchValue,
-    VectorsConfig,
-)
+from qdrant_client.models import (CollectionInfo, Distance, FieldCondition,
+                                  Filter, FilterSelector, MatchValue,
+                                  VectorParams)
 
-from agent.code_index.models import IVectorStoreClient, PointStruct, VectorStoreSearchResult
+from agent.code_index.models import (IVectorStoreClient, PointStruct,
+                                     VectorStoreSearchResult)
 from agent.constants import CODEBASE_INDEX_DEFAULTS, QDRANT_DEFAULT_URL
 from agent.telemetry_service import get_telemetry_service
 
@@ -26,7 +21,7 @@ class VectorStoreClient(IVectorStoreClient):
     def __init__(
         self,
         workspace_path: str,
-        vector_size: int = 384,
+        vector_size: int,
         api_key: Optional[str] = None,
         url: Optional[str] = QDRANT_DEFAULT_URL,
     ):
@@ -65,13 +60,13 @@ class VectorStoreClient(IVectorStoreClient):
             if not collection_info:
                 await self.client.create_collection(
                     self.collection_name,
-                    vectors_config=dict(size=self.vector_size, distance=self.distance_metric),
-                    hnsw_config=dict(m=64, ef_construct=512, on_disk=True),
+                    vectors_config=VectorParams(size=self.vector_size, distance=self.distance_metric),
+                    hnsw_config={"m": 64, "ef_construct": 512, "on_disk": True},
                 )
                 created = True
             else:
-                vector_config: VectorsConfig = collection_info.config.params.vectors
-                existing_vector_size = vector_config.size
+                vector_params: VectorParams = collection_info.config.params.vectors
+                existing_vector_size = vector_params.size
 
                 if existing_vector_size == self.vector_size:
                     created = False
@@ -109,8 +104,8 @@ class VectorStoreClient(IVectorStoreClient):
             recreation_attempted = True
             await self.client.create_collection(
                 self.collection_name,
-                vectors_config=dict(size=self.vector_size, distance=self.distance_metric),
-                hnsw_config=dict(m=64, ef_construction=512, on_disk=True),
+                vectors_config={"size": self.vector_size, "distance": self.distance_metric},
+                hnsw_config={"m": 64, "ef_construction": 512, "on_disk": True},
             )
             logging.info(f"[VectorStore] Successfully created new collection {self.collection_name}")
             return True

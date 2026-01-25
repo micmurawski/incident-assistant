@@ -1,13 +1,13 @@
 import os
-from typing import Annotated, Any, Optional, TypedDict
+from typing import Annotated, Optional, TypedDict
 
 from agent.code_index.models import VectorStoreSearchResult
 from agent.context import Context
-from agent.file_ops import FileOpsManager
-from agent.list_files import list_files
+from agent.telemetry_service import get_telemetry_service
 
 from .decorators import Hidden, Tools, tool
 
+logging = get_telemetry_service()
 
 @tool(tags=["read", "codebase"])
 async def codebase_search(
@@ -31,11 +31,10 @@ async def codebase_search(
     Example:
     codebase_search_tool(query="User login and password hashing", path="src/auth")
     """
-    if path:
-        path = os.path.normpath(path)
-
+    path = os.path.normpath(path) if path else None
+        
     results: list[VectorStoreSearchResult] = await context.code_index_manager.search_index(query, path)
-
+    
     if results and len(results) > 0:
         return
 

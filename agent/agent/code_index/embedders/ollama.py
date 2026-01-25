@@ -5,7 +5,8 @@ from typing import Any, Coroutine
 
 import aiohttp
 
-from agent.code_index.models import EmbedderInfo, EmbedderResponse, IEmbedder, Usage
+from agent.code_index.models import (EmbedderInfo, EmbedderResponse, IEmbedder,
+                                     Usage)
 from agent.constants import MAX_ITEM_TOKENS, OLLAMA_EMBEDDING_TIMEOUT
 
 from .models import get_model_dimension, get_model_query_prefix

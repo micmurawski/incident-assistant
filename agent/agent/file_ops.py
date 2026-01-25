@@ -77,7 +77,7 @@ class FileOpsManager:
         content = ""
         for file in files:
             result = await self.read_file(file["path"], file["start_line"], file["end_line"])
-            content += f"# {file.path}\n {result.content}\n ----\n"
+            content += f"# {file['path']}\n {result.content}\n ----\n"
 
         return FileOpsResult(
             path=self.cwd,
@@ -240,9 +240,8 @@ class FileOpsManager:
             content=result,
         )
 
-
 def escape_regex(reg: str) -> str:
-    return reg.replace("[.*+?^${}()|[\]\\]", "\\$&")
+    return reg.replace("[.*+?^${}()|[\\]\\]", "\\$&")
 
 
 def _generate_diff(old_content: str, new_content: str) -> str:
@@ -304,21 +303,3 @@ def _generate_diff(old_content: str, new_content: str, use_ansi_color: bool = Fa
     return "\n".join(diff)
 
 
-old = ["import numpy as np"]
-
-new = ["import numpy", "import pandas as pd"]
-
-print(_generate_diff("\n".join(old), "\n".join(new), use_ansi_color=False))
-
-
-async def main():
-    result = await FileOpsManager(os.path.dirname(__file__)).read_file(
-        "file_ops.py", start_line=0, end_line=10, number_lines=True
-    )
-    print(result.content)
-
-
-if __name__ == "__main__":
-    import asyncio
-
-    asyncio.run(main())

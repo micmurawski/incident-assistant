@@ -2,8 +2,10 @@ import json
 from typing import List, Optional
 
 from anthropic.types.message_param import MessageParam as AnthropicMessage
-from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam as OpenAIMessage
-from openai.types.chat.chat_completion_message_tool_call_param import ChatCompletionMessageToolCallParam
+from openai.types.chat.chat_completion_message_param import \
+    ChatCompletionMessageParam as OpenAIMessage
+from openai.types.chat.chat_completion_message_tool_call_param import \
+    ChatCompletionMessageToolCallParam
 
 
 def convert_to_openai_messages(anthropic_messages: List[AnthropicMessage]) -> List[OpenAIMessage]:

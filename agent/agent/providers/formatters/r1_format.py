@@ -1,15 +1,18 @@
 from anthropic.types.message_param import MessageParam as AnthropicMessage
-from openai.types.chat.chat_completion_assistant_message_param import (
-    ChatCompletionAssistantMessageParam as AssistantMessage,
-)
-from openai.types.chat.chat_completion_content_part_image import ChatCompletionContentPartImage as ContentPartImage
-from openai.types.chat.chat_completion_content_part_text import ChatCompletionContentPartText as ContentPartText
-from openai.types.chat.chat_completion_function_message_param import (
-    ChatCompletionFunctionMessageParam as FunctionMessage,
-)
-from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam as Message
-from openai.types.chat.chat_completion_tool_message_param import ChatCompletionToolMessageParam as ToolMessage
-from openai.types.chat.chat_completion_user_message_param import ChatCompletionUserMessageParam as UserMessage
+from openai.types.chat.chat_completion_assistant_message_param import \
+    ChatCompletionAssistantMessageParam as AssistantMessage
+from openai.types.chat.chat_completion_content_part_image import \
+    ChatCompletionContentPartImage as ContentPartImage
+from openai.types.chat.chat_completion_content_part_text import \
+    ChatCompletionContentPartText as ContentPartText
+from openai.types.chat.chat_completion_function_message_param import \
+    ChatCompletionFunctionMessageParam as FunctionMessage
+from openai.types.chat.chat_completion_message_param import \
+    ChatCompletionMessageParam as Message
+from openai.types.chat.chat_completion_tool_message_param import \
+    ChatCompletionToolMessageParam as ToolMessage
+from openai.types.chat.chat_completion_user_message_param import \
+    ChatCompletionUserMessageParam as UserMessage
 
 
 def _convert_on_type(message: AnthropicMessage) -> Message:

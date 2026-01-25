@@ -11,7 +11,8 @@ from agent.code_index.code_index_search_service import CodeIndexSearchService
 from agent.code_index.file_processor import CodeParser
 from agent.code_index.models import EmbedderInfo, IEmbedder
 from agent.code_index.scanner import DirectoryScanner
-from agent.code_index.vector_store import VectorStoreClient, VectorStoreSearchResult
+from agent.code_index.vector_store import (VectorStoreClient,
+                                           VectorStoreSearchResult)
 from agent.list_files import Ignore
 from agent.settings import SettingsManager
 from agent.telemetry_service import get_telemetry_service
@@ -26,6 +27,7 @@ class CodeIndexManager:
     embedder: IEmbedder
     code_index_search_service: CodeIndexSearchService
     settings_manager: SettingsManager
+    initialized: bool = False
     _instances: dict[str, "CodeIndexManager"] = {}
 
     def __init__(self, workspace_path: str) -> None:
@@ -50,13 +52,15 @@ class CodeIndexManager:
             del cls._instances[k]
 
     def ensure_running_vector_store(self):
-        settings = self.settings_manager.set("code_index.vector_store")
+        settings = self.settings_manager.get("code_index.vector_store")
         if settings.get("provider") == "qdrant":
             url = f"{settings.get('host')}:{settings.get('port')}/health"
-            response = httpx.get(url)
-            if response.status_code / 100 != 2:
+            try:
+                response = httpx.get(url)
+                if response.status_code // 100 != 2:
+                    raise Exception()
+            except Exception:
                 from agent.code_index.qdrant import run_qdrant_container
-
                 run_qdrant_container()
 
     async def create_services(self) -> Coroutine[Any, Any, tuple[IEmbedder, VectorStoreClient, DirectoryScanner]]:
@@ -71,7 +75,8 @@ class CodeIndexManager:
 
             embedder = OllamaEmbedder(**embedder_settings)
         elif provider == "openai_compatible":
-            from agent.code_index.embedders.openai_compatible import OpenAICompatibleEmbedder
+            from agent.code_index.embedders.openai_compatible import \
+                OpenAICompatibleEmbedder
 
             embedder = OpenAICompatibleEmbedder(**embedder_settings)
         else:
@@ -80,7 +85,6 @@ class CodeIndexManager:
 
         embedder_info: EmbedderInfo = await embedder.info()
         code_parser = CodeParser()
-
         vector_store = VectorStoreClient(self.workspace_path, vector_size=embedder_info.vector_size)
         ignore = Ignore()
 
@@ -94,6 +98,8 @@ class CodeIndexManager:
         return embedder, vector_store, directory_scanner
 
     async def initialize(self) -> Coroutine[Any, Any, None]:
+        if self.initialized:
+            return
         embedder, vector_store, directory_scanner = await self.create_services()
         self.embedder = embedder
         self.vector_store = vector_store
@@ -102,9 +108,12 @@ class CodeIndexManager:
         self.ensure_running_vector_store()
         await self.vector_store.initialize()
         await self.directory_scanner.scan_directory(self.workspace_path)
-
+        self.initialized = True
+        
     async def search_index(self, query: str, directory_prefix: str | None = None) -> list[VectorStoreSearchResult]:
-        return self.code_index_search_service.search_index(query, directory_prefix)
+        if not self.initialized:
+            await self.initialize()
+        return await self.code_index_search_service.search_index(query, directory_prefix)
 
     async def dispose(self) -> Coroutine[Any, Any, None]:
         logging.info("[CodeIndexManager] Disposing")

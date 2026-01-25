@@ -1,14 +1,10 @@
 import math
-from typing import Any, Literal, Optional
+from typing import Optional
 
-from agent.providers.settings import (
-    AnthropicReasoningParams,
-    ApiProvider,
-    ApiProviderSettings,
-    GeminiReasoningParams,
-    ModelInfo,
-    OpenAIReasoning,
-)
+from agent.providers.settings import (AnthropicReasoningParams, ApiProvider,
+                                      ApiProviderSettings,
+                                      GeminiReasoningParams, ModelInfo,
+                                      OpenAIReasoning)
 
 ANTHROPIC_DEFAULT_MAX_TOKENS = 8192
 DEFAULT_HYBRID_REASONING_MODEL_MAX_TOKENS = 16_384
@@ -152,7 +148,7 @@ def get_model_params(
     Generate model parameter configuration dict based on the provider, model, and settings.
     """
     # Extract custom values or fallbacks from settings
-    custom_max_tokens = settings.get("model_max_tokens") if settings else None
+    settings.get("model_max_tokens") if settings else None
     custom_max_thinking_tokens = settings.get("model_max_thinking_tokens") if settings else None
     custom_temperature = settings.get("model_temperature") if settings else None
     custom_reasoning_effort = settings.get("reasoning_effort") if settings else None

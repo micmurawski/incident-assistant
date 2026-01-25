@@ -3,23 +3,37 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
+HOME_DIR = os.path.expanduser("~")
+
 DEFAULT_SETTINGS = {
     "code_index": {
         "search": {"min_score": 0.4, "max_results": 50},
-        "embedder": {"provider": "ollama", "model": "nomic-embed-code"},
+        "embedder": {
+            "provider": "ollama",
+            "model": "all-minilm",
+			"query_prefix": "Represent this query for searching relevant code: ",
+        },
         "vector_store": {
             "provider": "qdrant",
             "host": "https://localhost",
             "port": 6333,
         },
         "cache": {
-            "path": "~/.index_cache.json",
+            "path": os.path.join(HOME_DIR, ".index_cache.json"),
         },
     },
-    "persistence": {"driver": "sqlite", "path": "agent.db"},
+    "persistence": {
+        "driver": "sqlite",
+        "url": "agent.db"
+    },
     "api": {
         "provider": "ollama",
-        "model_id": "manutic/nomic-embed-code:latest",
+        #"model_id": "qwen2.5-coder:7b",
+        #"model_id": "gpt-oss:latest",
+        "model_id": "qwen3:8b",
+    },
+    "workspace": {
+        "path": os.getcwd(),
     },
 }
 

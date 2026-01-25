@@ -1,6 +1,8 @@
 import os
 
-from agent.code_index.models import EmbedderResponse, IEmbedder, IVectorStoreClient, VectorStoreSearchResult
+from agent.code_index.models import (EmbedderResponse, IEmbedder,
+                                     IVectorStoreClient,
+                                     VectorStoreSearchResult)
 from agent.settings import SettingsManager
 from agent.telemetry_service import get_telemetry_service
 

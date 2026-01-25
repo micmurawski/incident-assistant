@@ -10,14 +10,9 @@ from tree_sitter import Node, Parser, QueryCursor, Tree
 from agent.code_index.code_analysis.import_resolvers.base import DepInfo
 from agent.code_index.code_analysis.loader import TreeSitterLoader
 from agent.code_index.code_analysis.markdown_parser import parse_markdown
-from agent.constants import (
-    EXTENSIONS,
-    FALLBACK_EXTENSION,
-    MAX_BLOCK_CHARS,
-    MAX_CHARS_TOLERANCE_FACTOR,
-    MIN_BLOCK_CHARS,
-    MIN_CHUNK_REMAINDER_CHARS,
-)
+from agent.constants import (EXTENSIONS, FALLBACK_EXTENSION, MAX_BLOCK_CHARS,
+                             MAX_CHARS_TOLERANCE_FACTOR, MIN_BLOCK_CHARS,
+                             MIN_CHUNK_REMAINDER_CHARS)
 
 Options = Optional[Dict[str, Any]]
 

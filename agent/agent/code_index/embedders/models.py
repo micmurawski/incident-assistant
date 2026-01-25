@@ -1,10 +1,13 @@
-from abc import ABC, abstractmethod
-from typing import Optional
 
 EMBEDDING_MODEL_PROFILES = {
     "ollama": {
         "nomic-embed-text": {"dimension": 768, "scoreThreshold": 0.4},
         "nomic-embed-code": {
+            "dimension": 3584,
+            "score_threshold": 0.15,
+            "query_prefix": "Represent this query for searching relevant code: ",
+        },
+        "manutic/nomic-embed-code": {
             "dimension": 3584,
             "score_threshold": 0.15,
             "query_prefix": "Represent this query for searching relevant code: ",
@@ -44,5 +47,8 @@ def get_model_query_prefix(provider: str, model: str) -> str | None:
 def get_model_dimension(provider: str, model: str) -> int:
     profiles = EMBEDDING_MODEL_PROFILES.get(provider)
     if not profiles:
-        return 0
-    return profiles.get(model, {}).get("dimension", 0)
+        raise Exception(f"Unknown model: {model} for provider: {provider}")
+    dimension = profiles.get(model, {}).get("dimension")
+    if not dimension:
+        raise Exception(f"Unknown dimension for model: {model} for provider: {provider}")
+    return dimension

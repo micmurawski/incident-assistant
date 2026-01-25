@@ -3,11 +3,11 @@ from dataclasses import dataclass, field
 from typing import Callable, ClassVar, TypeVar
 from uuid import uuid4
 
-from anthropic.types.text_block_param import TextBlockParam as AnthropicTextBlockParam
+from anthropic.types.text_block_param import \
+    TextBlockParam as AnthropicTextBlockParam
 
 from agent.message_queue_service import MessageQueueService
-from agent.persistence import Task as TaskModel
-from agent.persistence import init_db
+from agent.persistence.model import Task as TaskModel
 from agent.types import ApiMessage, TokenUsage
 
 from .types import AssistantMessageContent, TaskStatus, TodoItem, ToolUsage

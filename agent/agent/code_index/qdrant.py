@@ -11,7 +11,8 @@ def run_qdrant_container(
     cwd: str | None = None, volume_path: str | None = None, container_name: str | None = DEFAULT_CONTAINER_NAME
 ):
     if os.environ.get("DOCKER_HOST") is None and sys.platform == "darwin":
-        client = docker.DockerClient(base_url="unix:///Users/$USER/.docker/run/docker.sock")
+        user = os.environ["USER"]
+        client = docker.DockerClient(base_url=f"unix:///Users/{user}/.docker/run/docker.sock")
     else:
         client = docker.from_env()
 
@@ -37,33 +38,35 @@ def run_qdrant_container(
 
     if not_found:
         try:
+            volume = client.volumes.create(name='qdrant_storage')
             container = client.containers.run(
                 "qdrant/qdrant",
                 ports={
                     "6333/tcp": 6333,
                     "6334/tcp": 6334,
                 },
-                volumes={volume_path: {"bind": "/qdrant/storage", "mode": "z"}},
+                volumes={volume.id: {"bind": "/qdrant/storage", "mode": "z"}},
                 detach=True,  # Run in background
                 name=container_name,  # Optional: give the container a name
             )
 
-            print(f"Container started successfully!")
+            print("Container started successfully!")
             print(f"Container ID: {container.id}")
             print(f"Container name: {container.name}")
             print(f"Volume mounted: {volume_path} -> /qdrant/storage")
-            print(f"Ports: 6333 and 6334 are exposed")
+            print("Ports: 6333 and 6334 are exposed")
         except docker.errors.ImageNotFound:
             print("Qdrant image not found. Pulling from Docker Hub...")
             client.images.pull("qdrant/qdrant")
             # Retry running the container
+            volume = client.volumes.create(name='qdrant_storage')
             container = client.containers.run(
                 "qdrant/qdrant",
                 ports={
                     "6333/tcp": 6333,
                     "6334/tcp": 6334,
                 },
-                volumes={volume_path: {"bind": "/qdrant/storage", "mode": "z"}},
+                volumes={volume.id: {"bind": "/qdrant/storage", "mode": "z"}},
                 detach=True,
                 name=container_name,
             )
@@ -72,7 +75,8 @@ def run_qdrant_container(
 
 def stop_qdrant_container(container_name: str | None = DEFAULT_CONTAINER_NAME):
     if os.environ.get("DOCKER_HOST") is None and sys.platform == "darwin":
-        client = docker.DockerClient(base_url="unix:///Users/$USER/.docker/run/docker.sock")
+        user = os.environ["USER"]
+        client = docker.DockerClient(base_url=f"unix:///Users/{user}/.docker/run/docker.sock")
     else:
         client = docker.from_env()
     client.containers.get(container_name).stop()

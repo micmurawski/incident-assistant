@@ -9,7 +9,6 @@ from pathlib import Path
 
 from agent.constants import DIRS_TO_IGNORE
 from agent.telemetry_service import get_telemetry_service
-from agent.utils.formatting import format_files_list
 
 logging = get_telemetry_service()
 
@@ -403,7 +402,7 @@ async def regex_search_files(
 
 
 async def main(rel_path, recursive):
-    abs_path = os.path.abspath(".")
+    os.path.abspath(".")
     result = await regex_search_files(
         cwd=None,
         directory_path=rel_path,

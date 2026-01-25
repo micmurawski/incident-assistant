@@ -9,11 +9,17 @@ class ApiHandler:
     This should be implemented based on your specific API integration.
     """
 
+    @property
+    def provider(self) -> str:
+        """Returns the provider of the API handler."""
+        raise NotImplementedError
+
     def create_message(
         self,
         system_prompt: str,
         messages: List[AnthropicMessage],
         metadata: Optional[ApiHandlerCreateMessageMetadata] = None,
+        **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Creates a streaming message.

@@ -1,11 +1,11 @@
 from typing import Any, Literal, TypedDict
 
 from anthropic.types.thinking_config_param import ThinkingConfigParam
-from openai.types.shared_params.reasoning import Reasoning as OpenAIReasoning
+from openai.types.shared_params.reasoning import ReasoningEffort as OpenAIReasoningEffort
 
 
 class OpenAiReasoningParam(TypedDict):
-    reasoning_effort: OpenAIReasoning["reasoning_effort"]
+    reasoning_effort: OpenAIReasoningEffort
 
 
 class GeminiReasoningParams(TypedDict, total=False):

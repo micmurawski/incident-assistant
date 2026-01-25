@@ -8,20 +8,15 @@ from uuid import uuid5
 
 from agent.code_index.cache_manager import CacheManager
 from agent.code_index.file_processor import CodeBlock, CodeParser
-from agent.code_index.models import EmbedderResponse, IEmbedder, Payload, PointStruct
+from agent.code_index.models import (EmbedderResponse, IEmbedder, Payload,
+                                     PointStruct)
 from agent.code_index.vector_store import VectorStoreClient
-from agent.constants import (
-    BATCH_PROCESSING_CONCURRENCY,
-    BATCH_SEGMENT_THRESHOLD,
-    DIRS_TO_IGNORE,
-    EXTENSIONS,
-    INITIAL_RETRY_DELAY_MS,
-    MAX_BATCH_RETRIES,
-    MAX_FILE_SIZE,
-    MAX_LIST_FILES_LIMIT_CODE_INDEX,
-    PARSING_CONCURRENCY,
-    QDRANT_CODE_BLOCK_NAMESPACE,
-)
+from agent.constants import (BATCH_PROCESSING_CONCURRENCY,
+                             BATCH_SEGMENT_THRESHOLD, DIRS_TO_IGNORE,
+                             EXTENSIONS, INITIAL_RETRY_DELAY_MS,
+                             MAX_BATCH_RETRIES, MAX_FILE_SIZE,
+                             MAX_LIST_FILES_LIMIT_CODE_INDEX,
+                             PARSING_CONCURRENCY, QDRANT_CODE_BLOCK_NAMESPACE)
 from agent.list_files import Ignore, list_files
 from agent.telemetry_service import TelemetryService
 

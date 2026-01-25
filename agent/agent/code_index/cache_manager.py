@@ -6,8 +6,6 @@ from typing import Any
 
 from agent.code_index.safe_writer import safe_write_json
 
-HOME_DIR = os.path.expanduser("~")
-
 
 def async_debounce(wait_seconds):
     """
@@ -64,8 +62,7 @@ class CacheManager:
 
     def __init__(self, cache_dir: str = ".index_cache.json"):
         self.lock = asyncio.Lock()
-        self.cache_path = os.path.join(HOME_DIR, cache_dir)
-        print(f"Cache path: {self.cache_path}")
+        self.cache_path = os.path.normpath(cache_dir)
         base_path = os.path.dirname(self.cache_path)
         if not os.path.exists(base_path):
             os.makedirs(base_path)

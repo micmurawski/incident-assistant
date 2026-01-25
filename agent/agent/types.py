@@ -1,10 +1,6 @@
-from dataclasses import dataclass
 from typing import Any, List, Literal, Optional, Required, TypedDict
 
 from anthropic.types import MessageParam as AnthropicMessage
-
-from agent.code_index.code_index_manager import CodeIndexManager
-from agent.file_ops import FileOpsManager
 
 ApiProvider = Literal["anthropic", "openai", "google", "ollama"]
 
@@ -51,6 +47,19 @@ class ReasoningChunk(TypedDict, total=False):
     text: str = ""
 
 
+class ToolUse(TypedDict, total=False):
+    type: Required[str] = "tool_use"
+    id: str
+    name: str
+    input: dict[str, Any]
+
+
+class ToolResult(TypedDict, total=False):
+    type: Required[str] = "tool_result"
+    tool_use_id: str
+    content: str | dict | list[dict]
+
+
 class GroundingChunk(TypedDict, total=False):
     """Grounding content chunk"""
 
@@ -58,7 +67,7 @@ class GroundingChunk(TypedDict, total=False):
     sources: List[dict]
 
 
-StreamChunk = UsageChunk | TextChunk | ReasoningChunk | GroundingChunk
+StreamChunk = UsageChunk | TextChunk | ReasoningChunk | GroundingChunk | ToolUse
 
 
 class TokenUsage(TypedDict, total=False):

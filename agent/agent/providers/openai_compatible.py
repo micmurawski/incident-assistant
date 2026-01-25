@@ -1,10 +1,12 @@
-import asyncio
-import hashlib
 import json
 from typing import Any, Coroutine, Optional
 
-import ollama
 from anthropic.types.message_param import MessageParam
+from openai import AsyncOpenAI
+from openai.types.chat.chat_completion import ChatCompletion
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from openai.types.chat.chat_completion_message_param import \
+    ChatCompletionMessageParam
 
 from agent.providers.base import (ApiHandler, ApiHandlerCreateMessageMetadata,
                                   AsyncIterator)
@@ -16,24 +18,25 @@ from agent.providers.formatters.xml_matcher import XmlMatcher
 from agent.providers.settings import ModelInfo
 from agent.providers.utils.error_handling import handle_open_ai_error
 from agent.providers.utils.tiktoken import count_tokens
-from agent.types import (ReasoningChunk, StreamChunk, TextChunk, ToolUse,
-                         UsageChunk)
+from agent.types import ReasoningChunk, StreamChunk, TextChunk, UsageChunk
 
 
-class OllamaHandler(ApiHandler):
-    provider: str = "ollama"
+class OpenAICompatibleHandler(ApiHandler):
+    provider: str = "openai"
     """
     Handler for Ollama API with streaming support and prompt caching.
     """
 
     def __init__(self, model_id: str | None = None, api_key: str | None = None, base_url: str | None = None, **kwargs):
         self.model_id = model_id
-        self.base_url = base_url or "http://localhost:11434"
+        self.base_url = base_url or "http://localhost:11434/v1"
         self.model = fetch_ollama_model(model_id)
         self.options = kwargs
-        
-        # Initialize Ollama async client
-        self.client = ollama.AsyncClient(host=self.base_url)
+
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        self.client = AsyncOpenAI(api_key=api_key or "ollama", base_url=self.base_url, default_headers=headers)
 
     def get_model(self) -> ModelInfo:
         return self.model
@@ -51,32 +54,18 @@ class OllamaHandler(ApiHandler):
         config = self.get_model()
         model_id = config["id"]
         use_r1_format = "deepseek-r1" in model_id.lower()
-        # Convert messages to Ollama format
-        ollama_messages = []
-        if system_prompt:
-            ollama_messages.append({"role": "system", "content": system_prompt})
-        
-        # Convert and add user/assistant messages
-        if use_r1_format:
-            converted_messages = convert_to_openai_messages(messages)
-        else:
-            converted_messages = convert_to_r1_format(messages)
-        
-        for msg in converted_messages:
-            ollama_messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
-        tools = [json.load(open("/Users/micmur/GITHUB/o8s/agent/agent/x.json"))]
+        openai_messages: list[ChatCompletionMessageParam] = [
+            dict(role="system", content=system_prompt),
+            *(convert_to_openai_messages(messages) if use_r1_format else convert_to_r1_format(messages)),
+        ]
         try:
-            # Ollama streaming API call
-            stream = await self.client.chat(
+            stream = await self.client.chat.completions.create(
                 model=model_id,
-                messages=ollama_messages,
+                messages=openai_messages,
                 stream=True,
-                options={
-                    "temperature": self.options.get("temperature", 0.0),
-                    **{k: v for k, v in kwargs.items() if k not in ["stream", "model", "messages"]}
-                },
-                tools=tools,
-                #**kwargs,
+                temperature=self.options.get("temperature", 0.0),
+                stream_options={"include_usage": True},
+                **kwargs,
             )
         except Exception as e:
             raise handle_open_ai_error(e, "ollama") from e
@@ -86,27 +75,22 @@ class OllamaHandler(ApiHandler):
             transform=lambda chunk: dict(type="reasoning" if chunk["matched"] else "text", content=chunk["data"]),
         )
 
-        last_usage = None
+        last_usage: ChatCompletionChunk.usage = None
         content = []
         async for chunk in stream:
-            # Ollama returns chunks with message content directly
-            for tool_call in chunk.message.tool_calls or []:
-                tool_use_id = hashlib.sha256(json.dumps(dict(name=tool_call.function.name, arguments=tool_call.function.arguments)).encode()).hexdigest()
-                yield ToolUse(type="tool_use", id=tool_use_id, name=tool_call.function.name, input=tool_call.function.arguments)
-            if hasattr(chunk, "message") and hasattr(chunk.message, "content"):
-                chunk_content = chunk.message.content or ""
-                content.append(chunk_content)
-                
-                if chunk_content:
-                    for matcher_chunk in matcher.update(chunk_content):
-                        yield ReasoningChunk(type="reasoning", text=matcher_chunk["content"])
-            
-            # Extract usage info if available
-            if hasattr(chunk, "prompt_eval_count") or hasattr(chunk, "eval_count"):
-                last_usage = {
-                    "prompt_tokens": getattr(chunk, "prompt_eval_count", 0),
-                    "completion_tokens": getattr(chunk, "eval_count", 0),
-                }
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            content.append(delta.content)
+            tool_calls = chunk.choices[0].delta.tool_calls
+            if tool_calls:
+                print("TOOL CALLS(", tool_calls, ")")
+            #print(delta)
+            if delta.content:
+                for matcher_chunk in matcher.update(delta.content):
+                    yield ReasoningChunk(type="reasoning", text=matcher_chunk["content"])
+            if "usage" in delta:
+                last_usage = delta.usage
         for chunk in matcher.final():
             yield TextChunk(type="text", text=chunk["content"])
         if last_usage:
@@ -115,28 +99,22 @@ class OllamaHandler(ApiHandler):
                 input_tokens=last_usage.get("prompt_tokens", 0),
                 output_tokens=last_usage.get("completion_tokens", 0),
             )
+        with open("content.json", "w") as f:
+            f.write(json.dumps(content))
 
-    async def complete_prompt(self, prompt: str) -> str:
+    async def complete_prompt(self, prompt: str) -> Coroutine[Any, Any, str]:
         try:
             model_id = self.get_model().id
             use_r1_format = "deepseek-r1" in model_id.lower()
             try:
                 messages = [{"role": "user", "content": prompt}]
-                
-                # Convert messages if needed
-                if use_r1_format:
-                    converted_messages = convert_to_r1_format(messages)
-                else:
-                    converted_messages = messages
-                
-                # Ollama API call
-                response = await self.client.chat(
+                response: ChatCompletion = await self.client.chat.completions.create(
                     model=model_id,
-                    messages=converted_messages,
+                    messages=convert_to_r1_format(messages) if use_r1_format else messages,
+                    temperature=self.options.get("temperature", 0.0),
                     stream=False,
-                    options={"temperature": self.options.get("temperature", 0.0)}
                 )
-                return response.message.content or ""
+                return response.choices[0].message.content or ""
             except Exception as e:
                 raise handle_open_ai_error(e, "ollama") from e
         except Exception as e:
@@ -147,9 +125,8 @@ class OllamaHandler(ApiHandler):
         return await asyncio.to_thread(count_tokens, content)
 
 
-
 async def main():
-    handler = OllamaHandler(model_id="deepseek-r1:7b")
+    handler = OpenAICompatibleHandler(model_id="deepseek-r1:7b")
     response_str = await handler.complete_prompt("How many letters 'r' is in the strawberry?")
     print(response_str)
     msgs = [{"role": "user", "content": response_str}]

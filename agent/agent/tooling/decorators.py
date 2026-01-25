@@ -3,21 +3,11 @@ import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from inspect import Parameter
-from typing import (
-    Annotated,
-    Any,
-    Callable,
-    Generic,
-    GenericAlias,
-    Optional,
-    Type,
-    TypedDict,
-    TypeVar,
-    Union,
-    _AnnotatedAlias,
-    _SpecialForm,
-    _TypedDictMeta,
-)
+from typing import (Annotated, Any, Callable, GenericAlias, Literal, TypedDict,
+                    TypeVar, Union, _AnnotatedAlias, _TypedDictMeta)
+from framework import AsyncNode
+from framework.generic_messages import select_tools_use
+from agent.types import AnthropicMessage
 
 # Mapping from Python types to OpenAPI schema types
 CLASS_TO_TYPE = {
@@ -31,28 +21,13 @@ CLASS_TO_TYPE = {
     dict: "object",
 }
 
-T = TypeVar("Hidden")
-
-
-class Hidden(Generic[T]):
-    """
-    Marker class used to wrap parameters that should not be exposed as tool parameters.
-    For example, may be used for context objects.
-    """
-
-    def __init__(self, value: T):
-        self.value = value
-
-    def get(self) -> T:
-        """
-        Returns the hidden value.
-        """
-        return self.value
-
+T = TypeVar("T")
+type Hidden[T] = T
 
 # Set of Python types considered complex (not simple scalar/object types)
 COMPLEX_TYPES = {dict, list, set, tuple}
 NoneType = type(None)  # Used for checking Optional types
+ToolFormat = Literal["openai", "ollama", "anthropic", "gemini"]
 
 
 class BaseTool(ABC):
@@ -82,8 +57,11 @@ class BaseTool(ABC):
         raise NotImplementedError
 
     @property
-    @abstractmethod
     def tool_definition(self) -> dict:
+        return self.get_tool_definition()
+
+    @abstractmethod
+    def get_tool_definition(self) -> dict:
         """
         Return the metadata for this tool.
 
@@ -320,7 +298,7 @@ def tool(tags: list[str] | None = None):
             {
                 "__call__": lambda self, *args, **kwargs: func(*args, **kwargs),
                 "__doc__": func.__doc__,
-                "tool_definition": {
+                "get_tool_definition": lambda self: {
                     "name": func.__name__,
                     "description": (func.__doc__ or "").strip(),
                     "parameters": parameters_definition,
@@ -334,7 +312,7 @@ def tool(tags: list[str] | None = None):
 
 
 @dataclass
-class Tools:
+class Tools(AsyncNode):
     """
     Collection class for managing multiple tool instances.
 
@@ -343,12 +321,51 @@ class Tools:
     """
 
     tools: list[BaseTool]
+    
+    def prep(self, shared: dict) -> dict:
+        return shared
+    
+    def post(self, shared: dict, prep_res: dict, exec_res: dict) -> dict:
+        return shared
+
+    async def prep_async(self, shared: dict) -> dict:
+        return self.prep(shared)
+    
+    async def post_async(self, shared: dict, prep_res: dict, exec_res: dict) -> dict:
+        return self.post(shared, prep_res, exec_res)
+    
+    async def exec_async(self, prep_res: dict) -> dict:
+        return self.exec(prep_res)
+
+    def exec(self, prep_res: dict) -> dict:
+        messages: list[AnthropicMessage] = prep_res.get("messages", [])
+        tools_to_call: list[AnthropicMessage] = select_tools_use(messages)
+        
+        tool_to_call: AnthropicMessage 
+        for tool_to_call in tools_to_call:
+            name =tool_to_call["name"]
+            input = tool_to_call["input"]
+            tool_use_id = tool_to_call["id"]
+            # select tool by name
+            tool = next((t for t in self.tools if t.name == name), None)
+            if tool is None:
+                raise Exception(f"Tool {name} not found")
+            result = tool(input)
+            result = AnthropicMessage(
+                type="tool_result",
+                tool_use_id=tool_use_id,
+                content=result
+            )
+            messages.append(result)
+            return {
+                "messages": messages
+            }
 
     def __or__(self, other: "Tools") -> "Tools":
         return Tools(tools=self.tools + other.tools)
 
     def tools_definitions(
-        self, tags: set[str] | None = None, format_kwargs: dict[str, Any] | None = None
+        self, format: ToolFormat, tags: set[str] | None = None, format_kwargs: dict[str, Any] | None = None
     ) -> list[dict]:
         """
         Return all tool definitions, optionally filtered by tags, with placeholder substitution.
@@ -363,6 +380,20 @@ class Tools:
         # Filter the tools by tags (if provided)
         filtered = [t for t in self.tools if tags is None or t.tags & tags]
         definitions = [t.tool_definition for t in filtered]
+        if format == "anthropic":
+            for definition in definitions:
+                definition["input_schema"] = definition.pop("parameters")
+        elif format == "ollama":
+            for definition in definitions:
+                definition["type"] = "function"
+                definition["function"] = {
+                    "name": definition.pop("name"),
+                    "description": definition.pop("description"),
+                    "parameters": definition.pop("parameters")
+                }
+        elif format == "gemini":
+            pass
+
         # Substitute formatted placeholders if requested
         if format_kwargs:
             txt = json.dumps(definitions)
@@ -388,5 +419,7 @@ if __name__ == "__main__":
 
     # Example usage of tool collection
     tools = Tools(tools=[add])
-    print(tools.tools_definitions(tags={"not_math"}, format_kwargs={"workspace_name": "Workspace 1"}))
-    print(tools.tools_definitions(tags={"math"}, format_kwargs={"workspace_name": "Workspace 2"}))
+    print(tools.tools_definitions(
+        tags={"not_math"}, format_kwargs={"workspace_name": "Workspace 1"}))
+    print(tools.tools_definitions(
+        tags={"math"}, format_kwargs={"workspace_name": "Workspace 2"}))

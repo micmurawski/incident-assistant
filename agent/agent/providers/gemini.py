@@ -8,10 +8,12 @@ from agent.providers.formatters.gemini_format import convert_to_gemini_messages
 from agent.providers.models import GEMINI_DEFAULT_MODEL_ID, GEMINI_MODELS
 from agent.providers.params import get_model_params
 from agent.providers.settings import ModelInfo
-from agent.types import GroundingChunk, ReasoningChunk, StreamChunk, TextChunk, UsageChunk
+from agent.types import (GroundingChunk, ReasoningChunk, StreamChunk,
+                         TextChunk, UsageChunk)
 
 
 class GeminiHandler(ApiHandler):
+    provider: str = "gemini"
     """
     Handler for Google Gemini API with streaming support and advanced features.
 
@@ -90,6 +92,7 @@ class GeminiHandler(ApiHandler):
         system_prompt: str,
         messages: List[Dict[str, Any]],
         metadata: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
         """
         Create a streaming message with the Gemini API.
@@ -123,6 +126,7 @@ class GeminiHandler(ApiHandler):
             max_output_tokens=config["max_tokens"],
             thinking_config=config["reasoning"],
             **self.kwargs,
+            **kwargs,
         )
 
         # Add thinking config if enabled
