@@ -1,3 +1,4 @@
+import json
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from anthropic import Anthropic, AsyncAnthropic
@@ -8,10 +9,11 @@ from agent.providers.models import ANTHROPIC_DEFAULT_MODEL_ID, ANTHROPIC_MODELS
 from agent.providers.params import get_model_params
 from agent.providers.settings import AnthropicSettings, ModelInfo
 from agent.providers.utils.cost import calculate_api_cost_anthropic
-from agent.types import ReasoningChunk, StreamChunk, TextChunk, UsageChunk
+from agent.types import ReasoningChunk, StreamChunk, TextChunk, ToolUse, UsageChunk
 
 
 class AnthropicHandler(ApiHandler):
+    provider: str = "anthropic"
     """
     Handler for Anthropic API with streaming support and prompt caching.
 
@@ -134,6 +136,7 @@ class AnthropicHandler(ApiHandler):
         system_prompt: str,
         messages: List[AnthropicMessageParam],
         metadata: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
         """
         Create a streaming message with the Anthropic API.
@@ -171,21 +174,23 @@ class AnthropicHandler(ApiHandler):
             "system": system,
             "messages": messages,
             "stream": True,
+            "tools": kwargs.pop("tools", []),
+            "thinking": config.pop("reasoning", None),
         }
 
         if config.get("temperature") is not None:
             request_params["temperature"] = config["temperature"]
 
-        if config.get("reasoning_budget") is not None:
-            request_params["thinking"] = {"type": "enabled", "budget_tokens": config["reasoning_budget"]}
-
+        #if config.get("reasoning_budget") is not None:
+        #    request_params["thinking"] = {"type": "enabled", "budget_tokens": config["reasoning_budget"]}
+        
         # Add beta headers if needed
         extra_headers = {}
-
         # Create streaming response
         stream = await self.client.messages.create(
             **request_params,
             extra_headers=extra_headers if extra_headers else None,
+            **kwargs,
         )
 
         # Track token usage
@@ -194,8 +199,12 @@ class AnthropicHandler(ApiHandler):
         cache_write_tokens = 0
         cache_read_tokens = 0
 
+        # Track in-progress tool use blocks
+        current_tool_use_id: Optional[str] = None
+        current_tool_use_name: Optional[str] = None
+        current_tool_use_json: str = ""
+
         # Process stream chunks
-        # chunk: MessageChunk
         async for chunk in stream:
             if chunk.type == "message_start":
                 # Extract usage information
@@ -226,18 +235,24 @@ class AnthropicHandler(ApiHandler):
             elif chunk.type == "content_block_start":
                 block = chunk.content_block
 
-                # Add line break between multiple blocks
-                if chunk.index > 0:
-                    if block.type == "thinking":
-                        yield ReasoningChunk(type="reasoning", text="\n")
-                    elif block.type == "text":
-                        yield TextChunk(type="text", text="\n")
+                if block.type == "tool_use":
+                    # Start accumulating a tool use block
+                    current_tool_use_id = block.id
+                    current_tool_use_name = block.name
+                    current_tool_use_json = ""
+                else:
+                    # Add line break between multiple blocks
+                    if chunk.index > 0:
+                        if block.type == "thinking":
+                            yield ReasoningChunk(type="reasoning", text="\n")
+                        elif block.type == "text":
+                            yield TextChunk(type="text", text="\n")
 
-                # Yield initial content
-                if block.type == "thinking":
-                    yield ReasoningChunk(type="reasoning", text=block.thinking)
-                elif block.type == "text":
-                    yield TextChunk(type="text", text=block.text)
+                    # Yield initial content
+                    if block.type == "thinking":
+                        yield ReasoningChunk(type="reasoning", text=block.thinking)
+                    elif block.type == "text":
+                        yield TextChunk(type="text", text=block.text)
 
             elif chunk.type == "content_block_delta":
                 delta = chunk.delta
@@ -246,6 +261,29 @@ class AnthropicHandler(ApiHandler):
                     yield ReasoningChunk(type="reasoning", text=delta.thinking)
                 elif delta.type == "text_delta":
                     yield TextChunk(type="text", text=delta.text)
+                elif delta.type == "input_json_delta":
+                    # Accumulate partial JSON for tool use input
+                    current_tool_use_json += delta.partial_json
+
+            elif chunk.type == "content_block_stop":
+                # If we were accumulating a tool use block, emit it now
+                if current_tool_use_id is not None:
+                    try:
+                        tool_input = json.loads(current_tool_use_json) if current_tool_use_json else {}
+                    except json.JSONDecodeError:
+                        tool_input = {}
+
+                    yield ToolUse(
+                        type="tool_use",
+                        id=current_tool_use_id,
+                        name=current_tool_use_name,
+                        input=tool_input,
+                    )
+
+                    # Reset tool use tracking
+                    current_tool_use_id = None
+                    current_tool_use_name = None
+                    current_tool_use_json = ""
 
         # Calculate and yield final cost if tokens were used
         if any([input_tokens, output_tokens, cache_write_tokens, cache_read_tokens]):
@@ -319,29 +357,20 @@ class AnthropicHandler(ApiHandler):
             return len(text) // 4
 
     def get_model(self) -> ModelInfo:
-        model_id = self.model_id if self.model_id in ANTHROPIC_MODELS else ANTHROPIC_DEFAULT_MODEL_ID
+        is_thinking = self.model_id.endswith(":thinking")
+        _model_id = self.model_id.replace(":thinking", "") if is_thinking else self.model_id
+        model_id = _model_id if _model_id in ANTHROPIC_MODELS else ANTHROPIC_DEFAULT_MODEL_ID
         info = ANTHROPIC_MODELS[model_id]
         params: AnthropicSettings = get_model_params(
             format="anthropic", model_id=model_id, model=info, settings=self.kwargs
         )
-        if model_id == "claude-sonnet-4-20250514" and self.kwargs.get("anthropic_beta_1m_context"):
-            tier = info.get("tiers", [])[0]
-            if tier:
-                info = {
-                    **info,
-                    "context_window": tier.get("context_window", info.get("context_window", 200_000)),
-                    "input_price": tier.get("input_price", info.get("input_price", 3.0)),
-                    "output_price": tier.get("output_price", info.get("output_price", 15.0)),
-                    "cache_writes_price": tier.get("cache_writes_price", info.get("cache_writes_price", 3.75)),
-                    "cache_reads_price": tier.get("cache_reads_price", info.get("cache_reads_price", 0.3)),
-                }
-
+        if is_thinking and info.get("supports_reasoning_budget"):
+            params["reasoning"] = {"type": "enabled", "budget_tokens": self.kwargs.pop("reasoning_budget", 1024)}
         data = {
             "id": model_id.replace(":thinking", "") if model_id.endswith(":thinking") else model_id,
             **info,
             **params,
         }
-        # raise Exception(data["format"])
         return ModelInfo(**data)
 
 

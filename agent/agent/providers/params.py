@@ -4,7 +4,7 @@ from typing import Optional
 from agent.providers.settings import (AnthropicReasoningParams, ApiProvider,
                                       ApiProviderSettings,
                                       GeminiReasoningParams, ModelInfo,
-                                      OpenAIReasoning)
+                                      OpenAiReasoningParam)
 
 ANTHROPIC_DEFAULT_MAX_TOKENS = 8192
 DEFAULT_HYBRID_REASONING_MODEL_MAX_TOKENS = 16_384
@@ -111,7 +111,7 @@ def get_anthropic_reasoning(
 
 def get_openai_reasoning(
     model: ModelInfo, reasoning_effort: str, settings: ApiProviderSettings
-) -> Optional[OpenAIReasoning]:
+) -> Optional[OpenAiReasoningParam]:
     """
     Returns OpenAI-specific reasoning parameters if applicable.
     """
@@ -210,7 +210,7 @@ def get_model_params(
         result["reasoning"] = get_anthropic_reasoning(
             model=model,
             reasoning_budget=reasoning_budget,
-            # reasoning_effort=reasoning_effort,
+            #reasoning_effort=reasoning_effort,
             settings=settings,
         )
         return ApiProviderSettings.get_provider_settings_class(api_provider="anthropic", **result)
@@ -222,7 +222,7 @@ def get_model_params(
         result["reasoning"] = get_openai_reasoning(
             model=model,
             reasoning_budget=reasoning_budget,
-            reasoning_effort=reasoning_effort,
+            #reasoning_effort=reasoning_effort,
             settings=settings,
         )
         return result
@@ -231,7 +231,7 @@ def get_model_params(
         result["reasoning"] = get_gemini_reasoning(
             model=model,
             reasoning_budget=reasoning_budget,
-            # reasoning_effort=reasoning_effort,
+            #reasoning_effort=reasoning_effort,
             settings=settings,
         )
         return result

@@ -1,5 +1,6 @@
 import locale
 import os
+from functools import cmp_to_key
 import re
 from dataclasses import dataclass, field
 from typing import Literal, Optional
@@ -89,7 +90,7 @@ class FileOpsManager:
         if not os.path.exists(path):
             raise Exception(f"The path {path} does not exist.")
 
-        files, did_hit_limit = list_files(full_path, recursive, 200)
+        files, did_hit_limit = await list_files(full_path, recursive, 200)
         # files = list(filter(lambda f: self.ignore.ignores(f), files))
 
         result = self._format_files_list(full_path, files, did_hit_limit)
@@ -102,10 +103,10 @@ class FileOpsManager:
     def _format_files_list(absolute_path: str, files: list[str], did_hit_limit: bool) -> str:
         _files = []
         for file in files:
-            rel_path = os.path.relpath(absolute_path, file)
-
+            # file is relative to absolute_path; relpath(path, start) = path relative to start
+            rel_path = os.path.relpath(os.path.join(absolute_path, file), absolute_path)
             if file.endswith(os.sep):
-                rel_path += os.sep
+                rel_path = rel_path + os.sep if not rel_path.endswith(os.sep) else rel_path
             _files.append(rel_path)
 
         def _sort(a: str, b: str):
@@ -117,10 +118,16 @@ class FileOpsManager:
                         return -1
                     if i + 1 == len(b_parts) and i + 1 < len(a_parts):
                         return 1
-                    return locale.strxfrm(a_parts[i]).lower() if not a_parts[i].isdigit() else int(a_parts[i])
+                    a_is_digit = a_parts[i].isdigit()
+                    b_is_digit = b_parts[i].isdigit()
+                    if a_is_digit and b_is_digit:
+                        return int(a_parts[i]) - int(b_parts[i])
+                    va = locale.strxfrm(a_parts[i]).lower()
+                    vb = locale.strxfrm(b_parts[i]).lower()
+                    return (va > vb) - (va < vb)
             return len(a_parts) - len(b_parts)
 
-        res = "\n".join(sorted(_files, key=_sort))
+        res = "\n".join(sorted(_files, key=cmp_to_key(_sort)))
         if not res:
             return "No files found."
         if did_hit_limit:

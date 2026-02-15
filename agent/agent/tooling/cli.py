@@ -1,10 +1,12 @@
 from typing import Annotated, Optional
+from agent.context import Context
+from agent.tooling.decorators import Hidden, tool
 
-from .base import tool
-
+import asyncio
 
 @tool(tags=["cli"])
-def execute_command(
+async def execute_command(
+    context: Hidden[Context],
     command: Annotated[
         str,
         "The CLI command to execute. This should be valid for the current operating system. Ensure the command is properly formatted and does not contain any harmful instructions.",
@@ -27,5 +29,7 @@ def execute_command(
     Example: Requesting to execute ls in a specific directory if directed
     execute_command_tool(command="ls -la", cwd="/home/user/projects")
     """
-
-    return "This is a test response"
+    if cwd is None:
+        cwd = context.cwd
+    result = await asyncio.create_subprocess_exec(command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=cwd)
+    return result.stdout.decode("utf-8")

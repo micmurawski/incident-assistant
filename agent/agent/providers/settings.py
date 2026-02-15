@@ -4,6 +4,7 @@ from anthropic.types.thinking_config_param import ThinkingConfigParam
 from openai.types.shared_params.reasoning import ReasoningEffort as OpenAIReasoningEffort
 
 
+
 class OpenAiReasoningParam(TypedDict):
     reasoning_effort: OpenAIReasoningEffort
 
@@ -24,6 +25,7 @@ class ModelInfo(TypedDict, total=False):
     max_cache_points: int
     min_tokens_per_cache_point: int
     cachable_fields: list[Literal["system", "messages", "tools"]]
+    reasoning: dict[str, Any] | None
 
 
 class BaseProviderSettings(TypedDict, total=False):

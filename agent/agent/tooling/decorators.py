@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import json
 from abc import ABC, abstractmethod
@@ -6,6 +7,7 @@ from inspect import Parameter
 from typing import (Annotated, Any, Callable, GenericAlias, Literal, TypedDict,
                     TypeVar, Union, _AnnotatedAlias, _TypedDictMeta)
 from framework import AsyncNode
+from framework.utils import __reduce_shared as reduce_shared
 from framework.generic_messages import select_tools_use
 from agent.types import AnthropicMessage
 
@@ -36,7 +38,11 @@ class BaseTool(ABC):
 
     All tools must implement __call__, tags, and tool_definition.
     """
-
+    
+    @property
+    def name(self) -> str:
+        return self.tool_definition["name"]
+    
     @abstractmethod
     def __call__(self, *args, **kwargs) -> Any:
         """
@@ -68,6 +74,16 @@ class BaseTool(ABC):
         This should include at least name, description, and parameters (schema).
         """
         raise NotImplementedError
+
+
+def _is_hidden_param(param: Parameter) -> bool:
+    """
+    Returns True if the parameter is annotated with Hidden[T] (framework-injected, excluded from tool schema).
+    """
+    ann = getattr(param, "annotation", param)
+    if ann is Parameter.empty:
+        return False
+    return hasattr(ann, "__origin__") and ann.__origin__ == Hidden
 
 
 def is_typeddict(_type: Any) -> bool:
@@ -290,6 +306,10 @@ def tool(tags: list[str] | None = None):
         """
         signature = inspect.signature(func)
         parameters_definition = process_signature(signature)
+        inject_params = [
+            name for name, param in signature.parameters.items()
+            if _is_hidden_param(param)
+        ]
         # Create a new subclass of BaseTool on the fly,
         # providing __call__, tool_definition, and tags as class-level attributes.
         tool_class = type(
@@ -298,6 +318,8 @@ def tool(tags: list[str] | None = None):
             {
                 "__call__": lambda self, *args, **kwargs: func(*args, **kwargs),
                 "__doc__": func.__doc__,
+                "_func": func,
+                "_inject_params": inject_params,
                 "get_tool_definition": lambda self: {
                     "name": func.__name__,
                     "description": (func.__doc__ or "").strip(),
@@ -321,12 +343,15 @@ class Tools(AsyncNode):
     """
 
     tools: list[BaseTool]
-    
+
+    def __post_init__(self) -> None:
+        super().__init__()
+
     def prep(self, shared: dict) -> dict:
         return shared
     
-    def post(self, shared: dict, prep_res: dict, exec_res: dict) -> dict:
-        return shared
+    def post(self, shared: dict, prep_res: dict, exec_res: dict) -> str:
+        return reduce_shared(self, shared, prep_res, exec_res)
 
     async def prep_async(self, shared: dict) -> dict:
         return self.prep(shared)
@@ -335,34 +360,73 @@ class Tools(AsyncNode):
         return self.post(shared, prep_res, exec_res)
     
     async def exec_async(self, prep_res: dict) -> dict:
-        return self.exec(prep_res)
+        return await self.exec(prep_res)
 
-    def exec(self, prep_res: dict) -> dict:
+    async def exec(self, prep_res: dict) -> dict:
         messages: list[AnthropicMessage] = prep_res.get("messages", [])
         tools_to_call: list[AnthropicMessage] = select_tools_use(messages)
-        
-        tool_to_call: AnthropicMessage 
+
+        tool_to_call: AnthropicMessage
         for tool_to_call in tools_to_call:
-            name =tool_to_call["name"]
-            input = tool_to_call["input"]
+            name = tool_to_call["name"]
+            llm_input = tool_to_call["input"]
             tool_use_id = tool_to_call["id"]
-            # select tool by name
             tool = next((t for t in self.tools if t.name == name), None)
             if tool is None:
                 raise Exception(f"Tool {name} not found")
-            result = tool(input)
-            result = AnthropicMessage(
-                type="tool_result",
-                tool_use_id=tool_use_id,
-                content=result
+
+            # Inject Hidden params from shared (convention: param name -> prep_res[key])
+            inject_params = getattr(tool, "_inject_params", [])
+            injected = {}
+            for name in inject_params:
+                if name not in prep_res:
+                    raise ValueError(
+                        f"Tool {tool.name} requires injected param '{name}' "
+                        f"(Hidden param). Ensure shared['{name}'] is set when running the flow."
+                    )
+                injected[name] = prep_res[name]
+            final_input = {**injected, **llm_input}
+            result = tool(**final_input)
+            if asyncio.iscoroutine(result):
+                result = await result
+
+            print(f"\033[95m{result}\033[0m")
+
+            # Anthropic expects tool results in a user message with content blocks
+            messages.append(
+                AnthropicMessage(
+                    role="user",
+                    content=[{
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": result,
+                    }],
+                )
             )
-            messages.append(result)
-            return {
-                "messages": messages
-            }
+            return {"messages": messages}
 
     def __or__(self, other: "Tools") -> "Tools":
         return Tools(tools=self.tools + other.tools)
+
+    @staticmethod
+    def _strip_unsupported_schema_fields(schema: dict) -> dict:
+        """
+        Recursively strip fields not supported by Gemini function declaration schemas.
+
+        Gemini does not support 'additionalProperties' in parameter schemas.
+        """
+        # Fields that Gemini does not accept in function declaration schemas
+        unsupported = {"additionalProperties"}
+        cleaned = {k: v for k, v in schema.items() if k not in unsupported}
+        # Recurse into nested schema structures
+        if "properties" in cleaned and isinstance(cleaned["properties"], dict):
+            cleaned["properties"] = {
+                k: Tools._strip_unsupported_schema_fields(v) if isinstance(v, dict) else v
+                for k, v in cleaned["properties"].items()
+            }
+        if "items" in cleaned and isinstance(cleaned["items"], dict):
+            cleaned["items"] = Tools._strip_unsupported_schema_fields(cleaned["items"])
+        return cleaned
 
     def tools_definitions(
         self, format: ToolFormat, tags: set[str] | None = None, format_kwargs: dict[str, Any] | None = None
@@ -392,7 +456,10 @@ class Tools(AsyncNode):
                     "parameters": definition.pop("parameters")
                 }
         elif format == "gemini":
-            pass
+            for definition in definitions:
+                definition["parameters"] = self._strip_unsupported_schema_fields(
+                    definition.get("parameters", {})
+                )
 
         # Substitute formatted placeholders if requested
         if format_kwargs:

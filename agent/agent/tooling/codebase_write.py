@@ -1,10 +1,15 @@
 from typing import Annotated, Optional
 
-from .decorators import Tools, tool
+from agent.context import Context
+from agent.tooling.decorators import Hidden, Tools, tool
+from agent.file_ops import FileOpsResult
+
+
 
 
 @tool(tags=["codebase", "write"])
 async def search_and_replace(
+    context: Hidden[Context],
     path: Annotated[str, "File path (relative to workspace directory {cwd})"],
     search: Annotated[str, "The search string to replace"],
     replace: Annotated[str, "The replacement string"],
@@ -28,12 +33,13 @@ async def search_and_replace(
     2. Case-insensitive regex pattern:
     search_and_replace(path="src/main.ts", search="console.log", replace="console.error", use_regex=True, ignore_case=True)
     """
-
-    return "This is a test response"
+    result: FileOpsResult = await context.file_ops_manager.search_and_replace(path, search, replace, start_line, end_line, use_regex, ignore_case)
+    return result.diff
 
 
 @tool(tags=["write", "codebase"])
 async def insert_content(
+    context: Hidden[Context],
     path: Annotated[str, "File path relative to workspace directory {cwd}"],
     line: Annotated[
         int,
@@ -51,12 +57,13 @@ async def insert_content(
     Example for appending to the end of file:
     insert_content(path="src/utils.ts", line=0, content="// This is the end of the file")
     """
-
-    return "This is a test response"
+    result: FileOpsResult = await context.file_ops_manager.append_to_file(path, content)
+    return result.diff
 
 
 @tool(tags=["write"])
 async def write_to_file(
+    context: Hidden[Context],
     path: Annotated[str, "The path of the file to write to (relative to the current workspace directory {cwd})"],
     content: Annotated[
         str,
@@ -72,7 +79,8 @@ async def write_to_file(
     Example: Requesting to write content to a file
     write_to_file(path="src/main.ts", content="console.log('Hello, world!');")
     """
-    return "This is a test response"
+    result: FileOpsResult = await context.file_ops_manager.write_to_file(path, content)
+    return result.diff
 
 
 CodebaseWriteTools = Tools(tools=[search_and_replace, insert_content, write_to_file])

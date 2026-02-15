@@ -1,7 +1,8 @@
 import asyncio
 import hashlib
 import json
-from typing import Any, Coroutine, Optional
+import os
+from typing import Any, Optional
 
 import ollama
 from anthropic.types.message_param import MessageParam
@@ -18,6 +19,48 @@ from agent.providers.utils.error_handling import handle_open_ai_error
 from agent.providers.utils.tiktoken import count_tokens
 from agent.types import (ReasoningChunk, StreamChunk, TextChunk, ToolUse,
                          UsageChunk)
+
+
+def __debug_ollama_stream__() -> bool:
+    return os.environ.get("DEBUG_OLLAMA_STREAM", "").lower() in ("1", "true", "yes")
+
+
+def _debug_print_raw_ollama(chunk: Any) -> None:
+    """Print raw Ollama stream chunk for debugging (stderr to avoid breaking pipes)."""
+    import sys
+    text = getattr(getattr(chunk, "message", None), "content", None) or ""
+    sys.stderr.write(f"\033[33m[raw ollama] content={repr(text)}\033[0m\n")
+
+
+def _debug_print_parsed(ctype: str, text: str) -> None:
+    """Print parsed chunk type and content for debugging."""
+    import sys
+    color = "\033[90m" if ctype == "reasoning" else "\033[0m"
+    sys.stderr.write(f"{color}[parsed {ctype}] {repr(text)}\033[0m\n")
+
+
+def _content_to_string(content: Any) -> str:
+    """Normalize message content to string for Ollama API (expects content: str)."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for pt in content:
+            if isinstance(pt, str):
+                parts.append(pt)
+            elif isinstance(pt, dict):
+                if pt.get("type") == "text":
+                    t = pt.get("text")
+                    parts.append("" if t is None else str(t))
+                elif pt.get("type") == "tool_result":
+                    c = pt.get("content")
+                    parts.append("" if c is None else str(c))
+            else:
+                parts.append(str(pt))
+        return "\n".join(parts)
+    return str(content)
 
 
 class OllamaHandler(ApiHandler):
@@ -48,6 +91,7 @@ class OllamaHandler(ApiHandler):
         """
         Create a streaming message with the Ollama API.
         """
+        debug_raw = kwargs.pop("debug_raw_stream", False) or __debug_ollama_stream__()
         config = self.get_model()
         model_id = config["id"]
         use_r1_format = "deepseek-r1" in model_id.lower()
@@ -63,8 +107,8 @@ class OllamaHandler(ApiHandler):
             converted_messages = convert_to_r1_format(messages)
         
         for msg in converted_messages:
-            ollama_messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
-        tools = [json.load(open("/Users/micmur/GITHUB/o8s/agent/agent/x.json"))]
+            content = _content_to_string(msg.get("content", ""))
+            ollama_messages.append({"role": msg.get("role", "user"), "content": content})
         try:
             # Ollama streaming API call
             stream = await self.client.chat(
@@ -75,8 +119,7 @@ class OllamaHandler(ApiHandler):
                     "temperature": self.options.get("temperature", 0.0),
                     **{k: v for k, v in kwargs.items() if k not in ["stream", "model", "messages"]}
                 },
-                tools=tools,
-                #**kwargs,
+                tools=kwargs.get("tools"),
             )
         except Exception as e:
             raise handle_open_ai_error(e, "ollama") from e
@@ -89,6 +132,8 @@ class OllamaHandler(ApiHandler):
         last_usage = None
         content = []
         async for chunk in stream:
+            if debug_raw:
+                _debug_print_raw_ollama(chunk)
             # Ollama returns chunks with message content directly
             for tool_call in chunk.message.tool_calls or []:
                 tool_use_id = hashlib.sha256(json.dumps(dict(name=tool_call.function.name, arguments=tool_call.function.arguments)).encode()).hexdigest()
@@ -99,7 +144,14 @@ class OllamaHandler(ApiHandler):
                 
                 if chunk_content:
                     for matcher_chunk in matcher.update(chunk_content):
-                        yield ReasoningChunk(type="reasoning", text=matcher_chunk["content"])
+                        out_type = matcher_chunk["type"]
+                        out_text = matcher_chunk["content"]
+                        if debug_raw:
+                            _debug_print_parsed(out_type, out_text)
+                        if out_type == "reasoning":
+                            yield ReasoningChunk(type="reasoning", text=out_text)
+                        else:
+                            yield TextChunk(type="text", text=out_text)
             
             # Extract usage info if available
             if hasattr(chunk, "prompt_eval_count") or hasattr(chunk, "eval_count"):
@@ -108,7 +160,14 @@ class OllamaHandler(ApiHandler):
                     "completion_tokens": getattr(chunk, "eval_count", 0),
                 }
         for chunk in matcher.final():
-            yield TextChunk(type="text", text=chunk["content"])
+            out_type = chunk["type"]
+            out_text = chunk["content"]
+            if debug_raw:
+                _debug_print_parsed(out_type, out_text)
+            if out_type == "reasoning":
+                yield ReasoningChunk(type="reasoning", text=out_text)
+            else:
+                yield TextChunk(type="text", text=out_text)
         if last_usage:
             yield UsageChunk(
                 type="usage",

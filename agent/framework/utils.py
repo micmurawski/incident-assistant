@@ -62,7 +62,7 @@ def shallow_deserialize(model: BaseModel) -> dict:
     return res
 
 
-def __reduce_shared(self, shared, prep_res, exec_res):
+def __reduce_shared(self, shared, prep_res, exec_res) ->  str:
     if isinstance(exec_res, tuple) and len(exec_res) > 1:
         state, action = exec_res
     else:

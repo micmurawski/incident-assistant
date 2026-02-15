@@ -1,9 +1,25 @@
 import inspect
+import weakref
 from typing import Any, Callable
 
 from pydantic import Field, create_model
 
-from framework import Node
+from framework import Node, AsyncNode
+
+
+class _NodeDescriptor:
+    """Descriptor so @node on a method gets the owning instance (owner) when exec runs."""
+
+    def __init__(self, node_class: type, is_class_method: bool = False):
+        self.node_class = node_class
+        self._cache: "weakref.WeakKeyDictionary[Any, Any]" = weakref.WeakKeyDictionary()
+
+    def __get__(self, obj: Any, objtype: type | None = None) -> Any:
+        if obj is None:
+            return self
+        if obj not in self._cache:
+            self._cache[obj] = self.node_class(owner=obj)
+        return self._cache[obj]
 
 
 def signature_to_field_definitions(parameters: dict[str, inspect.Parameter]) -> dict:
@@ -46,10 +62,15 @@ def create_prep(signature: inspect.Signature) -> Callable[[Node, Any], dict]:
         res = {}
         for name, field in signature.parameters.items():
             res[name] = shared.get(name)
-            if field.default is inspect._empty and res[name] is None:
-                raise ValueError(f"Parameter {name} has no default value")
-            elif res[name] is None:
-                res[name] = field.default
+            if res[name] is None:
+                if field.kind == inspect.Parameter.VAR_KEYWORD:
+                    res[name] = {}
+                elif field.kind == inspect.Parameter.VAR_POSITIONAL:
+                    res[name] = []
+                elif field.default is not inspect._empty:
+                    res[name] = field.default
+                else:
+                    raise ValueError(f"Parameter {name} has no default value")
         return res
 
     return prep_inner
@@ -92,24 +113,110 @@ def node(func=None, *, max_retries=1, wait=0):
         class_name = func.__name__
         signature = inspect.signature(func)
 
-        input_model = signature_to_input_model(f"{class_name}_input_model", signature)
+        # Determine if 'self' is the first parameter (i.e., if the func is a method)
+        parameters = list(signature.parameters.values())
+        
+        is_method = len(parameters) > 0 and parameters[0].name == "self"
+        is_class_method = len(parameters) > 0 and parameters[0].name == "cls"
+        is_async = inspect.iscoroutinefunction(func)
+        
+        if is_method or is_class_method:
+            parameters = parameters[1:]
+            signature = inspect.Signature(parameters)
 
-        node_class = type(
-            class_name,
-            (Node,),
-            {
-                "__init__": lambda self, **kwargs: __init(self, max_retries=max_retries, wait=wait, **kwargs),
-                "exec": lambda self, prep_res: func(**input_model(**prep_res).model_dump()),
-                "prep": (signature),
-                "post": __reduce_shared,
-                "__doc__": func.__doc__,
-                "__module__": func.__module__,
-                "__name__": func.__name__,
-            },
-        )
-        return node_class()
+        input_model = signature_to_input_model(f"{class_name}_input_model", signature)
+        is_method_or_cls = is_method or is_class_method
+
+        def make_node_init(owner_param: bool):
+            def node_init(self, owner=None, **kwargs):
+                if owner_param:
+                    self.owner = owner
+                __init(self, max_retries=max_retries, wait=wait, **kwargs)
+            return node_init
+
+        if not is_async:
+            if is_method_or_cls:
+                def exec_sync(self, prep_res):
+                    return func(self.owner, **input_model(**prep_res).model_dump())
+                node_class = type(
+                    class_name,
+                    (Node,),
+                    {
+                        "__init__": make_node_init(True),
+                        "exec": exec_sync,
+                        "prep": create_prep(signature),
+                        "post": __reduce_shared,
+                        "__doc__": func.__doc__,
+                        "__module__": func.__module__,
+                        "__name__": func.__name__,
+                    },
+                )
+                return _NodeDescriptor(node_class)
+            node_class = type(
+                class_name,
+                (Node,),
+                {
+                    "__init__": make_node_init(False),
+                    "exec": lambda self, prep_res: func(**input_model(**prep_res).model_dump()),
+                    "prep": create_prep(signature),
+                    "post": __reduce_shared,
+                    "__doc__": func.__doc__,
+                    "__module__": func.__module__,
+                    "__name__": func.__name__,
+                },
+            )
+            return node_class()
+        else:
+            async def exec_async(self, prep_res):
+                if is_method_or_cls:
+                    return await func(self.owner, **input_model(**prep_res).model_dump())
+                return await func(**input_model(**prep_res).model_dump())
+
+            async def post(self, shared, prep_res, exec_res):
+                return __reduce_shared(self, shared, prep_res, exec_res)
+
+            async def prep(self, shared):
+                return create_prep(signature)(self, shared)
+
+            if is_method_or_cls:
+                node_class = type(
+                    class_name,
+                    (AsyncNode,),
+                    {
+                        "__init__": make_node_init(True),
+                        "exec_async": exec_async,
+                        "prep_async": prep,
+                        "post_async": post,
+                        "__doc__": func.__doc__,
+                        "__module__": func.__module__,
+                        "__name__": func.__name__,
+                    },
+                )
+                return _NodeDescriptor(node_class)
+            node_class = type(
+                class_name,
+                (AsyncNode,),
+                {
+                    "__init__": make_node_init(False),
+                    "exec_async": exec_async,
+                    "prep_async": prep,
+                    "post_async": post,
+                    "__doc__": func.__doc__,
+                    "__module__": func.__module__,
+                    "__name__": func.__name__,
+                },
+            )
+            return node_class()
 
     if func is None:
         return decorator
     else:
         return decorator(func)
+
+@node
+async def noop_async(**data: dict[str, Any]):
+    return data
+
+@node
+def noop(**data: dict[str, Any]):
+    return data

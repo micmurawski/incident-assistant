@@ -408,7 +408,7 @@ class MessageConverter:
 
 
 def select_tools_use(messages: list[Message]) -> list[dict]:
-    deserialized_messages = [m.model_dump() for m in messages]
+    deserialized_messages = [m for m in messages]
     tool_use_ids = {
         c["id"]
         for m in deserialized_messages

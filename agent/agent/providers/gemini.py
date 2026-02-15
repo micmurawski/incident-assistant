@@ -1,4 +1,5 @@
 from typing import Any, AsyncIterator, Dict, List, Optional
+from uuid import uuid4
 
 from google import genai
 from google.genai import types
@@ -9,7 +10,7 @@ from agent.providers.models import GEMINI_DEFAULT_MODEL_ID, GEMINI_MODELS
 from agent.providers.params import get_model_params
 from agent.providers.settings import ModelInfo
 from agent.types import (GroundingChunk, ReasoningChunk, StreamChunk,
-                         TextChunk, UsageChunk)
+                         TextChunk, ToolUse, UsageChunk)
 
 
 class GeminiHandler(ApiHandler):
@@ -107,35 +108,28 @@ class GeminiHandler(ApiHandler):
         """
         config = self.get_model()
         model_id = config["id"]
-
         # Convert messages to Gemini format
         contents = convert_to_gemini_messages(messages)
+        #print("converted contents")
+        #print(contents)
 
-        # Prepare tools
-        tools = []
+        # Prepare tools list
+        tools_list = []
+        function_declarations = kwargs.pop("tools", [])
+        if function_declarations:
+            tools_list.append(types.Tool(function_declarations=function_declarations))
         if self.enable_url_context:
-            tools.append(types.Tool(url_context={}))
-
+            tools_list.append(types.Tool(url_context={}))
         if self.enable_grounding:
-            tools.append(types.Tool(google_search={}))
-
+            tools_list.append(types.Tool(google_search={}))
         # Prepare generation config
         generation_config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             temperature=config["temperature"],
             max_output_tokens=config["max_tokens"],
-            thinking_config=config["reasoning"],
-            **self.kwargs,
-            **kwargs,
+            thinking_config=types.ThinkingConfig(**config["reasoning"]) if config["reasoning"] else None,
+            tools=tools_list if tools_list else None,
         )
-
-        # Add thinking config if enabled
-        # if config["enable_reasoning"]:
-        #    generation_config.thinking_config = types.ThinkingConfig(thinking_budget_tokens=10000)
-
-        # Add tools if any
-        if tools:
-            generation_config.tools = tools
 
         try:
             # Generate content stream
@@ -164,6 +158,15 @@ class GeminiHandler(ApiHandler):
                             if hasattr(part, "thought") and part.thought:
                                 if part.text:
                                     yield ReasoningChunk(type="reasoning", text=part.text)
+                            elif hasattr(part, "function_call") and part.function_call:
+                                # Handle function/tool calls
+                                func_call = part.function_call
+                                yield ToolUse(
+                                    type="tool_use",
+                                    id=f"call_{uuid4().hex[:12]}",
+                                    name=func_call.name,
+                                    input=dict(func_call.args) if func_call.args else {},
+                                )
                             else:
                                 # Regular content
                                 if part.text:
@@ -205,9 +208,10 @@ class GeminiHandler(ApiHandler):
                     reasoning_tokens=reasoning_tokens,
                     total_cost=total_cost,
                 )
-
         except Exception as e:
             raise Exception(f"Gemini generate stream error: {str(e)}") from e
+        finally:
+            await self.client.aio.aclose()
 
     def _extract_grounding_sources(self, grounding_metadata: Any) -> List[dict]:
         """Extract grounding sources from metadata."""
@@ -381,15 +385,19 @@ class GeminiHandler(ApiHandler):
 
         return total_cost
 
+
     def get_model(self) -> ModelInfo:
         _id = self.model_id if self.model_id in GEMINI_MODELS else GEMINI_DEFAULT_MODEL_ID
         info = GEMINI_MODELS[_id]
         params = get_model_params(format="gemini", model_id=_id, model=info, settings=self.kwargs)
+        is_thinking = _id.endswith(":thinking")
         data = {
-            "id": _id.replace(":thinking", "") if _id.endswith(":thinking") else _id,
+            "id": _id.replace(":thinking", "") if is_thinking else _id,
             **info,
             **params,
         }
+        if is_thinking:
+            data["reasoning"].update({"include_thoughts": True})
         return ModelInfo(**data)
 
 

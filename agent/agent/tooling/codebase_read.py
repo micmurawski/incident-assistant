@@ -3,6 +3,7 @@ from typing import Annotated, Optional, TypedDict
 
 from agent.code_index.models import VectorStoreSearchResult
 from agent.context import Context
+from agent.file_ops import FileOpsResult
 from agent.telemetry_service import get_telemetry_service
 
 from .decorators import Hidden, Tools, tool
@@ -70,7 +71,8 @@ async def get_list_code_definitions_names_descriptions(
     Example: Requesting to list definitions in a specific directory
     get_list_code_definitions_names_descriptions(path="src")
     """
-    return await context.file_ops_manager.list_code_definitions_names_descriptions(path).content
+    res: FileOpsResult = await context.file_ops_manager.list_code_definitions_names_descriptions(path)
+    return res.diff
 
 
 @tool(tags=["codebase", "read"])
@@ -96,7 +98,8 @@ async def read_file(
     Example: Requesting to read the last 10 lines of a file
     read_file(path="src/main.ts", end_line=-10)
     """
-    return await context.file_ops_manager.read_file(path, start_line, end_line).content
+    res: FileOpsResult = await context.file_ops_manager.read_file(path, start_line, end_line)
+    return res.content
 
 
 class FileContent(TypedDict):
@@ -120,7 +123,8 @@ async def read_multiple_files(
     Example: Requesting to read the contents of multiple files
     read_multiple_files(files=[{"path": "src/main.ts", "start_line": 1, "end_line": 10}, {"path": "src/utils.ts", "start_line": 1, "end_line": 10}])
     """
-    return await context.file_ops_manager.read_multiple_files(files).content
+    res: FileOpsResult = await context.file_ops_manager.read_multiple_files(files)
+    return res.content
 
 
 @tool(tags=["codebase", "read"])
@@ -144,7 +148,8 @@ async def search_file(
     Example: Requesting to search for all .ts files in the current directory
     search_file(path=".", regex=".*", file_pattern="*.ts")
     """
-    return await context.file_ops_manager.search_file(path, regex, file_pattern).content
+    res: FileOpsResult = await context.file_ops_manager.search_file(path, regex, file_pattern)
+    return res.content
 
 
 @tool(tags=["codebase", "read"])
@@ -153,9 +158,9 @@ async def list_files(
     path: Annotated[
         str, " The path of the directory to list contents for (relative to the current workspace directory {cwd})"
     ],
-    recursive: Annotated[
+    recursive: Optional[Annotated[
         bool, "Whether to list files recursively. Use true for recursive listing, false or omit for top-level only."
-    ],
+    ]] = False,
 ) -> str:
     """
     Request to list files and directories within the specified directory. If recursive is true, it will list all files and directories recursively. If recursive is false or not provided, it will only list the top-level contents. Do not use this tool to confirm the existence of files you may have created, as the user will let you know if the files were created successfully or not
@@ -164,12 +169,13 @@ async def list_files(
     list_files(path=<directory path>, recursive=<true/false>)
 
     Example: Requesting to list the files in the current directory
-    list_files(path=".", recursive=true)
+    list_files(path=".", recursive=false)
 
     Example: Requesting to list the files in the current directory recursively
     list_files(path=".", recursive=true)
     """
-    return await context.file_ops_manager.list_files_tool(path, recursive).content
+    res: FileOpsResult = await context.file_ops_manager.list_files_tool(path, recursive)
+    return res.content
 
 
 CodebaseReadTools = Tools(

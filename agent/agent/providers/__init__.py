@@ -5,7 +5,6 @@ from agent.providers.settings import ApiProvider
 
 
 def build_api_handler(*, provider: ApiProvider, **configuration: dict[str, Any]) -> ApiHandler:
-    # raise Exception(provider, configuration)
     if provider == "anthropic":
         from agent.providers._anthropic import AnthropicHandler
 
