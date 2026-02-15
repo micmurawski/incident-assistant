@@ -86,7 +86,7 @@ class IVectorStoreClient(ABC):
         pass
 
     @abstractmethod
-    async def upsert_points(self, points: list[PointStruct]) -> Coroutine[Any, Any, None]:
+    async def upsert_points(self, points: list[PointStruct], collection_name: str | None = None) -> Coroutine[Any, Any, None]:
         pass
 
     @abstractmethod

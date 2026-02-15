@@ -3,7 +3,7 @@ from uuid import uuid4
 import json
 from peewee import (BooleanField, CharField, DateTimeField, DoesNotExist,
                     ForeignKeyField, IntegerField, Model,
-                    TextField, ValuesList, CompositeKey)
+                    TextField, CompositeKey)
 
 
 class CreateOrUpdateMixin:

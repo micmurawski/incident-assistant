@@ -33,7 +33,7 @@ class VectorStoreClient(IVectorStoreClient):
         hash = hashlib.sha256(workspace_path.encode()).hexdigest()
         self.workspace_path = workspace_path
         self.vector_size = vector_size
-        self.collection_name = f"ws-{hash[:16]}"
+        self.default_collection_name = f"ws-{hash[:16]}"
         self.distance_metric = Distance.COSINE
 
     def parse_url(self, url: str) -> tuple[str, int, bool]:
@@ -43,23 +43,26 @@ class VectorStoreClient(IVectorStoreClient):
         use_https = parsed.scheme == "https"
         return host, int(port), use_https == "https"
 
-    async def get_collection_info(self) -> Coroutine[Any, Any, CollectionInfo]:
+    async def get_collection_info(self, collection_name: str | None = None) -> Coroutine[Any, Any, CollectionInfo]:
+        if collection_name is None:
+            collection_name = self.default_collection_name
         try:
-            collection_info = await self.client.get_collection(self.collection_name)
+            collection_info = await self.client.get_collection(collection_name)
             return collection_info
         except Exception as e:
             logging.warning(
-                f"[VectorStore] Warning during getCollectionInfo for {self.collection_name}. Collection may not exist or another error occurred: {e}"
+                f"[VectorStore] Warning during getCollectionInfo for {collection_name}. Collection may not exist or another error occurred: {e}"
             )
             return None
 
-    async def initialize(self) -> Coroutine[Any, Any, bool]:
+    async def initialize(self, collection_name: str | None = None) -> Coroutine[Any, Any, bool]:
+        collection_name = collection_name or self.default_collection_name
         created = False
         try:
-            collection_info: CollectionInfo | None = await self.get_collection_info()
+            collection_info: CollectionInfo | None = await self.get_collection_info(collection_name)
             if not collection_info:
                 await self.client.create_collection(
-                    self.collection_name,
+                    collection_name,
                     vectors_config=VectorParams(size=self.vector_size, distance=self.distance_metric),
                     hnsw_config={"m": 64, "ef_construct": 512, "on_disk": True},
                 )
@@ -81,33 +84,34 @@ class VectorStoreClient(IVectorStoreClient):
             )
             raise e
 
-    async def _recreate_collection_with_new_dimension(self, existing_vector_size: int) -> Coroutine[Any, Any, bool]:
+    async def _recreate_collection_with_new_dimension(self, existing_vector_size: int, collection_name: str | None = None) -> Coroutine[Any, Any, bool]:
+        collection_name = collection_name or self.default_collection_name
         logging.warning(
-            f"[VectorStore] Collection {self.collection_name} exists with vector size {existing_vector_size}, but we need {self.vector_size}. Recreating collection..."
+            f"[VectorStore] Collection {collection_name} exists with vector size {existing_vector_size}, but we need {self.vector_size}. Recreating collection..."
         )
         deletion_succeeded = False
         recreation_attempted = False
         try:
-            logging.info(f"[VectorStore] Deleting existing collection {self.collection_name}...")
-            await self.client.delete_collection(self.collection_name)
+            logging.info(f"[VectorStore] Deleting existing collection {collection_name}...")
+            await self.client.delete_collection(collection_name)
             deletion_succeeded = True
-            logging.info(f"[VectorStore] Successfully deleted collection {self.collection_name}")
+            logging.info(f"[VectorStore] Successfully deleted collection {collection_name}")
             await asyncio.sleep(100)
-            verification_info = await self.get_collection_info()
+            verification_info = await self.get_collection_info(collection_name)
 
             if not verification_info:
                 raise Exception("Collection deletion failed")
 
             logging.info(
-                f"[VectorStore] Creating new collection {self.collection_name} with vector size {self.vector_size}..."
+                f"[VectorStore] Creating new collection {collection_name} with vector size {self.vector_size}..."
             )
             recreation_attempted = True
             await self.client.create_collection(
-                self.collection_name,
+                collection_name,
                 vectors_config={"size": self.vector_size, "distance": self.distance_metric},
                 hnsw_config={"m": 64, "ef_construction": 512, "on_disk": True},
             )
-            logging.info(f"[VectorStore] Successfully created new collection {self.collection_name}")
+            logging.info(f"[VectorStore] Successfully created new collection {collection_name}")
             return True
         except Exception as e:
             context: str
@@ -121,31 +125,33 @@ class VectorStoreClient(IVectorStoreClient):
                 context = f"Failed to delete and recreate collection with vector size {self.vector_size}. {e}"
 
             logging.error(
-                f"[VectorStore] Failed to recreate collection {self.collection_name} for dimension change ({existing_vector_size} -> ${self.vector_size}). {context}"
+                f"[VectorStore] Failed to recreate collection {collection_name} for dimension change ({existing_vector_size} -> ${self.vector_size}). {context}"
             )
             raise e
 
-    async def _create_payload_indexes(self) -> Coroutine[Any, Any, None]:
+    async def _create_payload_indexes(self, collection_name: str | None = None) -> Coroutine[Any, Any, None]:
+        collection_name = collection_name or self.default_collection_name
         for i in range(0, 5):
             try:
                 await self.client.create_payload_index(
-                    self.collection_name, field_name=f"path_segments.{i}", field_schema="keyword"
+                    collection_name, field_name=f"path_segments.{i}", field_schema="keyword"
                 )
             except Exception as e:
                 logging.warning(
-                    f"[VectorStore] Warning during createPayloadIndex for {self.collection_name}. Field {f'path_segments.{i}'} may already exist or another error occurred: {e}"
+                    f"[VectorStore] Warning during createPayloadIndex for {collection_name}. Field {f'path_segments.{i}'} may already exist or another error occurred: {e}"
                 )
 
     async def delete_points_by_file_path(self, file_path: str) -> Coroutine[Any, Any, None]:
         return await self.delete_points_by_multiple_file_paths([file_path])
 
-    async def delete_points_by_multiple_file_paths(self, file_paths: list[str]) -> Coroutine[Any, Any, None]:
+    async def delete_points_by_multiple_file_paths(self, file_paths: list[str], collection_name: str | None = None) -> Coroutine[Any, Any, None]:
+        collection_name = collection_name or self.default_collection_name
         if not file_paths:
             return
         try:
-            collection_info = await self.get_collection_info()
+            collection_info = await self.get_collection_info(collection_name)
             if not collection_info:
-                logging.warning(f"[VectorStore] Collection {self.collection_name} does not exist")
+                logging.warning(f"[VectorStore] Collection {collection_name} does not exist")
                 return
             workspace_root = self.workspace_path
             filters = []
@@ -170,14 +176,15 @@ class VectorStoreClient(IVectorStoreClient):
             # Check if filters would match any points before attempting delete
             # count_result = await self.client.count(self.collection_name, count_filter=filter_obj, exact=True)#####
             # print(count_result.json())
-            await self.client.delete(self.collection_name, FilterSelector(filter=filter_obj), wait=True)
+            await self.client.delete(collection_name, FilterSelector(filter=filter_obj), wait=True)
         except Exception as e:
             logging.error(
                 f"[VectorStore] Failed to delete points by multiple file paths {len(file_paths)} files in {self.collection_name}, sample file paths: {file_paths[:5]}. {e}"
             )
             raise e
 
-    async def upsert_points(self, points: list[PointStruct]) -> Coroutine[Any, Any, None]:
+    async def upsert_points(self, points: list[PointStruct], collection_name: str | None = None) -> Coroutine[Any, Any, None]:
+        collection_name = collection_name or self.default_collection_name
         try:
             processed_points = []
             for point in points:
@@ -193,9 +200,9 @@ class VectorStoreClient(IVectorStoreClient):
                     processed_points.append(new_point)
                 else:
                     processed_points.append(point)
-            await self.client.upsert(self.collection_name, points=processed_points, wait=True)
+            await self.client.upsert(collection_name, points=processed_points, wait=True)
         except Exception as e:
-            logging.error(f"[VectorStore] Failed to upsert points for {self.collection_name}. {e}")
+            logging.error(f"[VectorStore] Failed to upsert points for {collection_name}. {e}")
             raise e
 
     def _is_payload_valid(self, payload: Any) -> bool:
@@ -211,7 +218,9 @@ class VectorStoreClient(IVectorStoreClient):
         directory_prefix: Optional[str] = None,
         min_score: Optional[float] = None,
         max_results: Optional[int] = None,
+        collection_name: str | None = None,
     ) -> list[VectorStoreSearchResult]:
+        collection_name = collection_name or self.default_collection_name
         try:
             filter = None
             if directory_prefix:
@@ -240,7 +249,7 @@ class VectorStoreClient(IVectorStoreClient):
                 "params": {"hnsw_ef": 128, "exact": False},
                 "with_payload": {"include": ["file_path", "code_chunk", "start_line", "end_line", "path_segments"]},
             }
-            res = await self.client.search(self.collection_name, search_req)
+            res = await self.client.search(collection_name, search_req)
             filtered_points = filter(lambda point: self._is_payload_valid(point.payload), res)
             return [
                 VectorStoreSearchResult(id=point.id, score=point.score, payload=point.payload)
@@ -250,18 +259,20 @@ class VectorStoreClient(IVectorStoreClient):
             logging.error(f"[VectorStore] Failed to search for points. {e}")
             raise e
 
-    async def clear_collection(self) -> Coroutine[Any, Any, None]:
+    async def clear_collection(self, collection_name: str | None = None) -> Coroutine[Any, Any, None]:
+        collection_name = collection_name or self.default_collection_name
         try:
-            await self.client.delete_collection(self.collection_name)
+            await self.client.delete_collection(collection_name)
         except Exception as e:
-            logging.error(f"[VectorStore] Failed to clear collection {self.collection_name}. {e}")
+            logging.error(f"[VectorStore] Failed to clear collection {collection_name}. {e}")
             raise e
 
-    async def delete_collection(self) -> Coroutine[Any, Any, None]:
+    async def delete_collection(self, collection_name: str | None = None) -> Coroutine[Any, Any, None]:
+        collection_name = collection_name or self.default_collection_name
         try:
-            collection_info = await self.get_collection_info()
+            collection_info = await self.get_collection_info(collection_name)
             if collection_info:
-                await self.client.delete_collection(self.collection_name)
+                await self.client.delete_collection(collection_name)
         except Exception as e:
-            logging.error(f"[VectorStore] Failed to delete collection {self.collection_name}. {e}")
+            logging.error(f"[VectorStore] Failed to delete collection {collection_name}. {e}")
             raise e

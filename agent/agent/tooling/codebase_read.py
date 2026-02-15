@@ -27,14 +27,14 @@ async def codebase_search(
     Queries MUST be in English (translate if needed).
 
     Usage:
-    codebase_search_tool(query=<Your natural language query here>, path=<Optional subdirectory path>)
+    codebase_search(query=<Your natural language query here>, path=<Optional subdirectory path>)
 
     Example:
-    codebase_search_tool(query="User login and password hashing", path="src/auth")
+    codebase_search(query="User login and password hashing", path="src/auth")
     """
     path = os.path.normpath(path) if path else None
         
-    results: list[VectorStoreSearchResult] = await context.code_index_manager.search_index(query, path)
+    results: list[VectorStoreSearchResult] = await context.code_index_search_service.search_index(query, path)
     
     if results and len(results) > 0:
         return

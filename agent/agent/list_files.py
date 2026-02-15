@@ -262,8 +262,8 @@ async def list_filtered_dirs(
                         remain -= 1
                     if recursive and remain > 0:
                         remain -= await walk(entry.path, subcontext, remain)
-        except Exception:
-            pass
+        except Exception as e:
+            raise e
         return 0
 
     is_hidden = os.path.basename(dir_path).startswith(".")

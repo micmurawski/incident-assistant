@@ -1,4 +1,4 @@
-from peewee import SqliteDatabase, Model
+from peewee import SqliteDatabase
 from typing import Literal, TypedDict
 
 DatabaseDriver = Literal["sqlite"]
