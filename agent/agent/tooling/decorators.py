@@ -389,7 +389,8 @@ class Tools(AsyncNode):
             result = tool(**final_input)
             if asyncio.iscoroutine(result):
                 result = await result
-
+            
+            print(f"\033[95mResult of: {tool.name}({', '.join(f'{k}={v}' for k, v in llm_input.items())})=\033[0m")
             print(f"\033[95m{result}\033[0m")
 
             # Anthropic expects tool results in a user message with content blocks

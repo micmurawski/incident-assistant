@@ -22,9 +22,22 @@ class _NodeDescriptor:
         return self._cache[obj]
 
 
-def signature_to_field_definitions(parameters: dict[str, inspect.Parameter]) -> dict:
+def signature_to_field_definitions(func_name: str, parameters: dict[str, inspect.Parameter]) -> dict:
     res = {}
     for name, field in parameters.items():
+        if field.kind == inspect.Parameter.VAR_POSITIONAL:
+            annotation = field.annotation if field.annotation is not inspect._empty else list[Any]
+            res[name] = {"type": annotation, "default": []}
+            continue
+        if field.kind == inspect.Parameter.VAR_KEYWORD:
+            annotation = field.annotation if field.annotation is not inspect._empty else dict[str, Any]
+            res[name] = {"type": annotation, "default": {}}
+            continue
+        if field.annotation is inspect._empty:
+            raise TypeError(
+                f"@node function '{func_name}' parameter '{name}' has no type annotation. "
+                f"All parameters must be typed, e.g. def {func_name}({name}: str)."
+            )
         res[name] = {
             "type": field.annotation,
             "default": ... if field.default is inspect._empty else field.default,
@@ -33,7 +46,7 @@ def signature_to_field_definitions(parameters: dict[str, inspect.Parameter]) -> 
 
 
 def signature_to_input_model(name, signature: inspect.Signature) -> dict:
-    return create_model_from_dict(f"{name}_input", signature_to_field_definitions(signature.parameters))
+    return create_model_from_dict(f"{name}_input_model_input", signature_to_field_definitions(name, signature.parameters))
 
 
 def create_model_from_dict(model_name: str, field_definitions: dict):
@@ -123,8 +136,7 @@ def node(func=None, *, max_retries=1, wait=0):
         if is_method or is_class_method:
             parameters = parameters[1:]
             signature = inspect.Signature(parameters)
-
-        input_model = signature_to_input_model(f"{class_name}_input_model", signature)
+        input_model = signature_to_input_model(class_name, signature)
         is_method_or_cls = is_method or is_class_method
 
         def make_node_init(owner_param: bool):
@@ -214,9 +226,9 @@ def node(func=None, *, max_retries=1, wait=0):
         return decorator(func)
 
 @node
-async def noop_async(**data: dict[str, Any]):
-    return data
+async def noop_async(messages: list[dict]):
+    return {"messages": messages}
 
 @node
-def noop(**data: dict[str, Any]):
-    return data
+def noop(messages: list[dict]):
+    return {"messages": messages}

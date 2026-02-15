@@ -193,23 +193,25 @@ class Agent:
         
         self._call_llm - "tools" >> self.tools
         self._call_llm - "default" >> end
+        self._call_llm - "end" >> end
         self.tools >> self._call_llm
         self.flow = AsyncFlow(start=self._call_llm)
     
     @node
-    async def _call_llm(self, messages: List[AnthropicMessage], metadata: Optional[ApiHandlerCreateMessageMetadata] = None, **kwargs: Any) -> List[AnthropicMessage]:
+    async def _call_llm(self, messages: List[AnthropicMessage], metadata: Optional[ApiHandlerCreateMessageMetadata] = None, **kwargs: dict[str, Any]) -> tuple[dict[str, list[AnthropicMessage]], str]:
         kwargs = {**kwargs.pop("kwargs", {}), **kwargs}
         iter: ChunkProxyIterator = await self.create_message(
             messages=messages,
             metadata=metadata,
             **kwargs
         )
-
-        async for chunk in iter:
+        
+        async for _ in iter:
             pass
 
-        updated_messages = list(messages) + iter.get_response()
-        return ({"messages": updated_messages}, "tools" if iter.had_tool_use() else "default")
+        data = {"messages": list(messages) + iter.get_response()}
+        _next = "tools" if iter.had_tool_use() else "default"
+        return data, _next
 
     async def create_message(
         self,
