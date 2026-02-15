@@ -4,9 +4,10 @@ import time
 
 from google import genai
 
-from agent.constants import INITIAL_RETRY_DELAY_MS, MAX_BATCH_RETRIES
 from agent.code_index.embedders.models import get_model_dimension
-from agent.code_index.models import EmbedderInfo, EmbedderResponse, IEmbedder, Usage
+from agent.code_index.models import (EmbedderInfo, EmbedderResponse, IEmbedder,
+                                     Usage)
+from agent.constants import INITIAL_RETRY_DELAY_MS, MAX_BATCH_RETRIES
 
 DEFAULT_MODEL = "gemini-2.5-flash"
 

@@ -1,8 +1,9 @@
+import asyncio
 from typing import Annotated, Optional
+
 from agent.context import Context
 from agent.tooling.decorators import Hidden, tool
 
-import asyncio
 
 @tool(tags=["cli"])
 async def execute_command(

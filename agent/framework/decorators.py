@@ -4,7 +4,7 @@ from typing import Any, Callable
 
 from pydantic import Field, create_model
 
-from framework import Node, AsyncNode
+from framework import AsyncNode, Node
 
 
 class _NodeDescriptor:

@@ -1,8 +1,8 @@
 from typing import Any, Literal, TypedDict
 
 from anthropic.types.thinking_config_param import ThinkingConfigParam
-from openai.types.shared_params.reasoning import ReasoningEffort as OpenAIReasoningEffort
-
+from openai.types.shared_params.reasoning import \
+    ReasoningEffort as OpenAIReasoningEffort
 
 
 class OpenAiReasoningParam(TypedDict):

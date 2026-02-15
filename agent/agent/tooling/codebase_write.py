@@ -1,10 +1,8 @@
 from typing import Annotated, Optional
 
 from agent.context import Context
-from agent.tooling.decorators import Hidden, Tools, tool
 from agent.file_ops import FileOpsResult
-
-
+from agent.tooling.decorators import Hidden, Tools, tool
 
 
 @tool(tags=["codebase", "write"])

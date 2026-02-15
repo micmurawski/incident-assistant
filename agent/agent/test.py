@@ -1,27 +1,25 @@
 import asyncio
+import json
 import os
-from typing import Any, AsyncIterator, List, Optional
-
-from agent.context import Context
-from agent.settings import SettingsManager
-from agent.tooling import CodebaseReadTools, CodebaseWriteTools
-from agent.tooling.decorators import Tools
-from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
-                         StreamChunk)
 # NOTE: Do NOT use anthropic.types.ToolUseBlockParam here.
 # When messages round-trip through the @node decorator's Pydantic model
 # (input_model(**prep_res).model_dump()), Anthropic TypedDicts cause the
 # content list to be wrapped in a SerializationIterator — a one-shot
 # iterator that gets consumed on first access (e.g. debug printing) and
 # is then empty for the Gemini message converter. Use plain dicts instead.
-from typing import TypeVar
-from agent.persistence.model import MemoryService
+from typing import Any, AsyncIterator, List, Optional, TypeVar
 from uuid import uuid4
-import json
 
-from framework.decorators import node, noop_async as end 
+from agent.context import Context
+from agent.persistence.model import MemoryService
+from agent.settings import SettingsManager
+from agent.tooling import CodebaseReadTools, CodebaseWriteTools
+from agent.tooling.decorators import Tools
+from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
+                         StreamChunk)
 from framework import AsyncFlow
-
+from framework.decorators import node
+from framework.decorators import noop_async as end
 
 T = TypeVar('T')
 

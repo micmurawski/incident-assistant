@@ -3,10 +3,11 @@ from dataclasses import dataclass
 
 # from agent.code_index.code_index_manager import CodeIndexManager
 from agent.file_ops import FileOpsManager
+from agent.persistence.settings import init_db
 from agent.providers import build_api_handler
 from agent.providers.base import ApiHandler
 from agent.settings import SettingsManager
-from agent.persistence.settings import init_db
+
 
 @dataclass
 class Context:

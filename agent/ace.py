@@ -1,17 +1,18 @@
 import json
-from dataclasses import dataclass
 import os
-from typing import List
+from dataclasses import dataclass
+from typing import Any, List
+from uuid import uuid5
+
+import yaml
 from anthropic import Anthropic
-from agent.code_index.models import EmbedderResponse, IEmbedder, IVectorStoreClient, VectorStoreSearchResult
-from agent.code_index.models import (Payload,
-                                     PointStruct)
+
+from agent.code_index.models import (EmbedderResponse, IEmbedder,
+                                     IVectorStoreClient, Payload, PointStruct,
+                                     VectorStoreSearchResult)
+from agent.code_index.vector_store import VectorStoreClient
 # --- Domain Entities ---
 from agent.constants import QDRANT_INCIDENT_NAMESPACE
-from uuid import uuid5
-from agent.code_index.vector_store import VectorStoreClient
-from typing import Any
-import yaml
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE_PATH = os.path.join(BASE_DIR, "incidents")

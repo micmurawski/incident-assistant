@@ -1,8 +1,8 @@
 import locale
 import os
-from functools import cmp_to_key
 import re
 from dataclasses import dataclass, field
+from functools import cmp_to_key
 from typing import Literal, Optional
 
 from agent.code_index.code_analysis import parse_source_code_definitions

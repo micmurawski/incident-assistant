@@ -170,7 +170,7 @@ if __name__ == "__main__":
         todo_list=[TodoItem(id="1", content="Create a blog post", status="in_progress")],
     )
     task.create_child_task(id="x56", todo_list=[TodoItem(id="2", content="Write a blog post", status="in_progress")])
-    init_db()
+    # init_db()
     print(task.print_todo_list())
     task.persist("x123")
     print([t.id for t in task.get_list()])

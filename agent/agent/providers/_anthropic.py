@@ -9,7 +9,8 @@ from agent.providers.models import ANTHROPIC_DEFAULT_MODEL_ID, ANTHROPIC_MODELS
 from agent.providers.params import get_model_params
 from agent.providers.settings import AnthropicSettings, ModelInfo
 from agent.providers.utils.cost import calculate_api_cost_anthropic
-from agent.types import ReasoningChunk, StreamChunk, TextChunk, ToolUse, UsageChunk
+from agent.types import (ReasoningChunk, StreamChunk, TextChunk, ToolUse,
+                         UsageChunk)
 
 
 class AnthropicHandler(ApiHandler):

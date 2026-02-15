@@ -1,7 +1,8 @@
 import asyncio
 
 from agent.cache_manager import CacheManager
-from agent.scanner import CodeParser, DirectoryScanner, Embedder, Ignore, VectorStoreClient
+from agent.scanner import (CodeParser, DirectoryScanner, Embedder, Ignore,
+                           VectorStoreClient)
 
 
 async def main():

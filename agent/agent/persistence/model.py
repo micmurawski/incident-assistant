@@ -1,9 +1,10 @@
+import json
 from datetime import datetime
 from uuid import uuid4
-import json
-from peewee import (BooleanField, CharField, DateTimeField, DoesNotExist,
-                    ForeignKeyField, IntegerField, Model,
-                    TextField, CompositeKey)
+
+from peewee import (BooleanField, CharField, CompositeKey, DateTimeField,
+                    DoesNotExist, ForeignKeyField, IntegerField, Model,
+                    TextField)
 
 
 class CreateOrUpdateMixin:

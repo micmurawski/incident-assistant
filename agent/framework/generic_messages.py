@@ -252,38 +252,6 @@ class MessageConverter:
 
         return ollama_messages
 
-    @staticmethod
-    def from_openai(openai_messages: List[OpenAIMessage]) -> List[Message]:
-        """Convert OpenAI messages to generic format"""
-        generic_messages = []
-
-        for msg in openai_messages:
-            generic_msg_data = {"role": MessageRole(msg.role), "content": msg.content}
-
-            if msg.tool_calls:
-                generic_msg_data["tool_calls"] = [
-                    ToolCall(
-                        id=tc.id,
-                        type=ToolCallType.FUNCTION,
-                        function=Function(name=tc.function.name, arguments=tc.function.arguments),
-                    )
-                    for tc in msg.tool_calls
-                ]
-
-            if msg.tool_call_id:
-                generic_msg_data["tool_call_id"] = msg.tool_call_id
-
-            if msg.function_call:
-                generic_msg_data["function_call"] = Function(
-                    name=msg.function_call.name, arguments=msg.function_call.arguments
-                )
-
-            if msg.name:
-                generic_msg_data["name"] = msg.name
-
-            generic_messages.append(Message(**generic_msg_data))
-
-        return generic_messages
 
     @staticmethod
     def from_openai(openai_messages: List[OpenAIMessage]) -> List[Message]:
