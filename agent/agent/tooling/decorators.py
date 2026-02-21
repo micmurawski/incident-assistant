@@ -4,13 +4,15 @@ import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from inspect import Parameter
-from typing import (Annotated, Any, Callable, GenericAlias, Literal, TypedDict,
-                    TypeVar, Union, _AnnotatedAlias, _TypedDictMeta)
+from typing import (Annotated, Any, Callable, Coroutine, GenericAlias, Literal,
+                    Optional, TypedDict, TypeVar, Union, _AnnotatedAlias,
+                    _TypedDictMeta)
 
-from agent.types import AnthropicMessage
 from framework import AsyncNode
 from framework.generic_messages import select_tools_use
 from framework.utils import __reduce_shared as reduce_shared
+
+from agent.types import AnthropicMessage
 
 # Mapping from Python types to OpenAPI schema types
 CLASS_TO_TYPE = {
@@ -24,6 +26,7 @@ CLASS_TO_TYPE = {
     dict: "object",
 }
 
+
 T = TypeVar("T")
 type Hidden[T] = T
 
@@ -33,19 +36,29 @@ NoneType = type(None)  # Used for checking Optional types
 ToolFormat = Literal["openai", "ollama", "anthropic", "gemini"]
 
 
+@dataclass
+class ToolResult:
+    result: Any
+    error: Optional[str] = None
+
+    @property
+    def is_success(self) -> bool:
+        return self.error is None
+
+
 class BaseTool(ABC):
     """
     Abstract base class for all tool wrappers.
 
     All tools must implement __call__, tags, and tool_definition.
     """
-    
+
     @property
     def name(self) -> str:
         return self.tool_definition["name"]
-    
+
     @abstractmethod
-    def __call__(self, *args, **kwargs) -> Any:
+    def __call__(self, *args, **kwargs) -> ToolResult:
         """
         Invoke the tool with arguments.
 
@@ -180,9 +193,11 @@ def process_param(
             items, _, __ = process_param(param.__args__[0])
             result["items"] = items
         elif _type == "object":
-            # Object types may come from dict types
-            properties, _, __ = process_param(param.__args__[0])
-            result["properties"] = properties
+            if len(param.__args__) >= 2:
+                value_schema, _, __ = process_param(param.__args__[1])
+                result["additionalProperties"] = value_schema
+            else:
+                result["additionalProperties"] = True
         else:
             raise Exception(f"Unsupported GenericAlias {param}")
     elif isinstance(param, _TypedDictMeta):
@@ -350,16 +365,16 @@ class Tools(AsyncNode):
 
     def prep(self, shared: dict) -> dict:
         return shared
-    
+
     def post(self, shared: dict, prep_res: dict, exec_res: dict) -> str:
         return reduce_shared(self, shared, prep_res, exec_res)
 
     async def prep_async(self, shared: dict) -> dict:
         return self.prep(shared)
-    
+
     async def post_async(self, shared: dict, prep_res: dict, exec_res: dict) -> dict:
         return self.post(shared, prep_res, exec_res)
-    
+
     async def exec_async(self, prep_res: dict) -> dict:
         return await self.exec(prep_res)
 
@@ -387,12 +402,15 @@ class Tools(AsyncNode):
                     )
                 injected[name] = prep_res[name]
             final_input = {**injected, **llm_input}
-            result = tool(**final_input)
-            if asyncio.iscoroutine(result):
-                result = await result
-            
+
+            tool_result: ToolResult | Coroutine[Any, Any, ToolResult] = tool(**final_input)
+            if asyncio.iscoroutine(tool_result):
+                tool_result = await tool_result
+
             print(f"\033[95mResult of: {tool.name}({', '.join(f'{k}={v}' for k, v in llm_input.items())})=\033[0m")
-            print(f"\033[95m{result}\033[0m")
+            print(f"\033[95m{tool_result.result}\033[0m")
+            # if tool_result.error:
+            print(f"\033[91mError: {tool_result.error}\033[0m")
 
             # Anthropic expects tool results in a user message with content blocks
             messages.append(
@@ -401,14 +419,20 @@ class Tools(AsyncNode):
                     content=[{
                         "type": "tool_result",
                         "tool_use_id": tool_use_id,
-                        "content": result,
+                        "content": tool_result.result if tool_result.is_success else tool_result.error,
+                        "is_error": not tool_result.is_success,
                     }],
                 )
             )
-            return {"messages": messages}
+        return {"messages": messages}
 
-    def __or__(self, other: "Tools") -> "Tools":
+    def __or__(self, other: "Tools | BaseTool") -> "Tools":
+        if isinstance(other, BaseTool):
+            return Tools(tools=self.tools + [other])
         return Tools(tools=self.tools + other.tools)
+
+    def select(self, tags: set[str]) -> "Tools":
+        return Tools(tools=[t for t in self.tools if tags.issubset(t.tags)])
 
     @staticmethod
     def _strip_unsupported_schema_fields(schema: dict) -> dict:

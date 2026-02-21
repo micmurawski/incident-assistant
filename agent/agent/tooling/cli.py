@@ -1,36 +1,72 @@
 import asyncio
+import os
 from typing import Annotated, Optional
 
-from agent.context import Context
-from agent.tooling.decorators import Hidden, tool
+from agent.settings import SettingsManager
+from agent.tooling.decorators import ToolResult, Tools, tool
+
+MAX_OUTPUT_LENGTH = 4000
 
 
 @tool(tags=["cli"])
-async def execute_command(
-    context: Hidden[Context],
+async def bash(
     command: Annotated[
-        str,
-        "The CLI command to execute. This should be valid for the current operating system. Ensure the command is properly formatted and does not contain any harmful instructions.",
+        list[str],
+        "The CLI command to run as a list, e.g., ['ls', '-la'] or ['npm', 'run', 'dev']. Each argument must be a separate list item; do not concatenate into one string.",
     ],
-    cwd: Annotated[Optional[str], "The working directory to execute the command in (default: {cwd})"] = None,
-) -> str:
+    cwd: Annotated[Optional[str], "Working directory for command execution (default: {cwd})"] = None,
+    env: Annotated[Optional[dict[str, str]], "Environment variables for the process (default: None)"] = None,
+) -> ToolResult:
     """
-    Request to execute a CLI command on the system. Use this when you need to perform system operations or run specific commands to accomplish any step in the user's task.
-    You must tailor your command to the user's system and provide a clear explanation of what the command does.
-    For command chaining, use the appropriate chaining syntax for the user's shell.
-    Prefer to execute complex CLI commands over creating executable scripts, as they are more flexible and easier to run.
-    Prefer relative commands and paths that avoid location sensitivity for terminal consistency, e.g: \`touch ./testdata/example.file\`, \`dir ./examples/model1/data/yaml\`, or \`go test ./cmd/front --config ./cmd/front/config.yml\`.
-    If directed by the user, you may open a terminal in a different directory by using the \`cwd\` parameter.
-    Usage:
-    execute_command_tool(command=<Your CLI command here>, cwd=<Optional working directory path>)
+    Run a CLI command using a list of arguments. Use for system operations or terminal commands related to the user's task.
+    
+    - Use only safe, clear commands.
+    - Prefer relative paths for consistency.
+    - Use `cwd` to specify a working directory if needed.
+    - Avoid scripts when a single command does the job.
 
-    Example: Requesting to execute npm run dev
-    execute_command_tool(command="npm run dev")
+    **Usage:**  
+    bash(command=['your', 'command', 'args'], cwd="optional/path")
 
-    Example: Requesting to execute ls in a specific directory if directed
-    execute_command_tool(command="ls -la", cwd="/home/user/projects")
+    **Examples:**  
+    bash(command=['npm', 'run', 'dev'])  
+    bash(command=['ls', '-la'], cwd="/home/user/projects")
     """
-    if cwd is None:
-        cwd = context.cwd
-    result = await asyncio.create_subprocess_exec(command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=cwd)
-    return result.stdout.decode("utf-8")
+    cwd = cwd or SettingsManager.get_instance().get("workspace.path") or os.getcwd()
+    print("EXECUTING COMMAND: ", command, "IN CWD: ", cwd)
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+            env=env,
+        )
+        stdout, stderr = await process.communicate()
+        stdout_decoded = stdout.decode("utf-8")
+        stderr_decoded = stderr.decode("utf-8")
+        # Combine stdout and stderr if error
+        error_msg = stderr_decoded if process.returncode != 0 else None
+
+        # Trim logic
+        total_length = len(stdout_decoded)
+        trim_length = MAX_OUTPUT_LENGTH
+        output_to_return = stdout_decoded
+        if total_length > trim_length:
+            # Show start and end, ellipsis in the middle
+            head = stdout_decoded[:trim_length//2]
+            tail = stdout_decoded[-trim_length//2:]
+            output_to_return = (
+                f"{head}\n...[trimmed {total_length - trim_length} characters]...\n{tail}"
+            )
+
+        # Optionally also trim error message
+        if error_msg and len(error_msg) > 1000:
+            error_msg = error_msg[:800] + f"\n...[trimmed {len(error_msg) - 800} characters of stderr]..."
+
+        return ToolResult(result=output_to_return, error=error_msg)
+    except Exception as e:
+        return ToolResult(result=None, error=str(e))
+
+
+CliTools = Tools(tools=[bash])

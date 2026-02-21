@@ -7,6 +7,7 @@ from typing import Literal, Optional
 
 from agent.code_index.code_analysis import parse_source_code_definitions
 from agent.list_files import Ignore, list_files, regex_search_files
+from agent.settings import SettingsManager
 
 
 @dataclass
@@ -35,13 +36,36 @@ def add_line_numbers(content: list[str], start_line: int = 1, separator: str = "
 
 
 class FileOpsManager:
+    _instances = {}
+
+    def __new__(cls, cwd: str):
+        abs_cwd = os.path.abspath(cwd)
+        if abs_cwd in cls._instances:
+            return cls._instances[abs_cwd]
+        instance = super().__new__(cls)
+        cls._instances[abs_cwd] = instance
+        return instance
+
+    @classmethod
+    def get_instance(cls, cwd: str | None = None) -> "FileOpsManager":
+        cwd = cwd or SettingsManager.get_instance().get("workspace.path") or os.getcwd()
+        abs_cwd = os.path.abspath(cwd)
+        if abs_cwd not in cls._instances:
+            cls._instances[abs_cwd] = FileOpsManager(cwd)
+        return cls._instances[abs_cwd]
+
     def __init__(self, cwd: str):
-        if not os.path.exists(cwd):
-            raise Exception(f"The path {cwd} does not exist.")
-        if not os.path.isdir(cwd):
-            raise Exception(f"The path {cwd} is not a directory.")
-        self.cwd = cwd
+        abs_cwd = os.path.abspath(cwd)
+        # Avoid re-initialization for existing instance
+        if hasattr(self, "_initialized") and self._initialized:
+            return
+        if not os.path.exists(abs_cwd):
+            raise Exception(f"The path {abs_cwd} does not exist.")
+        if not os.path.isdir(abs_cwd):
+            raise Exception(f"The path {abs_cwd} is not a directory.")
+        self.cwd = abs_cwd
         self.ignore = Ignore()
+        self._initialized = True
 
     async def list_code_definitions_names_descriptions(self, path: str) -> FileOpsResult:
         full_path = os.path.join(self.cwd, path)
@@ -64,9 +88,11 @@ class FileOpsManager:
             raise Exception(f"The path {path} is not file.")
 
         lines = open(full_path).read().split("\n")
-        start = max((start_line or 1) - 1, 0)
-        end = min((end_line or len(lines)) - 1, len(lines) - 1)
-        target_content = lines[start : end + 1]
+        start_line = start_line or 1
+        end_line = end_line or len(lines)
+        start = max(start_line - 1, 0)
+        end = min(end_line - 1, len(lines) - 1)
+        target_content = lines[start: end + 1]
         if number_lines:
             target_content = add_line_numbers(target_content, start_line)
         return FileOpsResult(
@@ -77,7 +103,7 @@ class FileOpsManager:
     async def read_multiple_files(self, files: list[dict]) -> FileOpsResult:
         content = ""
         for file in files:
-            result = await self.read_file(file["path"], file["start_line"], file["end_line"])
+            result = await self.read_file(file["path"], file.get("start_line"), file.get("end_line"))
             content += f"# {file['path']}\n {result.content}\n ----\n"
 
         return FileOpsResult(
@@ -164,9 +190,9 @@ class FileOpsManager:
             end = min((end_line or len(lines)) - 1, len(lines) - 1)
 
             before_lines = lines[0:start]
-            after_lines = lines[end + 1 :]
+            after_lines = lines[end + 1:]
 
-            target_content = lines[start : end + 1]
+            target_content = lines[start: end + 1]
             modified_content = map(lambda line: re.sub(search_pattern, replace, line, flags=flags), target_content)
             new_content = "\n".join([*before_lines, *modified_content, *after_lines])
         else:
@@ -247,6 +273,7 @@ class FileOpsManager:
             content=result,
         )
 
+
 def escape_regex(reg: str) -> str:
     return reg.replace("[.*+?^${}()|[\\]\\]", "\\$&")
 
@@ -308,5 +335,3 @@ def _generate_diff(old_content: str, new_content: str, use_ansi_color: bool = Fa
             i += 1
             j += 1
     return "\n".join(diff)
-
-

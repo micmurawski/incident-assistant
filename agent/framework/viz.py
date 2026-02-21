@@ -1,6 +1,5 @@
-from mermaid import Mermaid
-
 from framework import Flow
+from mermaid import Mermaid
 
 
 def build_mermaid(flow):

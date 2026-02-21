@@ -81,6 +81,7 @@ DIRS_TO_IGNORE = [
     "__pycache__",
     "env",
     "venv",
+    ".venv",
     "target/dependency",
     "build/dependencies",
     "dist",

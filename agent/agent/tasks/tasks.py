@@ -1,21 +1,12 @@
 import json
 from dataclasses import dataclass, field
-from typing import Callable, ClassVar, TypeVar
+from typing import TypeVar
 from uuid import uuid4
 
-from anthropic.types.text_block_param import \
-    TextBlockParam as AnthropicTextBlockParam
-
-from agent.message_queue_service import MessageQueueService
 from agent.persistence.model import Task as TaskModel
-from agent.types import ApiMessage, TokenUsage
-
-from .types import AssistantMessageContent, TaskStatus, TodoItem, ToolUsage
-
-
-def todo_item_to_txt(todo_item: TodoItem, level: int = 0) -> str:
-    return f"{'\t' * level}{todo_item['id']} | {todo_item['content']} | {todo_item['status']}"
-
+from agent.tasks.formatting import parse_markdown_checklist
+from agent.tasks.types import TaskStatus, TodoItem, ToolUsage
+from agent.types import ApiMessage
 
 T = TypeVar("T", bound="Task")
 
@@ -38,37 +29,13 @@ class Task:
     consecutive_mistakes_limit: int = field(default=3)
     tool_usage: list[ToolUsage] = field(default_factory=list)
 
-    message_queue: ClassVar[MessageQueueService] = MessageQueueService.get_instance()
-    _message_queue_state_change_handler: ClassVar[Callable[[MessageQueueService], None]] = lambda: None
-
-    is_waiting_for_first_chunk: bool = field(default=False)
-    is_streaming: bool = field(default=False)
-    current_streaming_content_index: int = field(default=0)
-    current_streaming_did_checkpoint: bool = field(default=False)
-    assistant_message_content: list[AssistantMessageContent] = field(default_factory=list)
-
-    present_assistant_message_locked: bool = field(default=False)
-    present_assistant_message_has_pending_updates: bool = field(default=False)
-    user_message_content: list[AnthropicTextBlockParam] = field(default_factory=list)
-    user_message_content_ready: bool = field(default=False)
-
-    did_reject_tool: bool = field(default=False)
-    did_already_use_tool: bool = field(default=False)
-    did_complete_reading_stream: bool = field(default=False)
-
-    assistant_message_parser: ClassVar[None] = None
-    _last_used_instruction: str | None = None
-    skip_prev_response_id_once: bool = field(default=False)
-
-    _token_usage_snapshot: TokenUsage | None = None
-    _token_usage_snapshot_ts: int | None = None
-
     def __post_init__(self):
         if self.root is None:
             self.root = self
 
-    def persist(self, session_id: str):
+    def persist(self):
         root = self.root or self
+        session_id = root.id
 
         # dfs and persist all tasks
         def dfs(task: Task):
@@ -90,6 +57,8 @@ class Task:
         dfs(root)
 
     def create_child_task(self, **kwargs) -> "Task":
+        todo_list = kwargs.pop("todo_list", None)
+        todo_list = todo_list or parse_markdown_checklist(kwargs.pop("todo_list_str", None))
         child_task = Task(
             parent=self,
             root=self.root,
@@ -98,70 +67,84 @@ class Task:
         self.children.append(child_task)
         return child_task
 
-    def is_done(self) -> bool:
-        return self.status == TaskStatus.DONE
-
-    def is_discarded(self) -> bool:
-        return self.status == TaskStatus.DISCARDED
-
-    def is_awaiting_input(self) -> bool:
-        return self.status == TaskStatus.AWAITING_INPUT
-
-    def is_awaiting_review(self) -> bool:
-        return self.status == TaskStatus.AWAITING_REVIEW
-
-    def _move_to_done(self, raise_if_not_done: bool = True) -> bool:
-        if all(task.is_done() for task in self.children if not task.is_discarded()):
+    def attempt_complete(self, raise_if_not_done: bool = True) -> bool:
+        not_discarded_children = [
+            task for task in self.children if not task.status == TaskStatus.DISCARDED
+        ]
+        if all(task.status == TaskStatus.DONE for task in not_discarded_children):
             self.status = TaskStatus.DONE
             return True
         if raise_if_not_done:
             raise ValueError("Task is not done. It still has dependencies that are not done.")
         return False
 
-    def add_input(self, message: ApiMessage):
-        if self.status != TaskStatus.AWAITING_INPUT:
-            raise ValueError("Task is not awaiting input")
-        self.status = TaskStatus.AWAITING_FEEDBACK
-        self.conversation.append(message)
-
-    def add_feedback(self, message: ApiMessage, approve: bool = False, discard: bool = False):
+    def add_feedback(self, feedback: str):
         if self.status != TaskStatus.AWAITING_FEEDBACK:
             raise ValueError("Task is not awaiting feedback")
-
-        self.conversation.append(message)
-        if approve:
-            self._move_to_done()
-            return
-
-        if discard:
-            self.status = TaskStatus.DISCARDED
-            return
+        self.conversation.append({"role": "user", "content": feedback})
 
     def remove_all_discarded(self):
         root = [self.root] if self.root else [self]
         while root:
             task = root.pop()
-            task.children = [child for child in task.children if not child.is_discarded()]
+            task.children = [child for child in task.children if not child.status == TaskStatus.DISCARDED]
             root.extend(task.children)
 
-    def print_todo_list(self, level: int = 0) -> str:
-        result = f"{'\t' * level}Todo List:\n"
+    def get_todo_str(self) -> str:
+        lines = []
         for todo in self.todo_list:
-            result += todo_item_to_txt(todo, level) + "\n"
-        result += "\n"
-        for child in self.children:
-            result += child.print_todo_list(level + 1)
-        return result
+            if todo["status"] == "in_progress":
+                lines.append(f"- [-] {todo['content']}")
+            elif todo["status"] == "completed":
+                lines.append(f"- [x] {todo['content']}")
+            elif todo["status"] == "pending":
+                lines.append(f"- [ ] {todo['content']}")
+        return "\n".join(lines)
 
-    def get_list(self) -> list[T]:
-        result: list[T] = []
+    def get_deepest_actionable_tasks(self, status: TaskStatus) -> list["Task"]:
+        """BFS from root, returning AWAITING_INPUT/AWAITING_FEEDBACK tasks at the deepest level."""
+        root = self.root or self
 
-        roots: list[T] = [self.root]
-        while roots:
-            root = roots.pop()
-            result.append(root)
-            roots.extend(root.children)
-        return result
+        deepest: list[Task] = []
+        deepest_level = -1
+        queue: list[tuple[Task, int]] = [(root, 0)]
+
+        while queue:
+            task, level = queue.pop(0)
+            if task.status in status:
+                if level > deepest_level:
+                    deepest = [task]
+                    deepest_level = level
+                elif level == deepest_level:
+                    deepest.append(task)
+            queue.extend((child, level + 1) for child in task.children)
+
+        return deepest
+
+    def get_conversation_with_swapped_roles(self) -> list[dict]:
+        return swap_roles_in_conversation(self.conversation)
+
+
+def swap_roles_in_conversation(conversation: list[dict]) -> list[dict]:
+    """
+    Swaps roles 'assistant' <-> 'user' in the given conversation list of messages.
+
+    Args:
+        conversation: List of message dicts, each containing a "role" key.
+
+    Returns:
+        New list of message dicts with roles swapped.
+    """
+    swapped = []
+    for msg in conversation:
+        msg_copy = msg.copy()
+        if msg_copy.get("role") == "assistant":
+            msg_copy["role"] = "user"
+        elif msg_copy.get("role") == "user":
+            msg_copy["role"] = "assistant"
+        # Otherwise leave unchanged
+        swapped.append(msg_copy)
+    return swapped
 
 
 if __name__ == "__main__":

@@ -12,22 +12,32 @@ def _get_block_field(block: Any, key: str, default: Any = None) -> Any:
     return getattr(block, key, default)
 
 
+def _block_to_dict(block: Any) -> Any:
+    """Convert a Pydantic model or iterator item to a plain dict."""
+    if isinstance(block, dict):
+        return block
+    if hasattr(block, "model_dump"):
+        return block.model_dump()
+    return block
+
+
 def _materialize_content(content: Any) -> list:
     """
-    Materialize content to a plain list.
+    Materialize content to a plain list of dicts.
 
     Anthropic's MessageParam has content typed as Union[str, Iterable[ContentBlockParam]].
     When messages pass through Pydantic validation (e.g. via the @node decorator),
     list content gets wrapped in SerializationIterator/ValidatorIterator — one-shot
-    iterators that are consumed on first iteration. This function materializes any
-    iterable into a stable list so it can be iterated multiple times.
+    iterators that are consumed on first iteration. Items may also be Pydantic model
+    objects rather than plain dicts. This function materializes everything into a
+    stable list of plain dicts.
     """
-    if isinstance(content, list):
-        return content
     if isinstance(content, str):
-        return []  # strings are handled separately by the caller
+        return []
+    if isinstance(content, list):
+        return [_block_to_dict(b) for b in content]
     try:
-        return list(content)
+        return [_block_to_dict(b) for b in content]
     except (TypeError, ValueError):
         return []
 
@@ -39,6 +49,8 @@ def _materialize_messages(messages: List[AnthropicMessage]) -> List[dict]:
     This MUST be called once before any other processing to avoid consuming
     SerializationIterator/ValidatorIterator objects more than once.
     Returns plain dicts with stable list content.
+    Drops messages whose content is metadata (e.g. usage dicts) rather than
+    valid conversation content.
     """
     result = []
     for message in messages:
@@ -50,8 +62,12 @@ def _materialize_messages(messages: List[AnthropicMessage]) -> List[dict]:
                 "content": getattr(message, "content", ""),
             }
         content = msg.get("content")
-        if content is not None and not isinstance(content, str):
-            msg["content"] = _materialize_content(content)
+        if content is None or isinstance(content, str):
+            result.append(msg)
+            continue
+        if isinstance(content, dict) and content.get("type") == "usage":
+            continue
+        msg["content"] = _materialize_content(content)
         result.append(msg)
     return result
 

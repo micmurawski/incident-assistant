@@ -1,9 +1,8 @@
 import inspect
 from typing import Any, Callable
 
-from pydantic import BaseModel, Field, create_model
-
 from framework import Node
+from pydantic import BaseModel, Field, create_model
 
 
 def signature_to_field_definitions(parameters: dict[str, inspect.Parameter]) -> dict:

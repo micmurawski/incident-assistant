@@ -1,47 +1,40 @@
-from typing import Annotated, Optional
+from typing import Annotated
 
-from .decorators import Tools, tool
+from agent.llm import LLMAgent
+from agent.tasks.executor import TaskExecutor
+from agent.tasks.formatting import parse_markdown_checklist
+from agent.tasks.tasks import Task
+from agent.tooling.decorators import ToolResult
+
+from .decorators import Hidden, Tools, tool
 
 
-@tool(tags=["planning"])
-async def new_task(
+@tool(tags=["planning", "assign"])
+async def assign_task(
+    agent: Hidden[LLMAgent],
+    task: Hidden[Task],
     assignee: Annotated[str, "The slug of the mode to start the new task in (e.g., {available_agents})"],
     message: Annotated[str, "The initial user message or instructions for this new task."],
     todos: Annotated[str, "The initial todo list in markdown checklist format for the new task."],
-) -> str:
+) -> ToolResult:
     """
     This will let you create a new task instance in the chosen mode using your provided message and initial todo list.
 
     Usage:
-    new_task(assignee="code", message="Implement user authentication", todos="[ ] Set up auth middleware\n[ ] Create login endpoint\n[ ] Add session management\n[ ] Write tests")
+    assign_task(assignee="coder", message="Implement user authentication", todos="[ ] Set up auth middleware\n[ ] Create login endpoint\n[ ] Add session management\n[ ] Write tests")
 
     Example:
-    new_task(assignee="code", message="Implement user authentication", todos="[ ] Set up auth middleware\n[ ] Create login endpoint\n[ ] Add session management\n[ ] Write tests")
+    assign_task(assignee="coder", message="Implement user authentication", todos="[ ] Set up auth middleware\n[ ] Create login endpoint\n[ ] Add session management\n[ ] Write tests")
     """
-
-    return "This is a test response"
-
-
-@tool(tags=["planning"])
-async def reassign_task(
-    assignee: Annotated[str, "The slug of the mode to reassign the task to (e.g., {available_agents})"],
-    reason: Annotated[Optional[str], "The reason for reassigning the task"] = None,
-) -> str:
-    """
-    This will let you reassign a task instance to a different mode.
-    Usage:
-    reassign_task(assignee=<assignee slug>, reason=<reason for reassigning the task>)
-
-    Example:
-    reassign_task(assignee="coder", reason="Need to make code changes")
-    """
-    return "This is a test response"
+    return await TaskExecutor.assign_and_run(task=task, assigner_agent=agent, assignee=assignee, message=message, todos_str=todos, feedback_tools=Tools(tools=[provide_feedback]))
 
 
-@tool(tags=["planning"])
-async def update_todo_list(
+@tool(tags=["planning", "update_todo"])
+async def update_todo(
+    agent: Hidden[LLMAgent],
+    task: Hidden[Task],
     todos: Annotated[str, "The updated todo list in markdown checklist format for the task."],
-) -> str:
+) -> ToolResult:
     """
     Replace the entire TODO list with an updated checklist reflecting the current state. Always provide the full list; the system will overwrite the previous one. This tool is designed for step-by-step task tracking, allowing you to confirm completion of each step before updating, update multiple task statuses at once (e.g., mark one as completed and start the next), and dynamically add new todos discovered during long or complex tasks.
     **Checklist Format:**
@@ -86,17 +79,35 @@ async def update_todo_list(
     - Use clear, descriptive task names.
 
     Usage:
-    update_todo_list(todos=<updated todo list in markdown checklist format>)
+    update_todo(todos=<updated todo list in markdown checklist format>)
 
     Example:
-    update_todo_list(todos="[x] Analyze requirements\n[x] Design architecture\n[-] Implement core logic\n[ ] Write tests\n[ ] Update documentation]")
+    update_todo(todos="[x] Analyze requirements\n[x] Design architecture\n[-] Implement core logic\n[ ] Write tests\n[ ] Update documentation]")
 
     *After completing "Implement core logic" and starting "Write tests":*
 
-    update_todo_list(todos="[x] Analyze requirements\n[x] Design architecture\n[x] Implement core logic\n[-] Write tests\n[ ] Update documentation\n[ ] Add performance benchmarks")
+    update_todo(todos="[x] Analyze requirements\n[x] Design architecture\n[x] Implement core logic\n[-] Write tests\n[ ] Update documentation\n[ ] Add performance benchmarks")
 
     """
-    return "This is a test response"
+    task: Task
+    task.todo_list = parse_markdown_checklist(todos)
+    return ToolResult(result="TODO list updated", error=None)
 
 
-PlanningTools = Tools(tools=[new_task, reassign_task, update_todo_list])
+@tool(tags=["planning", "feedback"])
+async def provide_feedback(
+    feedback: Annotated[str, "The feedback for the task."] = None,
+    discard: Annotated[bool, "Whether to discard the task."] = False,
+    approve: Annotated[bool, "Whether to approve the task."] = False,
+) -> ToolResult:
+    """
+    Provide feedback on the task.
+
+    Usage:
+    provide_feedback(approve=True)
+    provide_feedback(discard=True)
+    provide_feedback(feedback="The task is not complete. Can you please try to make sure that second todo is finished?")
+    """
+    return ToolResult(result="", error=None)
+
+PlanningTools = Tools(tools=[assign_task, update_todo])

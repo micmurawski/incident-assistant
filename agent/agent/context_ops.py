@@ -1,6 +1,9 @@
 from typing import Dict, List, Optional, Required, TypedDict
 
+from framework.decorators import node
+
 from agent.providers.base import AnthropicMessage, ApiHandler
+from agent.tooling.decorators import Hidden
 
 TOKEN_BUFFER_PERCENTAGE = 0.1
 N_MESSAGES_TO_KEEP = 3
@@ -99,7 +102,7 @@ def truncate_conversation(
     truncated_messages = [messages[0]]
     raw_messages_to_remove = int((len(messages) - 1) * frac_to_remove)
     messages_to_remove = raw_messages_to_remove - (raw_messages_to_remove % 2)
-    remaining_messages = messages[messages_to_remove + 1 :]
+    remaining_messages = messages[messages_to_remove + 1:]
     truncated_messages.extend(remaining_messages)
     return truncated_messages
 
@@ -387,3 +390,23 @@ async def summarize_conversation(
         return SummarizeResponse(messages=messages, cost=cost, summary="", error=error)
 
     return SummarizeResponse(messages=new_messages, summary=summary, cost=cost, new_context_tokens=new_context_tokens)
+
+
+@node
+async def context_summarization_node(
+    context: Hidden[dict],
+    system_prompt: Hidden[str],
+    messages: List[AnthropicMessage],
+) -> List[AnthropicMessage]:
+    
+    api_handler = context.get("api_handler", None)
+    if not isinstance(api_handler, ApiHandler):
+        raise ValueError("api_handler must be an instance of ApiHandler")
+    prev_context_tokens = await api_handler.count_tokens(messages)
+    result = await summarize_conversation(
+        messages=messages,
+        api_handler=api_handler,
+        system_prompt=system_prompt,
+        prev_context_tokens=prev_context_tokens,
+    )
+    return result.messages

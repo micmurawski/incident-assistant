@@ -1,13 +1,11 @@
 from typing import Annotated, Optional
 
-from agent.context import Context
-from agent.file_ops import FileOpsResult
-from agent.tooling.decorators import Hidden, Tools, tool
+from agent.file_ops import FileOpsManager, FileOpsResult
+from agent.tooling.decorators import ToolResult, Tools, tool
 
 
 @tool(tags=["codebase", "write"])
 async def search_and_replace(
-    context: Hidden[Context],
     path: Annotated[str, "File path (relative to workspace directory {cwd})"],
     search: Annotated[str, "The search string to replace"],
     replace: Annotated[str, "The replacement string"],
@@ -17,7 +15,7 @@ async def search_and_replace(
     ] = None,
     use_regex: Annotated[Optional[bool], "Whether to use regex when searching"] = False,
     ignore_case: Annotated[Optional[bool], "Whether to ignore case when searching"] = False,
-) -> str:
+) -> ToolResult:
     """
     Request to search and replace a string in a file. Use this when you need to search and replace a string in a file.
     Notes:
@@ -31,20 +29,19 @@ async def search_and_replace(
     2. Case-insensitive regex pattern:
     search_and_replace(path="src/main.ts", search="console.log", replace="console.error", use_regex=True, ignore_case=True)
     """
-    result: FileOpsResult = await context.file_ops_manager.search_and_replace(path, search, replace, start_line, end_line, use_regex, ignore_case)
-    return result.diff
+    result: FileOpsResult = await FileOpsManager.get_instance().search_and_replace(path, search, replace, start_line, end_line, use_regex, ignore_case)
+    return ToolResult(result=result.diff, error=result.error)
 
 
 @tool(tags=["write", "codebase"])
 async def insert_content(
-    context: Hidden[Context],
     path: Annotated[str, "File path relative to workspace directory {cwd}"],
     line: Annotated[
         int,
         "Line number where content will be inserted (1-based). Use 0 to append at end of file.Use any positive number to insert before that line",
     ],
     content: Annotated[str, "The content to insert at the specified line"],
-) -> str:
+) -> ToolResult:
     """
     Use this tool specifically for adding new lines of content into a file without modifying existing content.
     Specify the line number to insert before, or use line 0 to append to the end. Ideal for adding imports, functions, configuration blocks, log entries, or any multi-line text block.
@@ -55,19 +52,18 @@ async def insert_content(
     Example for appending to the end of file:
     insert_content(path="src/utils.ts", line=0, content="// This is the end of the file")
     """
-    result: FileOpsResult = await context.file_ops_manager.append_to_file(path, content)
-    return result.diff
+    result: FileOpsResult = await FileOpsManager.get_instance().append_to_file(path, content)
+    return ToolResult(result=result.diff, error=result.error)
 
 
 @tool(tags=["write"])
 async def write_to_file(
-    context: Hidden[Context],
     path: Annotated[str, "The path of the file to write to (relative to the current workspace directory {cwd})"],
     content: Annotated[
         str,
         "The content to write to the file. When performing a full rewrite of an existing file or creating a new one, ALWAYS provide the COMPLETE intended content of the file, without any truncation or omissions. You MUST include ALL parts of the file, even if they haven't been modified. Do NOT include the line numbers in the content though, just the actual content of the file.",
     ],
-) -> str:
+) -> ToolResult:
     """
     Request to write content to a file. This tool is primarily used for **creating new files** or for scenarios where a **complete rewrite of an existing file is intentionally required**. If the file exists, it will be overwritten. If it doesn't exist, it will be created. This tool will automatically create any directories needed to write the file.
 
@@ -77,8 +73,8 @@ async def write_to_file(
     Example: Requesting to write content to a file
     write_to_file(path="src/main.ts", content="console.log('Hello, world!');")
     """
-    result: FileOpsResult = await context.file_ops_manager.write_to_file(path, content)
-    return result.diff
+    result: FileOpsResult = await FileOpsManager.get_instance().write_to_file(path, content)
+    return ToolResult(result=result.diff, error=result.error)
 
 
 CodebaseWriteTools = Tools(tools=[search_and_replace, insert_content, write_to_file])

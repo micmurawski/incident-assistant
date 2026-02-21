@@ -384,7 +384,14 @@ def select_tools_use(messages: list[Message]) -> list[dict]:
         for c in m["content"]
         if c.get("type") == "tool_use"
     }
-    tool_result_ids = {m["tool_call_id"] for m in deserialized_messages if m["role"] == "tool"}
+    tool_result_ids = set()
+    for m in deserialized_messages:
+        if m.get("role") == "tool" and "tool_call_id" in m:
+            tool_result_ids.add(m["tool_call_id"])
+        elif isinstance(m.get("content"), list):
+            for c in m["content"]:
+                if isinstance(c, dict) and c.get("type") == "tool_result" and "tool_use_id" in c:
+                    tool_result_ids.add(c["tool_use_id"])
     tools_to_call = tool_use_ids - tool_result_ids
     return [
         c

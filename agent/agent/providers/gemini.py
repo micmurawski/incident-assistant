@@ -1,10 +1,11 @@
 from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
+from anthropic.types.message_param import MessageParam
 from google import genai
 from google.genai import types
 
-from agent.providers.base import AnthropicMessage, ApiHandler
+from agent.providers.base import ApiHandler
 from agent.providers.formatters.gemini_format import convert_to_gemini_messages
 from agent.providers.models import GEMINI_DEFAULT_MODEL_ID, GEMINI_MODELS
 from agent.providers.params import get_model_params
@@ -91,7 +92,7 @@ class GeminiHandler(ApiHandler):
     async def create_message(
         self,
         system_prompt: str,
-        messages: List[Dict[str, Any]],
+        messages: List[MessageParam],
         metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
@@ -296,7 +297,7 @@ class GeminiHandler(ApiHandler):
         except Exception as e:
             raise Exception(f"Gemini complete prompt error: {str(e)}") from e
 
-    async def count_tokens(self, content: List[AnthropicMessage]) -> int:
+    async def count_tokens(self, content: List[MessageParam]) -> int:
         """
         Count tokens for the given content using Gemini's API.
 
@@ -378,7 +379,7 @@ class GeminiHandler(ApiHandler):
         uncached_input_tokens = input_tokens - cache_read_tokens
 
         input_cost = input_price * (uncached_input_tokens / 1_000_000)
-        output_cost = output_price * (output_tokens / 1_000_000)
+        output_cost = output_price * ((output_tokens or 0) / 1_000_000)
         cache_cost = cache_reads_price * (cache_read_tokens / 1_000_000) if cache_read_tokens > 0 else 0
 
         total_cost = input_cost + output_cost + cache_cost

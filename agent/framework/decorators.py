@@ -2,9 +2,8 @@ import inspect
 import weakref
 from typing import Any, Callable
 
-from pydantic import Field, create_model
-
 from framework import AsyncNode, Node
+from pydantic import Field, create_model
 
 
 class _NodeDescriptor:

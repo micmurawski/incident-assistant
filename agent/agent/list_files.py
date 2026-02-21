@@ -12,7 +12,7 @@ from agent.telemetry_service import get_telemetry_service
 
 logging = get_telemetry_service()
 
-CRITICAL_IGNORE_PATTERNS = {"node_modules", ".git", "__pycache__", "venv", "env"}
+CRITICAL_IGNORE_PATTERNS = {"node_modules", ".git", "__pycache__", "venv", ".venv", "env"}
 
 MAX_LINE_LENGTH = 500
 MAX_RESULTS = 300
@@ -51,16 +51,15 @@ def build_args(dir_path: str, recursive: bool) -> list[str]:
     args = ["--files", "--hidden", "--follow"]
     if recursive:
         dir_path_abs = str(Path(dir_path).resolve())
-        is_hidden = any(part.startswith(".") for part in dir_path_abs.split(os.sep))
+        is_targeting_hidden_dir = any(part.startswith(".") for part in dir_path_abs.split(os.sep))
         target_dir_name = os.path.basename(dir_path_abs)
         is_ignored_target = target_dir_name in DIRS_TO_IGNORE
-        if is_hidden or is_ignored_target:
+        if is_targeting_hidden_dir or is_ignored_target:
             args += ["--no-ignore-vcs", "--no-ignore", "-g", "*", "-g", "**/*"]
         for d in DIRS_TO_IGNORE:
             if d == ".*":
-                # if not is_hidden:
-                #    pass
-                # args += ["-g", "*"]
+                if not is_targeting_hidden_dir:
+                    args += ["-g", "!**/.*/**"]
                 continue
             if d == target_dir_name and is_ignored_target:
                 continue
@@ -72,7 +71,6 @@ def build_args(dir_path: str, recursive: bool) -> list[str]:
         for d in DIRS_TO_IGNORE:
             if d != ".*":
                 args += ["-g", f"!{d}", "-g", f"{d}/**"]
-    args.append(dir_path)
     return args
 
 
@@ -82,7 +80,9 @@ async def execute_ripgrep(ripgrep_path: str, args: list[str], limit: int, cwd: s
             ripgrep_path, *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=cwd
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-        if proc.returncode != 0:
+        if proc.returncode == 1:
+            return []
+        if proc.returncode not in (0, 1):
             raise RuntimeError(
                 f"ripgrep failed: stderr: {stderr.decode()}, stdout: {stdout.decode()} command: {ripgrep_path + ' ' + ' '.join(args)}"
             )
@@ -260,13 +260,13 @@ async def list_filtered_dirs(
                         rel = os.path.relpath(entry.path, dir_path)
                         dirs.append(rel if rel.endswith(os.sep) else rel + os.sep)
                         remain -= 1
-                    if recursive and remain > 0:
-                        remain -= await walk(entry.path, subcontext, remain)
+                        if recursive and remain > 0:
+                            remain -= await walk(entry.path, subcontext, remain)
         except Exception as e:
             raise e
         return 0
 
-    is_hidden = os.path.basename(dir_path).startswith(".")
+    is_hidden = os.path.basename(os.path.abspath(dir_path)).startswith(".")
     context = ScanContext(
         is_target_dir_hidden=is_hidden,
         inside_explicit_hidden_target=is_hidden,
@@ -347,14 +347,18 @@ async def regex_search_files(
     args = [
         "--json",
         "-e",
-        f"`{regex}`",
+        regex,
         "--glob",
         file_pattern or "*",
         "--context",
         "1",
         "--no-messages",
-        directory_path,
     ]
+    for d in DIRS_TO_IGNORE:
+        if d == ".*":
+            continue
+        args += ["-g", f"!**/{d}/**"]
+    args.append(directory_path)
 
     output = await execute_ripgrep(get_ripgrep_path(), args, MAX_RESULTS, cwd=cwd)
 
