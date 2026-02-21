@@ -36,11 +36,11 @@ async def search_and_replace(
 @tool(tags=["write", "codebase"])
 async def insert_content(
     path: Annotated[str, "File path relative to workspace directory {cwd}"],
-    line: Annotated[
-        int,
-        "Line number where content will be inserted (1-based). Use 0 to append at end of file.Use any positive number to insert before that line",
-    ],
     content: Annotated[str, "The content to insert at the specified line"],
+    line: Annotated[
+        Optional[int],
+        "Line number where content will be inserted (1-based). Use 0 to append at end of file. Use any positive number to insert before that line (default: None means append at end of file)",
+    ]= None,
 ) -> ToolResult:
     """
     Use this tool specifically for adding new lines of content into a file without modifying existing content.
@@ -52,7 +52,7 @@ async def insert_content(
     Example for appending to the end of file:
     insert_content(path="src/utils.ts", line=0, content="// This is the end of the file")
     """
-    result: FileOpsResult = await FileOpsManager.get_instance().append_to_file(path, content)
+    result: FileOpsResult = await FileOpsManager.get_instance().append_to_file(path, content, line)
     return ToolResult(result=result.diff, error=result.error)
 
 

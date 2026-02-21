@@ -5,8 +5,7 @@ from agent.code_index.code_index_search_service import CodeIndexSearchService
 from agent.code_index.models import VectorStoreSearchResult
 from agent.file_ops import FileOpsManager, FileOpsResult
 from agent.telemetry_service import get_telemetry_service
-
-from .decorators import Hidden, ToolResult, Tools, tool
+from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
 
 logging = get_telemetry_service()
 

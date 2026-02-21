@@ -247,6 +247,7 @@ class FileOpsManager:
         self,
         path: str,
         content: str,
+        line: int,
     ) -> FileOpsResult:
         full_path = os.path.join(self.cwd, path)
         path_exists = os.path.exists(full_path)
@@ -257,7 +258,9 @@ class FileOpsManager:
             raise Exception(f"The path {path} is not file.")
 
         lines = open(full_path).read().split("\n")
-        res = "\n".join(self._insert_content(lines, [{"index": len(lines) - 1, "content": content.split("\n")}]))
+
+        line = len(lines) - 1 if line is None else line - 1
+        res = "\n".join(self._insert_content(lines, [{"index": line, "content": content.split("\n")}]))
         with open(full_path, "w") as file:
             file.write(res)
 

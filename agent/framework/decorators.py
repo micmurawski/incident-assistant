@@ -127,11 +127,11 @@ def node(func=None, *, max_retries=1, wait=0):
 
         # Determine if 'self' is the first parameter (i.e., if the func is a method)
         parameters = list(signature.parameters.values())
-        
+
         is_method = len(parameters) > 0 and parameters[0].name == "self"
         is_class_method = len(parameters) > 0 and parameters[0].name == "cls"
         is_async = inspect.iscoroutinefunction(func)
-        
+
         if is_method or is_class_method:
             parameters = parameters[1:]
             signature = inspect.Signature(parameters)
@@ -224,9 +224,11 @@ def node(func=None, *, max_retries=1, wait=0):
     else:
         return decorator(func)
 
+
 @node
-async def noop_async(messages: list[dict]):
+async def end(messages: list[dict]):
     return {"messages": messages}
+
 
 @node
 def noop(messages: list[dict]):

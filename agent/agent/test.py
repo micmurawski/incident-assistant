@@ -3,7 +3,7 @@ import os
 from typing import Any, TypeVar
 
 from framework import AsyncFlow
-from framework.decorators import noop_async as end
+from framework.decorators import end
 
 from agent.file_ops import FileOpsManager
 from agent.llm import LLMAgent
@@ -12,8 +12,19 @@ from agent.providers.base import ApiHandler
 from agent.settings import SettingsManager
 from agent.tooling import CodebaseReadTools
 from agent.tooling.cli import CliTools
+from agent.tracing import trace_flow
 
 T = TypeVar('T')
+
+
+os.environ["PHOENIX_CLIENT_HEADERS"] = "Authorization=Bearer YOUR_API_KEY"
+os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:6006"
+
+
+@trace_flow(flow_name="AgentFlow")
+class TracedAgentFlow(AsyncFlow):
+    def __init__(self, start):
+        super().__init__(start=start)
 
 
 class Agent(LLMAgent):
@@ -25,7 +36,7 @@ class Agent(LLMAgent):
         self.api_handler: ApiHandler = build_api_handler(**api_settings)
         self.file_ops_manager = FileOpsManager(cwd=self.cwd)
         self.name = name
-        self.flow = AsyncFlow(start=self.call_llm)
+        self.flow = TracedAgentFlow(start=self.call_llm)
 
 
 async def main():

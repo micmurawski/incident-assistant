@@ -8,7 +8,7 @@ from framework import AsyncFlow
 from framework.decorators import node
 
 from agent.providers.base import ApiHandler
-from agent.tooling.decorators import Tools
+#from agent.tooling.decorators import Tools
 from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
                          StreamChunk)
 
@@ -251,7 +251,7 @@ class LLMAgent(ABC):
         _next = "tools" if iter.had_tool_use() else "default"
         return data, _next
 
-    def bind_tools(self, tools: Tools, tool_format_arguments: dict[str, Any] = None):
+    def bind_tools(self, tools, tool_format_arguments: dict[str, Any] = None):
         self.tools_definitions = tools.tools_definitions(
             format=self.api_handler.provider,
             format_kwargs=tool_format_arguments
