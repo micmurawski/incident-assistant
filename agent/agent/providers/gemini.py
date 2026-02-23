@@ -111,8 +111,8 @@ class GeminiHandler(ApiHandler):
         model_id = config["id"]
         # Convert messages to Gemini format
         contents = convert_to_gemini_messages(messages)
-        #print("converted contents")
-        #print(contents)
+        # print("converted contents")
+        # print(contents)
 
         # Prepare tools list
         tools_list = []
@@ -385,7 +385,6 @@ class GeminiHandler(ApiHandler):
         total_cost = input_cost + output_cost + cache_cost
 
         return total_cost
-
 
     def get_model(self) -> ModelInfo:
         _id = self.model_id if self.model_id in GEMINI_MODELS else GEMINI_DEFAULT_MODEL_ID

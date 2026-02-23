@@ -8,10 +8,10 @@ from framework import AsyncFlow
 from framework.decorators import node
 
 from agent.providers.base import ApiHandler
-#from agent.tooling.decorators import Tools
 from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
                          StreamChunk)
-
+from framework.viz import build_mermaid, to_png
+from agent.context_ops import summarize_conversation, SummarizeResponse
 T = TypeVar('T')
 
 
@@ -30,6 +30,7 @@ adjectives = [
     "reflecting",
     "ruminating",
     "pondering",
+    "concluding",
     "contemplating",
     "considering",
     "evaluating",
@@ -97,6 +98,7 @@ class ChunkProxyIterator[T]:
         self.reasoning = ""
         self.text = ""
         self.usage = None
+        self.usage_summary: dict = {}
         self.tool_use = []
         self.agent_id = agent_id
         self.session_id = session_id
@@ -117,6 +119,11 @@ class ChunkProxyIterator[T]:
                 print()
                 pr_yellow(json.dumps(chunk), flush=True)
                 self.usage = chunk
+                for key in ("input_tokens", "output_tokens", "cache_write_tokens",
+                            "cache_read_tokens", "reasoning_tokens", "total_cost"):
+                    val = chunk.get(key)
+                    if val:
+                        self.usage_summary[key] = self.usage_summary.get(key, 0) + val
             case "tool_use":
                 function_name = chunk["name"]
                 function_input = chunk["input"]
@@ -222,8 +229,12 @@ class ChunkProxyIterator[T]:
 
 class LLMAgent(ABC):
     api_handler: ApiHandler
+    system_prompt: str
     name: str
     flow: AsyncFlow | None = None
+
+    def __repr__(self):
+        return f"LLMAgent(name={self.name})"
 
     async def call(self, shared: dict[str, Any]):
         if self.flow is None:
@@ -248,14 +259,43 @@ class LLMAgent(ABC):
             pass
 
         data = {"messages": messages + iter.get_response()}
+        if iter.usage_summary:
+            data["_last_usage"] = iter.usage_summary
         _next = "tools" if iter.had_tool_use() else "default"
         return data, _next
+
+    @node
+    async def summarize_context(
+        self,
+        messages: List[AnthropicMessage],
+    ) -> List[AnthropicMessage]:
+
+        total_tokens = await self.api_handler.count_tokens(messages)
+        model_info = await self.api_handler.get_model()
+        if model_info["max_tokens"] >= total_tokens:
+            result: SummarizeResponse = await summarize_conversation(
+                messages=messages,
+                api_handler=self.api_handler,
+                system_prompt=self.system_prompt,
+                prev_context_tokens=total_tokens,
+            )
+            if result.error:
+                pr_red(f"Error summarizing context: {result.error}", flush=True)
+            else:
+                return {"messages": result.messages}
+        return {"messages": messages}, "default"
 
     def bind_tools(self, tools, tool_format_arguments: dict[str, Any] = None):
         self.tools_definitions = tools.tools_definitions(
             format=self.api_handler.provider,
             format_kwargs=tool_format_arguments
         )
+
+    def get_flow_graph(self):
+        return build_mermaid(self.flow)
+
+    def get_flow_graph_png(self, filename: str):
+        return to_png(self.flow, filename)
 
     def register(self):
         AgentRegistry.get_instance().register(self)

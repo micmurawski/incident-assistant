@@ -29,6 +29,22 @@ class Task:
     consecutive_mistakes_limit: int = field(default=3)
     tool_usage: list[ToolUsage] = field(default_factory=list)
 
+    def __repr__(self):
+        todos = []
+        for todo in self.todo_list:
+            todos.append({
+                "content": todo["content"],
+                "status": todo["status"],
+            })
+        data = {
+            "id": self.id,
+            "status": self.status.value,
+            "assignee": self.assignee,
+            "assigner": self.assigner,
+            "todos": todos,
+        }
+        return json.dumps(data)
+
     def __post_init__(self):
         if self.root is None:
             self.root = self
@@ -62,6 +78,7 @@ class Task:
         child_task = Task(
             parent=self,
             root=self.root,
+            todo_list=todo_list,
             **kwargs,
         )
         self.children.append(child_task)

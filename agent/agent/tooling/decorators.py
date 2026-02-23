@@ -359,6 +359,10 @@ class Tools(AsyncNode):
     """
 
     tools: list[BaseTool]
+    debug_mode: bool = False
+
+    def set_debug_mode(self, debug_mode: bool = True) -> None:
+        self.debug_mode = debug_mode
 
     def __post_init__(self) -> None:
         super().__init__()
@@ -407,10 +411,11 @@ class Tools(AsyncNode):
             if asyncio.iscoroutine(tool_result):
                 tool_result = await tool_result
 
-            print(f"\033[95mResult of: {tool.name}({', '.join(f'{k}={v}' for k, v in llm_input.items())})=\033[0m")
-            print(f"\033[95m{tool_result.result}\033[0m")
-            # if tool_result.error:
-            print(f"\033[91mError: {tool_result.error}\033[0m")
+            if self.debug_mode:
+                print(f"\033[95mResult of: {tool.name}({', '.join(f'{k}={v}' for k, v in llm_input.items())})=\033[0m")
+                print(f"\033[95m{tool_result.result}\033[0m")
+                if tool_result.error:
+                    print(f"\033[91mError: {tool_result.error}\033[0m")
 
             # Anthropic expects tool results in a user message with content blocks
             messages.append(

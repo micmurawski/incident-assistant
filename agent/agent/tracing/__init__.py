@@ -1,5 +1,7 @@
-from .config import TracingConfig
-from .core import PhoenixTracer
+from .core import GraphTracer
 from .decorator import trace_flow
 
-__all__ = ["trace_flow", "TracingConfig", "PhoenixTracer"]
+# Backward compatibility
+PhoenixTracer = GraphTracer
+
+__all__ = ["trace_flow", "GraphTracer", "PhoenixTracer"]

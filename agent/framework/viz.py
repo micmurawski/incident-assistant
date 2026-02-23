@@ -8,7 +8,8 @@ def build_mermaid(flow):
 
     def get_id(n):
         nonlocal ctr
-        return ids[n] if n in ids else (ids.setdefault(n, f"N{ctr}"), (ctr := ctr + 1))[0]
+        nid = id(n)
+        return ids[nid] if nid in ids else (ids.setdefault(nid, f"N{ctr}"), (ctr := ctr + 1))[0]
 
     def link(a, b, label=None):
         if label == "default":
@@ -21,9 +22,10 @@ def build_mermaid(flow):
             lines.append(f"    {a} --> {b}")
 
     def walk(node, parent=None, label=None):
-        if node in visited:
+        node_id = id(node)
+        if node_id in visited:
             return parent and link(parent, get_id(node), label)
-        visited.add(node)
+        visited.add(node_id)
         if isinstance(node, Flow):
             node.start_node and parent and link(parent, get_id(node.start_node), label)
             lines.append(f"\n    subgraph sub_flow_{get_id(node)}[{type(node).__name__}]")
