@@ -1,37 +1,100 @@
+locals {
+  environment = terraform.workspace
+  default_tags = {
+    "project"     = "robotshop"
+    "environment" = "dev"
+  }
+}
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "20.2.0"
+  version = "~> 21.0"
 
-  cluster_name    = var.cluster_name
-  cluster_version = "1.33"
+  name               = var.cluster_name
+  kubernetes_version = "1.35"
 
   # Use the existing Default VPC and Subnets
   vpc_id                   = data.aws_vpc.default.id
   subnet_ids               = data.aws_subnets.default.ids
   control_plane_subnet_ids = data.aws_subnets.default.ids
 
-  # Security: Allow public access to the API (required for local kubectl)
-  cluster_endpoint_public_access = true
+  # Security: Allow public access to the API (required for kubectl from your laptop)
+  endpoint_public_access = true
 
   # Grant admin permissions to the user creating the cluster
   enable_cluster_creator_admin_permissions = true
 
-  # 4. The 1-Node Worker Group
+  addons = {
+    coredns = {}
+    eks-pod-identity-agent = {
+      before_compute = true
+    }
+    kube-proxy = {}
+    vpc-cni = {
+      before_compute = true
+    }
+  }
+
   eks_managed_node_groups = {
-    one_node = {
-      min_size     = 1
-      max_size     = 1
-      desired_size = 1
+    # Node Group for your 8 Microservices
+    apps = {
+      ami_type       = "AL2023_ARM_64_STANDARD"
+      instance_types = ["t4g.medium"]
+      min_size       = 1
+      max_size       = 1
+      desired_size   = 1
 
-      instance_types = ["t3.micro"]
-      capacity_type  = "ON_DEMAND"
+      labels = {
+        role = "application"
+      }
+      associate_public_ip_address = true
+    }
 
-      # CRITICAL: Since Default VPC subnets are public, we must assign public IPs
-      # or the nodes cannot download software/join the cluster.
+    # Dedicated Node Group for Observability (Prometheus/Loki/Grafana)
+    observability = {
+      ami_type       = "AL2023_ARM_64_STANDARD"
+      instance_types = ["t4g.medium"]
+      min_size       = 1
+      max_size       = 1
+      desired_size   = 1
+
+      labels = {
+        role = "monitoring"
+      }
+
+      # Taint prevents standard apps from accidentally landing here (list format required by EKS module)
+      taints = {
+        dedicated = {
+          key    = "dedicated"
+          value  = "monitoring"
+          effect = "NO_SCHEDULE"
+        }
+      }
       associate_public_ip_address = true
     }
   }
+  access_entries = {
+    # One access entry with a policy associated
+    example = {
+      principal_arn = "arn:aws:iam::189429133920:user/robot"
+      policy_associations = {
+        cluster_admin = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = {
+            type = "cluster"
+          }
+        }
+        eks_admin = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy"
+          access_scope = {
+            type = "cluster"
+          }
+        }
+      }
+    }
+  }
+  tags = local.default_tags
 }
+
 
 # ECR Repositories for Robot Shop services
 resource "aws_ecr_repository" "robot_shop" {
@@ -48,3 +111,17 @@ resource "aws_ecr_repository" "robot_shop" {
     encryption_type = "AES256"
   }
 }
+
+# ------------------------------------------------------------------------------
+# Outputs (for kubeconfig and scripts)
+# ------------------------------------------------------------------------------
+output "cluster_name" {
+  description = "EKS cluster name; use with: aws eks update-kubeconfig --name <name> --region <region>"
+  value       = var.cluster_name
+}
+
+output "cluster_region" {
+  description = "AWS region of the EKS cluster"
+  value       = var.region
+}
+

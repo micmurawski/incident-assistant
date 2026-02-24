@@ -16,11 +16,11 @@ variable "robot_shop_services" {
 }
 
 variable "cluster_name" {
-  type = string
+  type    = string
   default = "1-node-default-vpc"
 }
 
 variable "region" {
-  type = string
+  type    = string
   default = "us-east-1"
 }
