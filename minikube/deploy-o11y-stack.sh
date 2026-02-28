@@ -1,5 +1,5 @@
 #!/bin/bash
-set -x
+#set -x
 
 export NAMESPACE="monitoring"
 
@@ -42,6 +42,7 @@ helm upgrade --install loki grafana/loki-stack \
   --set grafana.enabled=true \
   --set prometheus.enabled=false \
   --set grafana.adminPassword='admin' \
+  --set grafana.service.type=LoadBalancer \
   --set promtail.enabled=true \
   --set loki.isDefault=false \
   -f data-sources.yml \
@@ -60,10 +61,12 @@ kubectl -n linkerd-viz rollout status deploy/prometheus
 kubectl run -i --tty --rm debug-curl --image=curlimages/curl --restart=Never -n ${NAMESPACE} -- \
   curl -v "http://prometheus.linkerd-viz.svc.cluster.local:9090/api/v1/query?query=up"
 
-#
-#
-##kubectl get secret --namespace ${NAMESPACE} loki-grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
-#
+
+
+kubectl get secret --namespace ${NAMESPACE} loki-grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
+kubectl get svc -n monitoring loki-grafana
+
+
 #linkerd install --crds | kubectl apply -f -
 #linkerd install --set proxyInit.runAsRoot=true --set prometheus.enabled=false,prometheusUrl="http://loki-prometheus-server.${NAMESPACE}.svc.cluster.local:9090" | kubectl apply -f -
 #linkerd viz install | kubectl apply -f -

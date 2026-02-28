@@ -3,20 +3,25 @@ set -e
 
 echo "Starting full deployment of Grafana with Loki on Minikube..."
 
+export REPO=${REPO:-"robotshop"}
+export TAG=${TAG:-"2.2.0"}
+#eval $(minikube -p minikube docker-env)
+
 # Run all the setup and deployment scripts in sequence
 ./start-minikube.sh
-./setup-helm.sh
-./deploy-grafana-loki-stack.sh
+./deploy-o11y-stack.sh
 ./deploy-robot-shop.sh
+./deploy-chaos-mesh.sh
+
 
 echo "Deployment complete! Here's how to access your services:"
 
 # Get Grafana access details
 GRAFANA_PASSWORD=$(kubectl get secret --namespace monitoring loki-grafana -o jsonpath="{.data.admin-password}" | base64 --decode)
 
+
 echo "-------------------------------------------"
 echo "Run: minikube service loki-grafana -n monitoring"
-echo "Access Grafana at: http://$(minikube ip):30300"
 echo "Username: admin"
 echo "Password: $GRAFANA_PASSWORD"
 echo "-------------------------------------------"
