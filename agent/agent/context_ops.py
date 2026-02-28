@@ -1,6 +1,5 @@
 from typing import Dict, List, Optional, Required, TypedDict
 
-
 from agent.providers.base import AnthropicMessage, ApiHandler
 
 TOKEN_BUFFER_PERCENTAGE = 0.1

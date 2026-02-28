@@ -1,15 +1,15 @@
 
 
-from opentelemetry import trace
-from openinference.instrumentation.openai import OpenAIInstrumentor
-from openinference.instrumentation import using_attributes
-from openinference.instrumentation import using_session
-from phoenix.otel import register
 import asyncio
 import os
+import uuid
 from typing import Any, TypeVar
 
 from framework import AsyncFlow
+from openinference.instrumentation import using_attributes, using_session
+from openinference.instrumentation.openai import OpenAIInstrumentor
+from opentelemetry import trace
+from phoenix.otel import register
 
 from agent.file_ops import FileOpsManager
 from agent.llm import LLMAgent
@@ -19,7 +19,7 @@ from agent.settings import SettingsManager
 from agent.tooling import CodebaseReadTools
 from agent.tooling.cli import CliTools
 from agent.tracing import trace_flow
-import uuid
+
 T = TypeVar('T')
 
 

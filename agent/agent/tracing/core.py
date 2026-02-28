@@ -5,15 +5,13 @@ No LLM/model/usage — graph and shared only.
 
 import json
 import os
+import uuid
+from logging import getLogger
 from typing import Any, Dict, Optional
 
 from opentelemetry.context import attach
 from opentelemetry.trace import StatusCode, set_span_in_context
 from phoenix.otel import register
-
-import uuid
-
-from logging import getLogger
 
 logger = getLogger(__name__)
 

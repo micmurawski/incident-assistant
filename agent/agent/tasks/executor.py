@@ -3,7 +3,6 @@ from agent.tasks.tasks import Task
 from agent.tasks.types import TaskStatus
 from agent.tooling.decorators import ToolResult, Tools
 
-
 FEEDBACK_SYSTEM_PROMPT = """
 You are a feedback assistant. You are given a task and a feedback. You need to provide feedback on the task.
 """

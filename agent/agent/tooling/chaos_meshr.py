@@ -5,7 +5,7 @@ into a Kubernetes cluster. Use for chaos engineering and resilience testing.
 import asyncio
 from typing import Annotated, Optional
 
-from agent.tooling.decorators import ToolResult, tool, Tools
+from agent.tooling.decorators import ToolResult, Tools, tool
 
 MAX_OUTPUT_LENGTH = 8000
 
