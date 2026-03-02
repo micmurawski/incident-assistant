@@ -123,6 +123,13 @@ def is_annotated_alias(obj: _AnnotatedAlias | Parameter) -> bool:
     return isinstance(obj, _AnnotatedAlias)
 
 
+def is_literal(annotation: Any) -> bool:
+    """
+    Returns True if the annotation is a typing.Literal.
+    """
+    return hasattr(annotation, "__origin__") and annotation.__origin__ == Literal
+
+
 def is_complex_type(_type: Any) -> bool:
     """
     Returns True if the type is considered complex (dict, list, set, tuple).
@@ -176,6 +183,18 @@ def process_param(
         required = False
         first_non_none_type = get_first_non_none_type_from_args(param)
         return process_param(first_non_none_type, result, additional_properties, required)
+    elif is_literal(param):
+        # Literals are represented as enums in the schema
+        literal_values = getattr(param, "__args__", ())
+        if not literal_values:
+            raise Exception(f"Literal {param} has no values")
+        first_value = next((v for v in literal_values if v is not None), None)
+        if first_value is None:
+            raise Exception(f"Literal {param} has only None values")
+        value_type = type(first_value)
+        result["type"] = CLASS_TO_TYPE.get(value_type, "string")
+        result["enum"] = list(literal_values)
+        return result, required, additional_properties
     elif is_annotated_alias(param):
         # Annotated: get description from annotation metadata, continue processing underlying type
         description = get_description_from_annotation_metadata(param)
