@@ -7,6 +7,7 @@ from agent.persistence.model import Task as TaskModel
 from agent.tasks.formatting import parse_markdown_checklist
 from agent.tasks.types import TaskStatus, TodoItem, ToolUsage
 from agent.types import ApiMessage
+from datetime import datetime
 
 T = TypeVar("T", bound="Task")
 
@@ -28,6 +29,8 @@ class Task:
     consecutive_mistakes_count: int = field(default=0)
     consecutive_mistakes_limit: int = field(default=3)
     tool_usage: list[ToolUsage] = field(default_factory=list)
+    created_at: datetime = field(default_factory=lambda: datetime.now())
+    resolved_at: datetime | None = None
 
     def __repr__(self):
         todos = []
@@ -90,6 +93,7 @@ class Task:
         ]
         if all(task.status == TaskStatus.DONE for task in not_discarded_children):
             self.status = TaskStatus.DONE
+            self.resolved_at = datetime.now()
             return True
         if raise_if_not_done:
             raise ValueError("Task is not done. It still has dependencies that are not done.")

@@ -1,41 +1,12 @@
 import asyncio
 from typing import Annotated, Optional
 
+from agent.tooling._utils import run_cli_command
 from agent.tooling.decorators import ToolResult, Tools, tool
 
-MAX_OUTPUT_LENGTH = 8000
 
-
-async def _run_kubectl(args: list[str], timeout: int = 30) -> ToolResult:
-    cmd = ["kubectl"] + args
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(), timeout=timeout
-        )
-        stdout_decoded = stdout.decode("utf-8")
-        stderr_decoded = stderr.decode("utf-8")
-        error_msg = stderr_decoded if process.returncode != 0 else None
-
-        total_length = len(stdout_decoded)
-        output = stdout_decoded
-        if total_length > MAX_OUTPUT_LENGTH:
-            head = stdout_decoded[: MAX_OUTPUT_LENGTH // 2]
-            tail = stdout_decoded[-MAX_OUTPUT_LENGTH // 2 :]
-            output = f"{head}\n...[trimmed {total_length - MAX_OUTPUT_LENGTH} characters]...\n{tail}"
-
-        if error_msg and len(error_msg) > 2000:
-            error_msg = error_msg[:1600] + f"\n...[trimmed {len(error_msg) - 1600} characters of stderr]..."
-
-        return ToolResult(result=output, error=error_msg)
-    except asyncio.TimeoutError:
-        return ToolResult(result=None, error=f"kubectl command timed out after {timeout}s: {' '.join(cmd)}")
-    except Exception as e:
-        return ToolResult(result=None, error=str(e))
+def _run_kubectl(args: list[str], timeout: int = 30) -> ToolResult:
+    return run_cli_command(["kubectl"] + args, None, timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -94,9 +65,12 @@ async def kubectl_get_namespaces() -> ToolResult:
 @tool(tags=["kubectl", "pods"])
 async def kubectl_get_pods(
     namespace: Annotated[Optional[str], "Namespace to query. Omit or pass null for all namespaces."] = None,
-    label_selector: Annotated[Optional[str], "Label selector filter, e.g. 'app=web' or 'tier in (frontend,backend)'"] = None,
-    field_selector: Annotated[Optional[str], "Field selector filter, e.g. 'status.phase=Failed' or 'status.phase!=Running'"] = None,
-    sort_by: Annotated[Optional[str], "JSONPath to sort by, e.g. '.status.startTime' or '.metadata.creationTimestamp'"] = None,
+    label_selector: Annotated[Optional[str],
+                              "Label selector filter, e.g. 'app=web' or 'tier in (frontend,backend)'"] = None,
+    field_selector: Annotated[Optional[str],
+                              "Field selector filter, e.g. 'status.phase=Failed' or 'status.phase!=Running'"] = None,
+    sort_by: Annotated[Optional[str],
+                       "JSONPath to sort by, e.g. '.status.startTime' or '.metadata.creationTimestamp'"] = None,
 ) -> ToolResult:
     """
     List pods with status, restarts, age, node, and IP.
@@ -611,7 +585,8 @@ KubectlTools = Tools(tools=[
 async def kubectl_delete_pod(
     pod_name: Annotated[str, "Name of the pod to delete"],
     namespace: Annotated[str, "Namespace of the pod"],
-    grace_period: Annotated[Optional[int], "Seconds to wait for graceful shutdown. 0 for immediate force-delete."] = None,
+    grace_period: Annotated[Optional[int],
+                            "Seconds to wait for graceful shutdown. 0 for immediate force-delete."] = None,
 ) -> ToolResult:
     """
     Delete a pod. Kubernetes will recreate it if managed by a controller (Deployment, StatefulSet, etc.).
@@ -690,7 +665,8 @@ async def kubectl_rollout_restart(
 async def kubectl_rollout_undo(
     resource: Annotated[str, "Resource to rollback, e.g. 'deployment/my-app'"],
     namespace: Annotated[str, "Namespace of the resource"],
-    revision: Annotated[Optional[int], "Specific revision to roll back to. Omit to rollback to the previous revision."] = None,
+    revision: Annotated[Optional[int],
+                        "Specific revision to roll back to. Omit to rollback to the previous revision."] = None,
 ) -> ToolResult:
     """
     Rollback a deployment or statefulset to a previous revision.

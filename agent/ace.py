@@ -1,8 +1,9 @@
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, List
-from uuid import uuid5
+from uuid import uuid5, uuid4
 
 import yaml
 from anthropic import Anthropic
@@ -13,6 +14,8 @@ from agent.code_index.models import (EmbedderResponse, IEmbedder,
 from agent.code_index.vector_store import VectorStoreClient
 # --- Domain Entities ---
 from agent.constants import QDRANT_INCIDENT_NAMESPACE
+from agent.tasks.tasks import Task
+from agent.tasks.types import TaskStatus
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE_PATH = os.path.join(BASE_DIR, "incidents")
@@ -73,6 +76,23 @@ class PostMortem:
     def from_dict(cls, data: dict[str, Any]) -> "PostMortem":
         return cls(id=data["id"], root_cause_analysis=data["root_cause_analysis"], successful_fix=data["successful_fix"])
 
+
+@dataclass
+class IncidentTask(Task):
+    """An ACE Task that tracks incident data, post-mortem, and performance."""
+    incident_data: IncidentData = None
+    post_mortem: PostMortem = None
+    
+    @property
+    def ttr(self) -> float | None:
+        """Time To Resolution in seconds."""
+        if self.resolved_at and self.created_at:
+            return (self.resolved_at - self.created_at).total_seconds()
+        return None
+
+    @property
+    def success(self) -> bool:
+        return self.status == TaskStatus.DONE
 
 @dataclass
 class RunbookRule:
@@ -163,43 +183,71 @@ class IncidentManagerACE:
         )
         return response.content[0].text
 
+    async def respond_to_incident(self, incident: IncidentData) -> str:
+        """
+        ACTOR: Responds to an incident using the evolved playbook.
+        """
+        print(f"\n🚀 [ACTOR] Responding to incident {incident.id}...")
+        
+        system = f"""You are an Expert SRE Agent. 
+        Use the following Evolving Runbook (SOP) to mitigate the incident.
+        
+        {self.playbook.get_context_block()}
+        
+        Provide a concise mitigation plan."""
+
+        user = f"""
+        {incident.to_markdown()}
+        
+        What is your mitigation plan?
+        """
+        
+        plan = self._call(system, user)
+        return plan
+
     # 2. REFLECTOR: The Post-Mortem Analyst
-    async def analyze_performance(self, incident: IncidentData, post_mortem: PostMortem) -> str:
-        print("\n🔍 [REFLECTOR] Comparing Agent Plan vs. Actual Post-Mortem...")
+    async def analyze_performance(self, task: IncidentTask) -> str:
+        print(f"\n🔍 [REFLECTOR] Analyzing performance for {task.incident_data.id}...")
         
         system = """You are an Expert Incident Analyst. 
-        Compare the Agent's proposed mitigation against the HISTORICAL POST-MORTEM (Ground Truth).
+        Compare the Agent's performance against the HISTORICAL POST-MORTEM (Ground Truth).
         
-        Did the Agent guess correctly?
-        - If YES: What pattern led to success?
-        - If NO: What subtle signal in the metrics did the agent miss that the Post-Mortem identified?
+        Analyze:
+        1. Success: Did the agent's plan align with the successful fix?
+        2. TTR: Was the resolution efficient?
+        3. Reflection: What pattern led to success or what signal did the agent miss?
         
         Output a crisp reflection."""
 
         user = f"""
         --- CURRENT INCIDENT DESCRIPTION ---
-        {incident.to_markdown()}
+        {task.incident_data.to_markdown()}
         
-        --- CURRENT POST-MORTEM ---
-        {post_mortem.to_markdown()}
+        --- POST-MORTEM (GROUND TRUTH) ---
+        {task.post_mortem.to_markdown()}
         
-        --- HISTORICAL INCIDENTS ---
+        --- AGENT PERFORMANCE ---
+        Success: {task.success}
+        TTR: {task.ttr} seconds
         """
         
-        # TODO: Search for similar incidents from the database and propose a solution
-        similar_incidents: list[VectorStoreSearchResult] = await self.vector_store.search(incident.description, collection_name="incidents")
-        result: VectorStoreSearchResult
-        for i, result in enumerate(similar_incidents):
-            payload = result.payload
-            file_path = payload.get("file_path")
-            yaml_text = open(file_path, "r").read()
-            incident_data = yaml.load(yaml_text)
-            incident_data = IncidentData.from_dict(incident_data.get("incident_data"))
-            post_mortem = PostMortem.from_dict(incident_data.get("post_mortem"))
-            if i == 0:
-                user += "--- HISTORICAL INCIDENTS --- \n"
-            episode = incident_data.to_markdown() + POST_MORTEM_SEPARATOR + post_mortem.to_markdown()
-            user += episode + "\n"
+        # Search for similar incidents for context
+        try:
+            similar_incidents: list[VectorStoreSearchResult] = await self.vector_store.search(task.incident_data.description, collection_name="incidents")
+            if similar_incidents:
+                user += "\n--- SIMILAR HISTORICAL INCIDENTS ---\n"
+                for i, result in enumerate(similar_incidents[:2]):
+                    payload = result.payload
+                    file_path = payload.get("file_path")
+                    if os.path.exists(file_path):
+                        with open(file_path, "r") as f:
+                            hist_data = yaml.safe_load(f)
+                            h_inc = IncidentData.from_dict(hist_data.get("incident_data"))
+                            h_pm = PostMortem.from_dict(hist_data.get("post_mortem"))
+                            user += h_inc.to_markdown() + POST_MORTEM_SEPARATOR + h_pm.to_markdown() + "\n"
+        except Exception as e:
+            print(f"   [Reflector Warning] Could not fetch similar incidents: {e}")
+
         reflection = self._call(system, user)
         return reflection
 
@@ -218,7 +266,9 @@ class IncidentManagerACE:
             "reasoning": "why this works",
             "category": "DB|NET|APP|SEC"
         }
-        If no new rule is needed, return {"action": "NONE"}.
+        If the reflection suggests updating an existing rule or deleting an incorrect one, use:
+        {"action": "UPDATE", "rule_id": "rule_001", ...} or {"action": "DELETE", "rule_id": "rule_001"}
+        If no action is needed, return {"action": "NONE"}.
         """
 
         try:
@@ -232,30 +282,34 @@ class IncidentManagerACE:
                     data["reasoning"],
                     data["category"]
                 )
+            elif data["action"] == "DELETE":
+                # Find and remove the rule
+                self.playbook.rules = [r for r in self.playbook.rules if r.id != data["rule_id"]]
+                print(f"🗑️ [Playbook] Deleted rule: {data['rule_id']}")
+            # UPDATE logic can be added here
         except Exception as e:
             print(f"   [Curator Error] Could not update runbook: {e}")
 
     # --- The Training Loop ---
-    def train_on_history(self, incident: IncidentData, post_mortem: PostMortem):
+    async def train_on_history(self, task: IncidentTask):
         """
-        Feeds a historical incident into the system to evolve the playbook.
+        Feeds a historical task into the system to evolve the playbook.
         """
 
         # 2. Reflector compares it to what actually happened
-        reflection = self.analyze_performance(incident, post_mortem)
+        reflection = await self.analyze_performance(task)
 
         # 3. Curator updates the playbook
         self.update_runbook(reflection)
 
 # --- EXECUTION SCENARIO ---
 
+import asyncio
 
-if __name__ == "__main__":
+async def run_scenario():
     ace_manager = IncidentManagerACE()
 
-    # === SCENARIO 1: The "False Positive" DB Issue ===
-    # Real history: Everyone thought it was the DB, but it was actually a bad deployment.
-
+    # === SCENARIO 1: Training on a historical incident ===
     inc_1 = IncidentData(
         id="INC-2024-001",
         description="Users reporting 500 errors on checkout.",
@@ -268,16 +322,25 @@ if __name__ == "__main__":
     )
 
     pm_1 = PostMortem(
+        id="INC-2024-001",
         root_cause_analysis="The DB CPU was low, ruling out database load. The issue coincided exactly with Checkout-v2 deploy.",
         successful_fix="Rolled back Checkout-v2 to v1 immediately.",
     )
 
-    print("\n--- 📂 PROCESSING HISTORICAL INCIDENT 1 ---")
-    ace_manager.train_on_history(inc_1, pm_1)
+    # Create a task representing the resolution effort
+    task_1 = IncidentTask(
+        id="task_001",
+        status=TaskStatus.DONE, # Assume it was successful for training
+        incident_data=inc_1,
+        post_mortem=pm_1,
+        created_at=datetime.now(),
+        resolved_at=datetime.now() # Mock TTR
+    )
 
-    # === SCENARIO 2: A similar incident occurs later ===
-    # Now the agent should recognize the pattern (Low DB CPU + Recent Deploy = Rollback, don't check DB).
+    print("\n--- 📂 TRAINING ON HISTORICAL INCIDENT 1 ---")
+    await ace_manager.train_on_history(task_1)
 
+    # === SCENARIO 2: Responding to a similar incident ===
     inc_2 = IncidentData(
         id="INC-2024-045",
         description="Login service is timing out.",
@@ -289,8 +352,10 @@ if __name__ == "__main__":
     )
 
     print("\n--- 🚨 LIVE INCIDENT RESPONSE (Using Evolved Context) ---")
-    # This time, we just ask for a response, we don't train.
-    final_plan = ace_manager.respond_to_incident(inc_2)
+    final_plan = await ace_manager.respond_to_incident(inc_2)
 
     print("\n>>> FINAL AGENT PLAN:")
     print(final_plan)
+
+if __name__ == "__main__":
+    asyncio.run(run_scenario())

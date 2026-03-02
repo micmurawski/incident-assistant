@@ -1,79 +1,42 @@
-# Temat pracy magisterskiej
+# Agentic Context Evolution (ACE) for Kubernetes Auto-Remediation
 
-## Autoremediacja aplikacji mikroserwisowej z wykorzystaniem systemu wieloagentowego
+The goal of this project is to experiment with whether a multi-agent system can increase performance on auto-remediations for applications running on a Kubernetes cluster using **Agentic Context Engineering**.
 
-Celem pracy jest stworzenie systemu wieloagentowego, który będzie monitorował aplikację mikroserwisową uruchomioną na klastrze Kubernetes.
+## Experiment Setup
 
-Aplikacja wdrożona na klastrze będzie jedną z aplikacji przedstawionych w niniejszej publikacji:
+* **Incident Selection:** A script randomly chooses an incident scenario from one of the defined classes.
+* **Resolution Phase:** An agent attempts to resolve the incident and restore service health.
+    * **Attempts:** The agent has 3 attempts per incident.
+    * **Playbook:** The agent utilizes an evolving **PLAYBOOK** (SOP) embedded in its context. Initially, this playbook is empty.
+* **ACE Pipeline:** Periodically, the Agentic Context Evolution Pipeline is triggered. It analyzes past incident resolutions (Tasks) to **ADD, UPDATE, or DELETE** heuristics in the PLAYBOOK.
 
-* [An Overview of Microservice-Based Systems Used for Evaluation
-in Testing and Monitoring: A Systematic Mapping Study](https://elib.dlr.de/211381/1/2024_AST_MicroService_BMK.pdf)
+## Learning Schedule (Trigger Frequency)
 
-System wieloagentowy będzie miał dostęp do logów, metryk poszczególnych serwisów, a także do kodu źródłowego aplikacji.
+The ACE pipeline follows a strategy analogous to **Epsilon-Greedy** in Reinforcement Learning:
 
-Aplikacja mikroserwisowa będzie poddawana drobnym modyfikacjom lub jej infrastruktura będzie sztucznie obciążana.
+*   **Exploration Phase ($\epsilon$ is high):** Initially, the pipeline is triggered frequently (e.g., after every 1-3 incidents) to build a baseline playbook.
+*   **Exploitation Phase ($\epsilon$ decays):** As the playbook matures, the trigger frequency decreases (e.g., every 5-10 incidents), allowing us to validate the heuristics across larger batches.
+*   **Transition:** We start with **Batch Learning** (analyzing multiple incidents to find systemic patterns) and will transition to **Online Learning** (refining after every incident).
 
-Zadaniem systemu wieloagentowego będzie poprawne zdiagnozowanie przyczyny awarii na podstawie dostępnych informacji (logi, metryki, kod źródłowy), opracowanie planu remediacji oraz egzekucja tego planu w celu przywrócenia prawidłowego działania aplikacji.
+## Performance Measures
 
----
+*   **TTR (Time To Resolution):** Calculated as the duration between task creation and successful resolution (or number of steps taken).
+*   **Success Rate:** The percentage of incidents successfully resolved within the 3-attempt limit.
+*   **Heuristic Quality:** Evaluated by the Reflector during the ACE loop to ensure new rules don't introduce regressions.
 
-## Diagram rozwiązania
+## Incident Classes
 
-<p align="center">
-<img src="./imgs/diagram-2.drawio.png">
-</p>
+Incidents are categorized into five distinct classes to challenge different aspects of the agent's reasoning:
 
-<div align="center">
+1.  **Chaos Mesh (Infrastructure/Network):** Network partitions, latency spikes, or pod failures introduced via Chaos Mesh.
+2.  **Code Ingestion (Logic Regressions):** Introduction of logical bugs or performance regressions directly into the service code.
+3.  **K8s Configuration (Resource/Config):** Misconfigured resource limits (OOMKilled), incorrect environment variables, or service/ingress mismatches.
+4.  **Service Code (Runtime/State):** Deadlocks, unclosed database connections, or cache exhaustion.
+5.  **The "Red Herring" (Combination):** A random combination of the above (e.g., a network delay occurring simultaneously with a bad deployment) to test the agent's ability to prioritize root causes.
 
-[link do diagramu](/imgs/diagram-2.drawio.png)
+## Scientific Sources
 
-</div>
-
----
-
-### Sposób generowania awarii
-
-W tym celu zostanie stworzona osobna aplikacja agentowa, której zadaniem będzie wprowadzanie niewielkich, losowych zmian w wybranych miejscach aplikacji, mających na celu zakłócenie pracy serwisów. Dodatkowo będzie ona mogła indukować stres infrastrukturalny — lub wykonywać obie te czynności w różnych kombinacjach.
-
-
-### Diagnoza
-
-Agenci SME (z ang. Subject Matter Experts) mają dostęp do rozłącznych zbiorów danych – repozytoriów kodu, logów i metryk – odpowiadających konkretnym komponentom systemu. Każdy agent podczas wywołania diagnozuje swoją część systemu i wspólnie z pozostałymi agentami SME dąży do osiągnięcia konsensusu w sprawie przyczyny problemu.
-
-Przykłady:
-
-* **Problem z integracją:**
-Agent A zauważa, że serwis A nie może się połączyć z serwisem B z powodu błędnego wywołania endpointu REST API. Pojawia się pytanie: czy błąd leży po stronie serwisu A (wywołanie) czy serwisu B (implementacja API)? Jak agenci osiągają konsensus w tej sytuacji?
-
-* **Problem z kolejką:** 
-Agent A obserwuje, że kolejka jest przepełniona – system nie nadąża z przetwarzaniem obciążenia. Z kolei Agent B sugeruje, że kolejkę należy szybciej opróżniać. Czy problem wynika z niedostatecznych zasobów kolejki, czy z niewydolności konsumenta?
-
-### Planowanie
-Agent IC (z ang. Incident Commander) odpowiada za przyjęcie wspólnej diagnozy i przygotowanie planu naprawczego – określenia kolejnych działań niezbędnych do przywrócenia prawidłowego działania systemu.
-
-### Egzekucja
-Agent IC przekazuje zadania odpowiednim agentom SME (mogą to być inne warianty agentów wyposażone w narzędzia wykonawcze) i nadzoruje ich realizację. Po wykonaniu zadań – zmianach w kodzie i infrastrukturze – uruchamiany jest proces ponownego wdrożenia. Na zakończenie sprawdzana jest skuteczność planu, np. przez uruchomienie testów automatycznych lub analizę metryk.
-
-
-
----
-
-### Potencjalne kierunki badawcze:
-
-- Jak różne modele LLM radzą sobie z wykrywaniem problemów, planowaniem i realizacją remediacji?
-- W jaki sposób różne mechanizmy podejmowania decyzji wpływają na skuteczność diagnozy? - [Reliable Decision-Making for Multi-Agent LLM System](https://multiagents.org/2025_artifacts/reliable_decision_making_for_multi_agent_llm_systems.pdf)
-- Czy plan powinien być wykonywany w modelu swarm czy supervisor? ([architektura supervisor](https://github.com/langchain-ai/langgraph-supervisor-py), [architektura swarm](https://github.com/langchain-ai/langgraph-swarm-py))
-- Jaki jest optymalny zakres odpowiedzialności agenta typu SME (Subject Matter Expert)? Ile agentów potrzeba do skutecznej diagnozy systemu?
-- Jak system poradzi sobie z nietrywialnymi awariami, np. wieloma błędami jednocześnie lub dodatkowym stresem infrastruktury?
-
-
----
-
-
-### Bibliografia:
-*  [Leveraging Large Language Models for the Auto-remediation of Microservice Applications: An Experimental Study](https://dl.acm.org/doi/pdf/10.1145/3663529.3663855) - publikacja która mnie zainspirowała do tematu pracy magisterskiej, 
-w badaniu realizują podobną z tą różnicą, że nie wykorzystują wielu agentów, skupiają się głównie na infrastrukturze
-
-*  [Reliable Decision-Making for Multi-Agent LLM System](https://multiagents.org/2025_artifacts/reliable_decision_making_for_multi_agent_llm_systems.pdf) - przydatna publikacja w kontekscie modelu podejmowania decyzji podczas diagnozy
-
-*  [LLM Multi-Agent Systems: Challenges and Open Problems](https://arxiv.org/pdf/2402.03578)
+*   [Agentic Context Engineering: Evolving Contexts for Self-Improving Language Models](https://arxiv.org/pdf/2510.04618)
+*   [Leveraging Large Language Models for the Auto-remediation of Microservice Applications: An Experimental Study](https://dl.acm.org/doi/pdf/10.1145/3663529.3663855)
+*   [Reliable Decision-Making for Multi-Agent LLM System](https://multiagents.org/2025_artifacts/reliable_decision_making_for_multi_agent_llm_systems.pdf)
+*   [LLM Multi-Agent Systems: Challenges and Open Problems](https://arxiv.org/pdf/2402.03578)

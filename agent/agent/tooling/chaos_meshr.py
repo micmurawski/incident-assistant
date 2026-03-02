@@ -1,59 +1,13 @@
-"""
-Chaos Mesh tooling for the "bad agent" — inject pod, network, stress, and I/O chaos
-into a Kubernetes cluster. Use for chaos engineering and resilience testing.
-"""
-import asyncio
 from typing import Annotated, Optional
 
+from agent.tooling._utils import run_cli_command
 from agent.tooling.decorators import ToolResult, Tools, tool
-
-MAX_OUTPUT_LENGTH = 8000
 
 
 async def _run_kubectl(args: list[str], stdin: Optional[str] = None, timeout: int = 60) -> ToolResult:
     """Run kubectl; if stdin is provided, use it as -f - for apply/create."""
     cmd = ["kubectl"] + args
-    try:
-        if stdin is not None:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(input=stdin.encode("utf-8")), timeout=timeout
-            )
-        else:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-
-        stdout_decoded = stdout.decode("utf-8")
-        stderr_decoded = stderr.decode("utf-8")
-        error_msg = stderr_decoded if process.returncode != 0 else None
-
-        total_length = len(stdout_decoded)
-        output = stdout_decoded
-        if total_length > MAX_OUTPUT_LENGTH:
-            head = stdout_decoded[: MAX_OUTPUT_LENGTH // 2]
-            tail = stdout_decoded[-MAX_OUTPUT_LENGTH // 2 :]
-            output = f"{head}\n...[trimmed {total_length - MAX_OUTPUT_LENGTH} characters]...\n{tail}"
-
-        if error_msg and len(error_msg) > 2000:
-            error_msg = error_msg[:1600] + f"\n...[trimmed {len(error_msg) - 1600} characters of stderr]..."
-
-        return ToolResult(result=output, error=error_msg)
-    except asyncio.TimeoutError:
-        return ToolResult(
-            result=None,
-            error=f"kubectl command timed out after {timeout}s: {' '.join(cmd)}",
-        )
-    except Exception as e:
-        return ToolResult(result=None, error=str(e))
+    return await run_cli_command(cmd, stdin, timeout)
 
 
 def _selector_yaml(namespace: str, label_selector: str) -> str:
@@ -119,7 +73,7 @@ async def chaos_delete_experiment(
         str,
         "Kind of resource: PodChaos, NetworkChaos, StressChaos, IOChaos, or HTTPChaos",
     ],
-    namespace: Annotated[str, "Namespace where the experiment was created"] = "default",
+    namespace: Annotated[str, "Namespace where the experiment was created"],
 ) -> ToolResult:
     """
     Delete a Chaos Mesh experiment by name and kind. Use after listing with chaos_list_experiments.
@@ -138,7 +92,7 @@ async def chaos_delete_experiment(
 
 @tool(tags=["chaos", "pod"])
 async def chaos_pod_kill(
-    namespace: Annotated[str, "Namespace containing the target pods"] = "default",
+    namespace: Annotated[str, "Namespace containing the target pods"],
     label_selector: Annotated[
         str,
         "Label selector for target pods, e.g. 'app=web' or 'app.kubernetes.io/name=api'",
@@ -183,7 +137,7 @@ spec:
 
 @tool(tags=["chaos", "pod"])
 async def chaos_pod_failure(
-    namespace: Annotated[str, "Namespace containing the target pods"] = "default",
+    namespace: Annotated[str, "Namespace containing the target pods"],
     label_selector: Annotated[
         str,
         "Label selector for target pods, e.g. 'app=backend'",
@@ -218,7 +172,7 @@ spec:
 
 @tool(tags=["chaos", "network"])
 async def chaos_network_delay(
-    namespace: Annotated[str, "Namespace of target pods"] = "default",
+    namespace: Annotated[str, "Namespace of target pods"],
     label_selector: Annotated[str, "Label selector for target pods, e.g. 'app=frontend'"] = "app=frontend",
     latency: Annotated[str, "Delay to add (e.g. '100ms', '500ms', '2s')"] = "200ms",
     jitter: Annotated[str, "Optional jitter (e.g. '0ms', '50ms')"] = "0ms",
@@ -250,7 +204,7 @@ spec:
 
 @tool(tags=["chaos", "network"])
 async def chaos_network_loss(
-    namespace: Annotated[str, "Namespace of target pods"] = "default",
+    namespace: Annotated[str, "Namespace of target pods"],
     label_selector: Annotated[str, "Label selector for target pods"] = "app=frontend",
     loss_percent: Annotated[int, "Percentage of packets to drop (0-100)"] = 10,
     correlation: Annotated[str, "Correlation percentage for loss (e.g. '100')"] = "100",
@@ -281,7 +235,7 @@ spec:
 
 @tool(tags=["chaos", "network"])
 async def chaos_network_partition(
-    namespace: Annotated[str, "Namespace of source and target"] = "default",
+    namespace: Annotated[str, "Namespace of source and target"],
     source_selector: Annotated[
         str,
         "Label selector for source pods (e.g. 'app=backend')",
@@ -319,7 +273,7 @@ spec:
 
 @tool(tags=["chaos", "network"])
 async def chaos_network_bandwidth(
-    namespace: Annotated[str, "Namespace of target pods"] = "default",
+    namespace: Annotated[str, "Namespace of target pods"],
     label_selector: Annotated[str, "Label selector for target pods"] = "app=frontend",
     rate: Annotated[str, "Bandwidth limit, e.g. '1mbps', '100kbps'"] = "1mbps",
     mode: Annotated[str, "Mode: 'one', 'all', or 'fixed'"] = "one",
@@ -353,7 +307,7 @@ spec:
 
 @tool(tags=["chaos", "stress"])
 async def chaos_cpu_stress(
-    namespace: Annotated[str, "Namespace of target pods"] = "default",
+    namespace: Annotated[str, "Namespace of target pods"],
     label_selector: Annotated[str, "Label selector for target pods, e.g. 'app=backend'"] = "app=backend",
     workers: Annotated[int, "Number of CPU stress workers"] = 1,
     load: Annotated[int, "CPU load percentage per worker (e.g. 80, 100)"] = 100,
@@ -384,7 +338,7 @@ spec:
 
 @tool(tags=["chaos", "stress"])
 async def chaos_memory_stress(
-    namespace: Annotated[str, "Namespace of target pods"] = "default",
+    namespace: Annotated[str, "Namespace of target pods"],
     label_selector: Annotated[str, "Label selector for target pods, e.g. 'app=backend'"] = "app=backend",
     size: Annotated[str, "Memory to consume per worker (e.g. '128MB', '256MB')"] = "128MB",
     workers: Annotated[int, "Number of memory stress workers"] = 1,
@@ -420,7 +374,7 @@ spec:
 
 @tool(tags=["chaos", "io"])
 async def chaos_io_latency(
-    namespace: Annotated[str, "Namespace of target pods"] = "default",
+    namespace: Annotated[str, "Namespace of target pods"],
     label_selector: Annotated[str, "Label selector for target pods, e.g. 'app=database'"] = "app=database",
     volume_path: Annotated[str, "Volume path to inject latency (e.g. /data/db)"] = "/data",
     delay: Annotated[str, "I/O delay to add (e.g. '50ms', '100ms')"] = "100ms",
@@ -458,7 +412,7 @@ spec:
 
 @tool(tags=["chaos", "http"])
 async def chaos_http_abort(
-    namespace: Annotated[str, "Namespace of target pods"] = "default",
+    namespace: Annotated[str, "Namespace of target pods"],
     label_selector: Annotated[str, "Label selector for target pods"] = "app=web",
     port: Annotated[int, "Target port number"] = 8080,
     code: Annotated[int, "HTTP status code to return (e.g. 500, 503)"] = 500,

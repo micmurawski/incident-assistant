@@ -50,7 +50,7 @@ module "eks" {
     }
 
     # Dedicated Node Group for Observability (Prometheus/Loki/Grafana)
-    observability = {
+    bastion = {
       ami_type       = "AL2023_ARM_64_STANDARD"
       instance_types = ["t4g.medium"]
       min_size       = 1
@@ -58,14 +58,14 @@ module "eks" {
       desired_size   = 1
 
       labels = {
-        role = "monitoring"
+        role = "bastion"
       }
 
       # Taint prevents standard apps from accidentally landing here (list format required by EKS module)
       taints = {
         dedicated = {
           key    = "dedicated"
-          value  = "monitoring"
+          value  = "bastion"
           effect = "NO_SCHEDULE"
         }
       }

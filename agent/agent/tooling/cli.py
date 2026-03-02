@@ -33,7 +33,6 @@ async def bash(
     bash(command=['ls', '-la'], cwd="/home/user/projects")
     """
     cwd = cwd or SettingsManager.get_instance().get("workspace.path") or os.getcwd()
-    print("EXECUTING COMMAND: ", command, "IN CWD: ", cwd)
     try:
         process = await asyncio.create_subprocess_exec(
             *command,

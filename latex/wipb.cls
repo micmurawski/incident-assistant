@@ -158,7 +158,7 @@
             \vspace{\stretch{1}}
             {\Large\textbf{\textsc{Wydział Informatyki}}\par}
             \vspace{\stretch{1}}
-            {\Large\textbf{\textsc{Katedra Sieci Komputerowych}}\par}
+            {\Large\textbf{\textsc{\@katedra}}\par}
             {\large\textsc{\@specjalnosc}\par}
             \vspace{\stretch{1}}
             {\Large\textbf{\textsc{\@autor}} \par}
@@ -173,7 +173,7 @@
                 \vskip 2em
             \end{flushright}
             \vspace{\stretch{2}}
-            {\Large\textsc{Warszawa, Styczeń \number\year }\ r.\par}
+            {\Large\textsc{Warszawa, czerwiec \number\year }\ r.\par}
        \end{center}
    \end{titlepage}
     
