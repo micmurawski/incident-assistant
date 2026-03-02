@@ -11,7 +11,7 @@ variable "robot_shop_services" {
     "ratings",
     "shipping",
     "user",
-    "web"
+    "web",
   ]
 }
 

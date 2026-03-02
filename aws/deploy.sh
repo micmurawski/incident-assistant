@@ -4,7 +4,7 @@ set -e  # Exit immediately if any command fails
 # Configuration - Must match your main.tf
 REGION="us-east-1"
 CLUSTER_NAME="1-node-default-vpc"
-
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-189429133920}"
 echo "🚀 Starting Deployment..."
 echo "-----------------------------------"
 # 1. Initialize Terraform
@@ -24,6 +24,9 @@ echo "✅ Infrastructure created successfully!"
 # This connects your local terminal to the new cluster on AWS
 echo "🔗 Connecting kubectl to EKS..."
 aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
+
+echo "Logging in to ECR..."
+aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
 
 # 4. Verify the Node
 echo "🔍 Verifying cluster status..."

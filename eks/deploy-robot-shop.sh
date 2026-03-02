@@ -1,51 +1,78 @@
-echo "Building robot-shop images"
-USE_MINIKUBE=false
-AWS_REGION=${AWS_REGION:-"us-east-1"}
-AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID:-"189429133920"}
+#!/usr/bin/env bash
+set -euo pipefail
 
-if [ "$USE_MINIKUBE" = "true" ]; then
-  eval $(minikube -p minikube docker-env)
-else
-   aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
-fi
+###############################################################################
+# Build and deploy Robot Shop to EKS using ECR.
+# - Builds all service images
+# - Pushes them to ECR
+# - Calls the k8s/deploy.sh script, which uses envsubst on robot-shop-eks.yaml
+#
+# Requirements:
+# - AWS CLI configured (AWS_REGION / AWS_PROFILE etc.)
+# - Docker logged in locally (this script will log in to ECR)
+# - kubectl configured for your EKS cluster
+###############################################################################
+
+AWS_REGION="${AWS_REGION:-us-east-1}"
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-189429133920}"
+TAG="${TAG:-2.2.0}"
+
+# This is what robot-shop-eks.yaml and load-robot-shop.yaml use as ${REPO}
+export REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+export TAG
 
 folders=("cart" "catalogue" "dispatch" "load-gen" "mongo" "mysql" "payment" "ratings" "shipping" "user" "web")
-REPO=${REPO:-"robotshop"}
-TAG=${TAG:-"2.2.0"}
 
-docker pull redis:6.2-alpine
-docker pull rabbitmq:3.8-management-alpine
-
-docker image tag redis:6.2-alpine ${REPO}/rs-redis:${TAG}
-docker image tag rabbitmq:3.8-management-alpine ${REPO}/rs-rabbitmq:${TAG}
-
-if [ "$USE_MINIKUBE" = "true" ]; then
-  minikube image load ${REPO}/rs-redis:${TAG}
-  minikube image load ${REPO}/rs-rabbitmq:${TAG}
-else
-  docker image tag redis:6.2-alpine ${REPO}/rs-redis:${TAG}
-  docker image tag rabbitmq:3.8-management-alpine ${REPO}/rs-rabbitmq:${TAG}
-fi
-
-pushd ../services/robot-shop
-   for folder in ${folders[@]}; do
-      echo "Building ${folder} image"
-      pushd ./${folder}
-      if [ "$USE_MINIKUBE" = "true" ]; then
-        minikube image build -t ${REPO}/rs-${folder}:${TAG} .
-      else
-        docker build -t ${REPO}/rs-${folder}:${TAG} .
-      fi
-      popd
-   done
-   pushd k8s
-      echo "Deploying robot-shop"
-      ./deploy.sh
-   popd
-popd
-
+get_repo_name() {
+  local folder="$1"
+  case "$folder" in
+    mongo) echo "robot-shop-mongodb" ;;
+    mysql) echo "robot-shop-mysql-db" ;;
+    load-gen) echo "robot-shop-load-gen" ;;
+    *) echo "robot-shop-${folder}" ;;
+  esac
+}
 
 echo "-------------------------------------------"
-echo "Run: minikube service loki-grafana -n monitoring"
-echo "Access Grafana at: http://$(minikube ip):30300"
+echo "Building and pushing Robot Shop images"
+echo "Region:        ${AWS_REGION}"
+echo "Account:       ${AWS_ACCOUNT_ID}"
+echo "ECR base repo: ${REPO}"
+echo "Tag:           ${TAG}"
+echo "-------------------------------------------"
+
+echo "Logging in to ECR..."
+aws ecr get-login-password --region "${AWS_REGION}" \
+  | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+echo "Ensuring ECR repositories exist..."
+for folder in "${folders[@]}"; do
+  repo_name="$(get_repo_name "${folder}")"
+  if ! aws ecr describe-repositories --region "${AWS_REGION}" --repository-names "${repo_name}" >/dev/null 2>&1; then
+    echo "Creating ECR repo: ${repo_name}"
+    aws ecr create-repository --region "${AWS_REGION}" --repository-name "${repo_name}" >/dev/null
+  fi
+done
+
+echo "Building and pushing service images..."
+pushd ../services/robot-shop >/dev/null
+for folder in "${folders[@]}"; do
+  repo_name="$(get_repo_name "${folder}")"
+  full_image="${REPO}/${repo_name}:${TAG}"
+  echo "-------------------------------------------"
+  echo "Building ${folder} -> ${full_image}"
+  docker build -t "${full_image}" "./${folder}"
+  docker push "${full_image}"
+done
+popd >/dev/null
+
+echo "-------------------------------------------"
+echo "Deploying Robot Shop manifests to EKS..."
+pushd ../services/robot-shop/k8s >/dev/null
+./deploy.sh
+popd >/dev/null
+
+echo "-------------------------------------------"
+echo "✅ Robot Shop deployment triggered."
+echo "Use 'kubectl get pods -n robot-shop' and 'kubectl get svc -n robot-shop' to check status."
 echo "-------------------------------------------"

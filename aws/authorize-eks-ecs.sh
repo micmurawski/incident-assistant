@@ -5,6 +5,7 @@
 set -e
 CLUSTER_NAME="${CLUSTER_NAME:-1-node-default-vpc}"
 REGION="${AWS_REGION:-us-east-1}"
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-189429133920}"
 echo "Cluster: $CLUSTER_NAME region: $REGION"
 echo "Current AWS identity:"
 aws sts get-caller-identity
@@ -16,3 +17,7 @@ if ! aws eks describe-cluster --name "$CLUSTER_NAME" --region "$REGION" --query 
 fi
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$REGION"
 echo "Done. Test with: kubectl get nodes"
+echo ""
+echo "Logging in to ECR..."
+aws ecr get-login-password --region "$REGION" \
+  | docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
