@@ -1,10 +1,11 @@
+import json
 import os
+import random
 import subprocess
 import tempfile
-import json
-import random
 from dataclasses import dataclass
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
 import yaml
 from anthropic import Anthropic
 
@@ -203,6 +204,7 @@ class SaboteurAgent:
 
 if __name__ == "__main__":
     import sys
+
     # Usage: python saboteur.py <service> <file> <class_id>
     # Example: python saboteur.py payment payment.py 2
     if len(sys.argv) < 4:

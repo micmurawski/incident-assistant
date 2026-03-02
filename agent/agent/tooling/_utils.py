@@ -1,5 +1,6 @@
 import asyncio
 from typing import Optional
+
 from agent.tooling.decorators import ToolResult
 
 MAX_OUTPUT_LENGTH = 8000

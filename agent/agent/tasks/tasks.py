@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TypeVar
 from uuid import uuid4
 
@@ -7,7 +8,6 @@ from agent.persistence.model import Task as TaskModel
 from agent.tasks.formatting import parse_markdown_checklist
 from agent.tasks.types import TaskStatus, TodoItem, ToolUsage
 from agent.types import ApiMessage
-from datetime import datetime
 
 T = TypeVar("T", bound="Task")
 

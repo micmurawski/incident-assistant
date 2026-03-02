@@ -1,9 +1,10 @@
-import os
 import json
+import os
 import random
-import yaml
 from dataclasses import dataclass
-from typing import Dict, List, Any
+from typing import Any, Dict, List
+
+import yaml
 
 # --- Configuration for Robot Shop ---
 NAMESPACE = "application"
