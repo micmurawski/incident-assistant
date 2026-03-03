@@ -71,4 +71,4 @@ def create_pretty_patch(filename: str, old_str: str | None = None, new_str: str 
     patch_lines = list(difflib.unified_diff(old_lines, new_lines, fromfile=filename, tofile=filename, lineterm=""))
     # Skip the first 4 lines (headers: ---/+++ and @@ chunk indicator)
     pretty_patch_lines = patch_lines[4:]
-    return "\n".join(pretty_patch_lines)
+    return "".join(pretty_patch_lines)

@@ -170,7 +170,7 @@ def generate_random_incident() -> IncidentInstance:
 
 def save_incident_to_vault(incident: IncidentInstance):
     vault_dir = "fault-vault"
-    scenarios_file = os.path.join(vault_dir, "scenarios.yaml")
+    scenarios_file = os.path.join(vault_dir, "scenarios_class_1.yaml")
 
     # Ensure directory exists
     os.makedirs(vault_dir, exist_ok=True)

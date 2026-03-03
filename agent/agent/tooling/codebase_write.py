@@ -29,7 +29,15 @@ async def search_and_replace(
     2. Case-insensitive regex pattern:
     search_and_replace(path="src/main.ts", search="console.log", replace="console.error", use_regex=True, ignore_case=True)
     """
-    result: FileOpsResult = await FileOpsManager.get_instance().search_and_replace(path, search, replace, start_line, end_line, use_regex, ignore_case)
+    result: FileOpsResult = await FileOpsManager.get_instance().search_and_replace(
+        path=path,
+        search=search,
+        replace=replace,
+        ignore_case=bool(ignore_case),
+        use_regex=bool(use_regex),
+        start_line=start_line,
+        end_line=end_line,
+    )
     return ToolResult(result=result.diff, error=result.error)
 
 

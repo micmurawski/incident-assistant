@@ -8,6 +8,7 @@ from typing import Literal, Optional
 from agent.code_index.code_analysis import parse_source_code_definitions
 from agent.list_files import Ignore, list_files, regex_search_files
 from agent.settings import SettingsManager
+from agent.utils.formatting import create_pretty_patch
 
 
 @dataclass
@@ -19,9 +20,17 @@ class FileOpsResult:
     error: Optional[Exception] = field(default=None)
     reason: Optional[str] = field(default=None)
 
+    def __post_init__(self) -> None:
+        self.print_diff()
+
     @property
     def changed(self) -> bool:
         return self.diff is not None
+
+    def print_diff(self) -> None:
+        if self.diff is None:
+            return
+        print(create_pretty_patch(self.path, self.diff))
 
 
 def add_line_numbers(content: list[str], start_line: int = 1, separator: str = "| ") -> list[str]:
@@ -87,7 +96,7 @@ class FileOpsManager:
         if not is_file:
             raise Exception(f"The path {path} is not file.")
 
-        lines = open(full_path).read().split("\n")
+        lines = open(full_path).read().splitlines(keepends=True)
         start_line = start_line or 1
         end_line = end_line or len(lines)
         start = max(start_line - 1, 0)
@@ -97,7 +106,7 @@ class FileOpsManager:
             target_content = add_line_numbers(target_content, start_line)
         return FileOpsResult(
             path=path,
-            content="\n".join(target_content),
+            content="".join(target_content),
         )
 
     async def read_multiple_files(self, files: list[dict]) -> FileOpsResult:
@@ -113,8 +122,12 @@ class FileOpsManager:
 
     async def list_files_tool(self, path: str, recursive: bool) -> FileOpsResult:
         full_path = os.path.join(self.cwd, path)
-        if not os.path.exists(path):
-            raise Exception(f"The path {path} does not exist.")
+        if not os.path.exists(full_path):
+            return FileOpsResult(
+                path=path,
+                content=f"The path {full_path} does not exist.",
+                error=Exception(f"The path {full_path} does not exist."),
+            )
 
         files, did_hit_limit = await list_files(full_path, recursive, 200)
         # files = list(filter(lambda f: self.ignore.ignores(f), files))
@@ -180,29 +193,41 @@ class FileOpsManager:
         if not is_file:
             raise Exception(f"The path {path} is not file.")
 
-        flags = "gi" if ignore_case else "g"
+        # Build regex flags correctly as an integer bitmask
+        flags = re.IGNORECASE if ignore_case else 0
         search_pattern = search if use_regex else escape_regex(search)
+
+        # Read original content once so we can generate a proper diff later
+        with open(full_path, "r") as f:
+            original_content = f.read()
 
         new_content: str
         if start_line is not None or end_line is not None:
-            lines = open(full_path).readlines()
+            # Work on a specific line range, preserving existing newlines.
+            # IMPORTANT: The search pattern may span multiple lines, so we must
+            # treat the selected range as a single string segment rather than
+            # applying the replacement line‑by‑line (which would never match a
+            # multi‑line pattern).
+            lines = original_content.split("\n")
             start = max((start_line or 1) - 1, 0)
             end = min((end_line or len(lines)) - 1, len(lines) - 1)
 
             before_lines = lines[0:start]
             after_lines = lines[end + 1:]
 
-            target_content = lines[start: end + 1]
-            modified_content = map(lambda line: re.sub(search_pattern, replace, line, flags=flags), target_content)
-            new_content = "\n".join([*before_lines, *modified_content, *after_lines])
+            target_lines = lines[start : end + 1]
+            segment = "\n".join(target_lines)
+            modified_segment = re.sub(search_pattern, replace, segment, flags=flags)
+            modified_lines = modified_segment.split("\n")
+            new_content = "\n".join([*before_lines, *modified_lines, *after_lines])
         else:
-            new_content = re.sub(search_pattern, replace, open(full_path).read(), flags=flags)
+            new_content = re.sub(search_pattern, replace, original_content, flags=flags)
         with open(full_path, "w") as file:
             file.write(new_content)
 
         return FileOpsResult(
             path=path,
-            diff=_generate_diff(lines, new_content),
+            diff=_generate_diff(original_content, new_content),
         )
 
     async def write_to_file(
@@ -257,7 +282,7 @@ class FileOpsManager:
         if not is_file:
             raise Exception(f"The path {path} is not file.")
 
-        lines = open(full_path).read().split("\n")
+        lines = open(full_path).read().splitlines(keepends=True)
 
         line = len(lines) - 1 if line is None else line - 1
         res = "\n".join(self._insert_content(lines, [{"index": line, "content": content.split("\n")}]))
@@ -266,7 +291,7 @@ class FileOpsManager:
 
         return FileOpsResult(
             path=path,
-            diff=_generate_diff(lines, res),
+            diff=_generate_diff("".join(lines), res),
         )
 
     async def search_file(self, path: str, regex: str, file_pattern: str | None = None) -> FileOpsResult:
@@ -278,7 +303,16 @@ class FileOpsManager:
 
 
 def escape_regex(reg: str) -> str:
-    return reg.replace("[.*+?^${}()|[\\]\\]", "\\$&")
+    """
+    Escape a literal string so it can be safely used as a regular expression.
+
+    Python's stdlib provides `re.escape` for this purpose, which correctly
+    handles all regex metacharacters. The previous implementation attempted to
+    mimic a JavaScript-style replace with a character class pattern but used
+    `str.replace` instead of a regex replacement, which produced invalid
+    patterns and could raise `re.error` at compile time.
+    """
+    return re.escape(reg)
 
 
 def _generate_diff(old_content: str, new_content: str) -> str:
