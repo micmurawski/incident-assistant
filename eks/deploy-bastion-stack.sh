@@ -67,3 +67,6 @@ kubectl apply -f "${SCRIPT_DIR}/chaos-meshr-rbac.yml"
 kubectl create token account-cluster-manager-zqqat --duration=8760h > cluster-manager-token.txt
 kubectl create secret generic account-cluster-manager-zqqat --from-file=token=cluster-manager-token.txt --dry-run=client -o yaml | kubectl apply -f -
 kubectl describe secrets account-cluster-manager-zqqat
+
+echo "Annotating application namespace for Linkerd injection..."
+kubectl annotate namespace application linkerd.io/inject=enabled
