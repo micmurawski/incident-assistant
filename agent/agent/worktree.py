@@ -35,11 +35,16 @@ class BranchInfo:
 # --- Service Implementation ---
 
 
-class WorktreeService:
+class WorkTreeService:
     """
     Service for managing git worktrees.
     All methods are platform-agnostic.
     """
+
+    def __init__(self):
+        self.git_installed = asyncio.run(self.check_git_installed())
+        if not self.git_installed:
+            raise RuntimeError("Git is not installed on the system")
 
     async def _exec(self, args: List[str], cwd: Optional[str] = None) -> str:
         """
@@ -354,7 +359,3 @@ class WorktreeService:
             normalized = normalized[:-1]
 
         return normalized
-
-
-# Export singleton instance
-worktree_service = WorktreeService()

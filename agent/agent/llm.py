@@ -6,12 +6,14 @@ from uuid import uuid4
 
 from framework import AsyncFlow
 from framework.decorators import node
+from agent.tooling.decorators import Tools
 from framework.viz import build_mermaid, to_png
 
 from agent.context_ops import SummarizeResponse, summarize_conversation
 from agent.providers.base import ApiHandler
 from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
                          StreamChunk)
+from openinference.instrumentation import Tool
 
 T = TypeVar('T')
 
@@ -233,6 +235,7 @@ class LLMAgent(ABC):
     system_prompt: str
     name: str
     flow: AsyncFlow | None = None
+    tools_arguments: dict[str, Any] = {}
 
     def __repr__(self):
         return f"LLMAgent(name={self.name})"
@@ -244,7 +247,14 @@ class LLMAgent(ABC):
         return await self.flow.run_async(shared)
 
     @node
-    async def call_llm(self, messages: List[AnthropicMessage], metadata: Optional[ApiHandlerCreateMessageMetadata] = None, **kwargs: dict[str, Any]) -> tuple[dict[str, list[AnthropicMessage]], str]:
+    async def call_llm(
+        self,
+        messages: List[AnthropicMessage],
+        metadata: Optional[ApiHandlerCreateMessageMetadata] = None,
+        worktree_path: Optional[str] = None,
+        cwd: Optional[str] = None,
+        **kwargs: dict[str, Any],
+    ) -> tuple[dict[str, list[AnthropicMessage]], str]:
         kwargs = {**kwargs.pop("kwargs", {}), **kwargs}
         # Materialize messages to consume any one-shot SerializationIterators
         # injected by Pydantic's model_dump() in the @node decorator pipeline.
@@ -286,10 +296,23 @@ class LLMAgent(ABC):
                 return {"messages": result.messages}
         return {"messages": messages}, "default"
 
-    def bind_tools(self, tools, tool_format_arguments: dict[str, Any] = None):
+    def bind_tools(self, tools: Tools, tool_format_arguments: dict[str, Any] = None):
+        self.tools_arguments = tool_format_arguments
         self.tools_definitions = tools.tools_definitions(
             format=self.api_handler.provider,
-            format_kwargs=tool_format_arguments
+            format_kwargs=self.tools_arguments
+        )
+
+    def update_tools_definitions(self, tools: Tools | None = None, tool_format_arguments: dict[str, Any] = None):
+        if tool_format_arguments is not None:
+            self.tools_arguments.update(tool_format_arguments)
+
+        if tools is not None:
+            self.tools = tools
+
+        self.tools_definitions = self.tools.tools_definitions(
+            format=self.api_handler.provider,
+            format_kwargs=self.tools_arguments
         )
 
     def get_flow_graph(self):

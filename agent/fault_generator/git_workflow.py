@@ -1,9 +1,13 @@
 """
-Git-based fault workflow:
-  1. git checkout master -f && git checkout -b <uuid>
-  2. AI agent applies changes in repo and writes FAULT.md
-  3. git add -A && git commit
-  4. git format-patch -1 HEAD --stdout > <uuid>.patch
+Git-based fault workflow using worktrees (enables future parallel execution):
+
+  1. git worktree add -b <branch> <worktree_path> master  (isolated dir per run)
+  2. AI agent applies changes in worktree and writes FAULT.md (cwd = worktree_path)
+  3. git add -A && git commit && git format-patch -1 HEAD in worktree
+  4. Copy FAULT.md and patch to fault-vault; remove worktree
+
+Each run uses a dedicated worktree under WORKTREES_DIR so multiple runs can be
+executed in parallel without sharing the same working directory.
 """
 
 import asyncio
@@ -15,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from framework import AsyncFlow
+from framework import AsyncBatchFlow, AsyncFlow, AsyncNode
 from framework.decorators import node
 
 from agent.file_ops import FileOpsManager
@@ -24,6 +28,9 @@ from agent.providers import build_api_handler
 from agent.providers.base import ApiHandler
 from agent.settings import SettingsManager
 from agent.tooling import CodebaseReadTools, CodebaseWriteTools
+from agent.worktree import WorkTreeService
+
+work_tree_service = WorkTreeService()
 
 FAULT_CLASS_DESCRIPTIONS = {
     2: """**Class 2 – Code ingestion (logic / performance regressions)**
@@ -54,6 +61,7 @@ APP_SERVICES = [
     "web",
 ]
 REPO_ROOT = Path("/Users/micmur/GITHUB/o8s/services/robot-shop")
+WORKTREES_DIR = REPO_ROOT.parent / "robot-shop-worktrees"
 CURRENT_DIR = Path(__file__).resolve().parent
 
 FAULT_INJECTOR_SYSTEM = """You are a fault-injection agent for the Robot Shop microservices app. Your job is to introduce exactly one fault into the repository and document it.
@@ -96,7 +104,7 @@ def _run_git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess
 
 
 def git_checkout_branch(branch_name: str, repo_root: Path = REPO_ROOT) -> None:
-    """Run: git checkout master -f && git checkout -b <branch_name>."""
+    """Run: git checkout master -f && git checkout -b <branch_name>. (Legacy: single workdir.)"""
     r = _run_git("checkout", "master", "-f", cwd=repo_root)
     if r.returncode != 0:
         raise RuntimeError(f"git checkout master -f failed: {r.stderr or r.stdout}")
@@ -111,7 +119,8 @@ def git_commit_and_format_patch(
     repo_root: Path = REPO_ROOT,
     commit_message: str | None = None,
 ) -> None:
-    """Run: git add -A && git commit -m <msg> && git format-patch -1 HEAD --stdout > patch_out_path."""
+    """Run: git add -A && git commit -m <msg> && git format-patch -1 HEAD --stdout > patch_out_path.
+    When using worktrees, pass the worktree path as repo_root."""
     msg = commit_message or f"fault: {branch_name}"
     r = _run_git("add", "-A", cwd=repo_root)
     if r.returncode != 0:
@@ -134,78 +143,171 @@ def git_commit_and_format_patch(
 
 
 class FaultInjector(LLMAgent):
-    def __init__(self, name: str, system_prompt: str, api_settings: dict[str, Any] | None = None):
+    def __init__(self, name: str, cwd: Path, system_prompt: str, api_settings: dict[str, Any] | None = None):
         settings = SettingsManager.get_instance()
         api_settings = api_settings or settings.get("api")
-        api_settings["temperature"] = 0.8 
-        self.cwd = settings.get("workspace.path") or os.getcwd()
+        api_settings["temperature"] = 0.8
+        self.cwd = str(cwd)
         self.system_prompt = system_prompt
         self.api_handler: ApiHandler = build_api_handler(**api_settings)
         self.file_ops_manager = FileOpsManager(cwd=self.cwd)
         self.name = name
 
 
+async def create_agent(repo_root: Path, work_tree_path: Path, branch_name: str):
+    result = await work_tree_service.create_worktree(
+        cwd=str(repo_root),
+        path=str(work_tree_path),
+        branch=branch_name,
+        base_branch="master",
+        create_new_branch=True,
+    )
+    if not result.success:
+        raise RuntimeError(f"Failed to create worktree: {result.message}")
+    agent = FaultInjector(name=branch_name, cwd=work_tree_path, system_prompt=FAULT_INJECTOR_SYSTEM)
+
+    tools = CodebaseReadTools | CodebaseWriteTools
+    agent.bind_tools(tools, {"cwd": agent.cwd})
+    start_fault_injector >> agent.call_llm >> check_fault_injector
+    check_fault_injector - "reflect" >> agent.call_llm
+    check_fault_injector - "default" >> end_fault_injector
+    return agent
+
 settings = SettingsManager.get_instance()
 settings.set("api.provider", "gemini")
-settings.set("api.model_id", "gemini-2.5-pro:thinking")
+settings.set("api.model_id", "gemini-2.5-flash")
 settings.set("api.api_key", "AIzaSyAmNJmXdpejo2LQWDowsqsK3bvMhZSXfII")
 settings.set("workspace.path", str(REPO_ROOT))
 
 
-tools = CodebaseReadTools | CodebaseWriteTools
-fault_injector = FaultInjector(name="fault-injector", system_prompt=FAULT_INJECTOR_SYSTEM)
-fault_injector.bind_tools(tools, {"cwd": fault_injector.cwd})
-fault_injector.call_llm - "tools" >> tools
-tools >> fault_injector.call_llm
+shared = {
+    "apps": APP_SERVICES,
+    "fault_classes": [2, 3, 4],
+}
+
+
+class ParamsToShared(AsyncNode):
+    """Copies self.params into shared so downstream nodes can read from shared when run inside a BatchFlow."""
+
+    async def prep_async(self, shared):
+        return None
+
+    async def exec_async(self, prep_res):
+        return None
+
+    async def post_async(self, shared, prep_res, exec_res):
+        shared.update(self.params)
+        return "default"
+
+
+class BatchFaultFlow(AsyncBatchFlow):
+    """Batch flow: runs the fault-injection flow once per (service_name, fault_class) from shared['apps'] x shared['fault_classes']."""
+
+    async def prep_async(self, shared):
+        apps = shared.get("apps") or []
+        fault_classes = shared.get("fault_classes") or []
+        return [
+            {"service_name": app, "fault_class": fc}
+            for app in apps
+            for fc in fault_classes
+        ]
 
 
 @node
-async def start_fault_injector(service_name: str, fault_class: int, uuid: str):
-    branch_name = f"fault-{service_name}-{fault_class}-{uuid}"
-    git_checkout_branch(branch_name)
+async def select_service_and_fault_class(apps: list[str], fault_classes: list[int]):
+    # create list of dicts with all possible combinations of apps and fault classes
+    app_fault_combinations = []
+    for app in apps:
+        for fault_class in fault_classes:
+            app_fault_combinations.append({"service_name": app, "fault_class": fault_class})
+    return {
+        "items": app_fault_combinations
+    }
+
+
+@node
+async def start_fault_injector(service_name: str, fault_class: int):
+    uuid_value = str(uuid.uuid4())
+    branch_name = f"fault-{service_name}-{fault_class}-{uuid_value}"
+    worktree_path = WORKTREES_DIR / branch_name
+    WORKTREES_DIR.mkdir(parents=True, exist_ok=True)
+    result = await work_tree_service.create_worktree(
+        cwd=str(REPO_ROOT),
+        path=str(worktree_path),
+        branch=branch_name,
+        base_branch="master",
+        create_new_branch=True,
+    )
+    if not result.success:
+        raise RuntimeError(f"Failed to create worktree: {result.message}")
+    worktree_path_str = str(worktree_path)
     return {
         "messages": [
             {
                 "role": "user",
-                "content": f"You are a fault-injector for the {service_name} service. "
-                "You are tasked with introducing a fault into the codebase. "
-                "The fault class is {fault_class}. The fault is {FAULT_CLASS_DESCRIPTIONS[fault_class]}. " 
+                "content": (
+                    f"You are a fault-injector for the {service_name} service. "
+                    f"You are tasked with introducing a fault into the codebase. "
+                    f"The fault class is {fault_class}. The fault is {FAULT_CLASS_DESCRIPTIONS[fault_class]}."
+                )
             }
         ],
-        "branch_name": branch_name
+        "branch_name": branch_name,
+        "worktree_path": worktree_path_str,
+        "cwd": worktree_path_str,
     }
 
 
 @node
-async def end_fault_injector(branch_name: str):
+async def check_fault_injector(messages: list[dict], branch_name: str, worktree_path: str):
+    # check if FAULT.md exists, and there are no uncommitted changes (in the worktree)
+    worktree_root = Path(worktree_path)
+    feedback = ""
+    if not (worktree_root / "FAULT.md").exists():
+        feedback += "FAULT.md does not exist\n"
+    r = _run_git("status", "--porcelain", cwd=worktree_root)
+    if not (r.returncode != 0 or (r.stdout and r.stdout.strip())):
+        feedback += "There are no changes to commit\n"
+    if feedback:
+        messages.append({
+            "role": "user",
+            "content": feedback
+        })
+        return {"messages": messages}, "reflect"
+
+
+@node
+async def end_fault_injector(branch_name: str, worktree_path: str):
+    worktree_root = Path(worktree_path)
     patch_out_path = CURRENT_DIR / "fault-vault" / branch_name / "git.patch"
     patch_out_path.parent.mkdir(parents=True, exist_ok=True)
     fault_vault_dir = CURRENT_DIR / "fault-vault" / branch_name
     fault_vault_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy(REPO_ROOT / "FAULT.md", fault_vault_dir / "FAULT.md")
-    os.remove(REPO_ROOT / "FAULT.md")
-    git_commit_and_format_patch(branch_name, patch_out_path)
+    shutil.copy(worktree_root / "FAULT.md", fault_vault_dir / "FAULT.md")
+    os.remove(worktree_root / "FAULT.md")
+    git_commit_and_format_patch(branch_name, patch_out_path, repo_root=worktree_root)
+    delete_result = await work_tree_service.delete_worktree(
+        cwd=str(REPO_ROOT),
+        worktree_path=worktree_path,
+        force=True,
+    )
+    if not delete_result.success:
+        raise RuntimeError(f"Failed to remove worktree: {delete_result.message}")
 
 
-
-start_fault_injector >> fault_injector.call_llm >> end_fault_injector
-
-async_flow = AsyncFlow(start_fault_injector)
-
-
-async def main():
-
+async def main(batch: bool = False):
     select_service = random.choice(APP_SERVICES)
     fault_id = random.choice([2, 3, 4])
-    shared = {
+    shared_state = {
         "service_name": select_service,
         "fault_class": fault_id,
-        "uuid": str(uuid.uuid4())
+        "uuid": str(uuid.uuid4()),
     }
-    print(f"Injecting fault {fault_id} into {select_service} with UUID {shared['uuid']}")
-    await asyncio.sleep(1)
-    await async_flow.run_async(shared)
+    print(f"Injecting fault {fault_id} into {select_service} with UUID {shared_state['uuid']}")
+    agent = await create_agent(REPO_ROOT, WORKTREES_DIR / f"fault-{select_service}-{fault_id}-{shared_state['uuid']}", f"fault-{select_service}-{fault_id}-{shared_state['uuid']}")
+    await agent.call(shared_state)
     print("Fault injection complete")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

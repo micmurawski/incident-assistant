@@ -4,7 +4,10 @@ from typing import Any, Callable
 
 from framework import (AsyncBatchNode, AsyncNode, AsyncParallelBatchNode,
                        BatchNode, Node)
-from pydantic import Field, create_model
+from pydantic import BaseModel, Field, create_model
+
+# Sentinel: return NO_APPEND from a batch node to exclude that item from the stored results list.
+NO_APPEND = object()
 
 
 class _NodeDescriptor:
@@ -91,8 +94,9 @@ def create_prep(signature: inspect.Signature) -> Callable[[Node, Any], dict]:
 
 def create_batch_prep(
     signature: inspect.Signature,
-    input_model: type,
+    input_model: BaseModel,
     items_key: str = "items",
+    items_type: type[list] | type[dict] = dict,
 ) -> Callable[[Any, Any], list[dict]]:
     """Prep for batch/parallel_batch nodes: reads shared[items_key] and returns a list of validated item dicts."""
 
@@ -104,13 +108,21 @@ def create_batch_prep(
             raise TypeError(
                 f"For batch/parallel_batch nodes, shared[{items_key!r}] must be a list of dicts, got {type(raw_items).__name__}"
             )
-        prepped = []
+        prepped = [] if items_type is dict else {}
         for i, raw in enumerate(raw_items):
-            if not isinstance(raw, dict):
+            if items_type is dict and not isinstance(raw, dict):
                 raise TypeError(
                     f"Batch item at index {i} must be a dict of arguments, got {type(raw).__name__}"
                 )
-            prepped.append(input_model(**raw).model_dump())
+            elif items_type is not dict and not (isinstance(raw, list) or isinstance(raw, tuple)):
+                raise TypeError(
+                    f"Batch item at index {i} must be a list or tuple of arguments, got {type(raw).__name__}, raw: {raw}"
+                )
+            if items_type is dict:
+                prepped.append(input_model(**raw).model_dump())
+            else:
+                key, *rest = raw
+                prepped[key] = rest
         return prepped
 
     return prep_inner
@@ -131,11 +143,37 @@ def __reduce_shared(self, shared, prep_res, exec_res):
     return action
 
 
-def create_batch_post(results_key: str = "results"):
-    """Returns a batch node post that stores per-item results in shared[results_key]."""
+def create_batch_post(
+    results_key: str = "results",
+    results_type: type[list] | type[dict] = list,
+):
+    """
+    Returns a batch node post that stores per-item results in shared[results_key].
+    - results_type=list (default): store a list; each non-NO_APPEND result is appended.
+    - results_type=dict: store a dict; each per-item result is (key, value) and we set shared[results_key][key] = value.
+      Result can be a 2-tuple/list or a dict (merged in). NO_APPEND items are skipped.
+    """
 
     def __reduce_shared_batch(self, shared, prep_res, exec_res):
-        shared[results_key] = exec_res if isinstance(exec_res, list) else []
+        if not isinstance(exec_res, list):
+            exec_res = []
+        if results_type is dict:
+            out = {}
+            for r in exec_res:
+                if r is NO_APPEND:
+                    continue
+                if isinstance(r, (tuple, list)) and len(r) >= 2:
+                    out[r[0]] = r[1]
+                elif isinstance(r, dict):
+                    out.update(r)
+                else:
+                    raise TypeError(
+                        f"For results_type=dict, each batch item must return (key, value) or a dict, got {type(r).__name__}"
+                    )
+            shared[results_key] = out
+        else:
+            out = [r for r in exec_res if r is not NO_APPEND]
+            shared[results_key] = out
         return "default"
 
     return __reduce_shared_batch
@@ -150,6 +188,7 @@ def node(
     parallel_batch: bool = False,
     items_key: str = "items",
     results_key: str = "results",
+    results_type: type[list] | type[dict] = list,
 ):
     """
     Decorator that creates a PocketFlow Node instance from a function.
@@ -167,7 +206,8 @@ def node(
         batch (bool): If True, use BatchNode/AsyncBatchNode; prep reads shared[items_key] as list of item dicts.
         parallel_batch (bool): If True, use AsyncParallelBatchNode; same prep contract as batch.
         items_key (str): Key in shared for the list of batch items when batch or parallel_batch is True (default: "items").
-        results_key (str): Key in shared where the list of per-item results is stored for batch nodes (default: "results").
+        results_key (str): Key in shared where batch results are stored (default: "results").
+        results_type (list | dict): If list (default), store a list of per-item results. If dict, each item should return (key, value) and results are merged into shared[results_key] as a dict.
 
     Returns:
         A Node instance with the function name as the class name
@@ -200,8 +240,10 @@ def node(
         if not is_async:
             node_class = Node if not batch else BatchNode
             is_batch = node_class is BatchNode
-            prep_fn = create_batch_prep(signature, input_model, items_key) if is_batch else create_prep(signature)
-            post_fn = create_batch_post(results_key) if is_batch else __reduce_shared
+            items_type = dict if results_type is list else list
+            prep_fn = create_batch_prep(signature, input_model, items_key,
+                                        items_type) if is_batch else create_prep(signature)
+            post_fn = create_batch_post(results_key, results_type) if is_batch else __reduce_shared
             if is_method_or_cls:
                 def exec_sync(self, prep_res):
                     return func(self.owner, **input_model(**prep_res).model_dump())
@@ -245,7 +287,7 @@ def node(
                 if is_batch
                 else create_prep(signature)
             )
-            post_fn = create_batch_post(results_key) if is_batch else __reduce_shared
+            post_fn = create_batch_post(results_key, results_type) if is_batch else __reduce_shared
 
             async def exec_async(self, prep_res):
                 if is_method_or_cls:

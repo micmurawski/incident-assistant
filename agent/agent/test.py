@@ -67,7 +67,7 @@ async def main():
             tools = PlanningTools | CodebaseReadTools
             settings.get("workspace.path") or os.getcwd()
             settings.set("api.provider", "gemini")
-            settings.set("api.model_id", "gemini-2.5-flash:thinking")
+            settings.set("api.model_id", "gemini-2.5-flash")
             settings.set("api.api_key", "AIzaSyAmNJmXdpejo2LQWDowsqsK3bvMhZSXfII")
 
             agent_manager = Agent(
