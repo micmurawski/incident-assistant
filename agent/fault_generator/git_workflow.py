@@ -150,7 +150,6 @@ class FaultInjector(LLMAgent):
         self.cwd = str(cwd)
         self.system_prompt = system_prompt
         self.api_handler: ApiHandler = build_api_handler(**api_settings)
-        self.file_ops_manager = FileOpsManager(cwd=self.cwd)
         self.name = name
 
 
@@ -168,16 +167,21 @@ async def create_agent(repo_root: Path, work_tree_path: Path, branch_name: str):
 
     tools = CodebaseReadTools | CodebaseWriteTools
     agent.bind_tools(tools, {"cwd": agent.cwd})
-    start_fault_injector >> agent.call_llm >> check_fault_injector
+
+    agent.call_llm - "tools" >> tools
+    tools >> agent.call_llm
+
+    start_fault_injector >> agent.call_llm
+    agent.call_llm - "default" >> check_fault_injector
     check_fault_injector - "reflect" >> agent.call_llm
     check_fault_injector - "default" >> end_fault_injector
+    agent.flow = AsyncFlow(start=start_fault_injector)
     return agent
 
 settings = SettingsManager.get_instance()
 settings.set("api.provider", "gemini")
 settings.set("api.model_id", "gemini-2.5-flash")
 settings.set("api.api_key", "AIzaSyAmNJmXdpejo2LQWDowsqsK3bvMhZSXfII")
-settings.set("workspace.path", str(REPO_ROOT))
 
 
 shared = {
@@ -226,21 +230,9 @@ async def select_service_and_fault_class(apps: list[str], fault_classes: list[in
 
 
 @node
-async def start_fault_injector(service_name: str, fault_class: int):
-    uuid_value = str(uuid.uuid4())
+async def start_fault_injector(service_name: str, fault_class: int, uuid_value: str):
+    _run_git("checkout", "master", "-f", cwd=REPO_ROOT)
     branch_name = f"fault-{service_name}-{fault_class}-{uuid_value}"
-    worktree_path = WORKTREES_DIR / branch_name
-    WORKTREES_DIR.mkdir(parents=True, exist_ok=True)
-    result = await work_tree_service.create_worktree(
-        cwd=str(REPO_ROOT),
-        path=str(worktree_path),
-        branch=branch_name,
-        base_branch="master",
-        create_new_branch=True,
-    )
-    if not result.success:
-        raise RuntimeError(f"Failed to create worktree: {result.message}")
-    worktree_path_str = str(worktree_path)
     return {
         "messages": [
             {
@@ -253,22 +245,24 @@ async def start_fault_injector(service_name: str, fault_class: int):
             }
         ],
         "branch_name": branch_name,
-        "worktree_path": worktree_path_str,
-        "cwd": worktree_path_str,
     }
 
 
 @node
-async def check_fault_injector(messages: list[dict], branch_name: str, worktree_path: str):
+async def check_fault_injector(cwd: str, messages: list[dict]):
     # check if FAULT.md exists, and there are no uncommitted changes (in the worktree)
-    worktree_root = Path(worktree_path)
     feedback = ""
-    if not (worktree_root / "FAULT.md").exists():
+    cwd = Path(cwd)
+    print(cwd / "FAULT.md", "does it exist?", (cwd / "FAULT.md").exists())
+    if not (cwd / "FAULT.md").exists():
         feedback += "FAULT.md does not exist\n"
-    r = _run_git("status", "--porcelain", cwd=worktree_root)
-    if not (r.returncode != 0 or (r.stdout and r.stdout.strip())):
-        feedback += "There are no changes to commit\n"
+    r = _run_git("status", "--porcelain", cwd=cwd)
+    changes = [line for line in r.stdout.splitlines() if "FAULT.md" not in line]
+    print("CHANGES: ", changes)
+    if not (r.returncode != 0 or changes):
+        feedback += "There are no changes to commit besides FAULT.md\n"
     if feedback:
+        print("FEEDBACK: ", feedback)
         messages.append({
             "role": "user",
             "content": feedback
@@ -277,8 +271,8 @@ async def check_fault_injector(messages: list[dict], branch_name: str, worktree_
 
 
 @node
-async def end_fault_injector(branch_name: str, worktree_path: str):
-    worktree_root = Path(worktree_path)
+async def end_fault_injector(branch_name: str, cwd: str):
+    worktree_root = Path(cwd)
     patch_out_path = CURRENT_DIR / "fault-vault" / branch_name / "git.patch"
     patch_out_path.parent.mkdir(parents=True, exist_ok=True)
     fault_vault_dir = CURRENT_DIR / "fault-vault" / branch_name
@@ -288,7 +282,7 @@ async def end_fault_injector(branch_name: str, worktree_path: str):
     git_commit_and_format_patch(branch_name, patch_out_path, repo_root=worktree_root)
     delete_result = await work_tree_service.delete_worktree(
         cwd=str(REPO_ROOT),
-        worktree_path=worktree_path,
+        worktree_path=cwd,
         force=True,
     )
     if not delete_result.success:
@@ -298,13 +292,18 @@ async def end_fault_injector(branch_name: str, worktree_path: str):
 async def main(batch: bool = False):
     select_service = random.choice(APP_SERVICES)
     fault_id = random.choice([2, 3, 4])
+    uuid_value = str(uuid.uuid4())
+    branch_name = f"fault-{select_service}-{fault_id}-{uuid_value}"
+    agent = await create_agent(REPO_ROOT, WORKTREES_DIR / branch_name, branch_name)
+    agent.cwd = WORKTREES_DIR / branch_name
+    agent.update_tools_definitions(tool_format_arguments={"cwd": str(agent.cwd)})
     shared_state = {
+        "cwd": str(agent.cwd),
         "service_name": select_service,
         "fault_class": fault_id,
-        "uuid": str(uuid.uuid4()),
+        "uuid_value": uuid_value,
     }
-    print(f"Injecting fault {fault_id} into {select_service} with UUID {shared_state['uuid']}")
-    agent = await create_agent(REPO_ROOT, WORKTREES_DIR / f"fault-{select_service}-{fault_id}-{shared_state['uuid']}", f"fault-{select_service}-{fault_id}-{shared_state['uuid']}")
+    print(f"Injecting fault {fault_id} into {select_service} with UUID {shared_state['uuid_value']}")
     await agent.call(shared_state)
     print("Fault injection complete")
 

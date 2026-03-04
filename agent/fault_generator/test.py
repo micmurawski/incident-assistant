@@ -1,7 +1,7 @@
 import asyncio
 
 from framework import AsyncFlow
-from framework.decorators import node, NO_APPEND
+from framework.decorators import NO_APPEND, node
 
 # For batch nodes, shared[items_key] must be a list of dicts (one per item) with keys matching the node's params.
 # first_a(app: str) expects each item to have "app". Use items_key="app_items" so shared["apps"] stays for second_a.

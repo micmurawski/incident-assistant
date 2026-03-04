@@ -1,11 +1,12 @@
 from typing import Annotated, Optional
 
 from agent.file_ops import FileOpsManager, FileOpsResult
-from agent.tooling.decorators import ToolResult, Tools, tool
+from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
 
 
 @tool(tags=["codebase", "write"])
 async def search_and_replace(
+    cwd: Hidden[str],
     path: Annotated[str, "File path (relative to workspace directory {cwd})"],
     search: Annotated[str, "The search string to replace"],
     replace: Annotated[str, "The replacement string"],
@@ -29,7 +30,7 @@ async def search_and_replace(
     2. Case-insensitive regex pattern:
     search_and_replace(path="src/main.ts", search="console.log", replace="console.error", use_regex=True, ignore_case=True)
     """
-    result: FileOpsResult = await FileOpsManager.get_instance().search_and_replace(
+    result: FileOpsResult = await FileOpsManager.get_instance(cwd).search_and_replace(
         path=path,
         search=search,
         replace=replace,
@@ -43,6 +44,7 @@ async def search_and_replace(
 
 @tool(tags=["write", "codebase"])
 async def insert_content(
+    cwd: Hidden[str],
     path: Annotated[str, "File path relative to workspace directory {cwd}"],
     content: Annotated[str, "The content to insert at the specified line"],
     line: Annotated[
@@ -60,12 +62,13 @@ async def insert_content(
     Example for appending to the end of file:
     insert_content(path="src/utils.ts", line=0, content="// This is the end of the file")
     """
-    result: FileOpsResult = await FileOpsManager.get_instance().append_to_file(path, content, line)
+    result: FileOpsResult = await FileOpsManager.get_instance(cwd).append_to_file(path, content, line)
     return ToolResult(result=result.diff, error=result.error)
 
 
 @tool(tags=["write"])
 async def write_to_file(
+    cwd: Hidden[str],
     path: Annotated[str, "The path of the file to write to (relative to the current workspace directory {cwd})"],
     content: Annotated[
         str,
@@ -81,7 +84,7 @@ async def write_to_file(
     Example: Requesting to write content to a file
     write_to_file(path="src/main.ts", content="console.log('Hello, world!');")
     """
-    result: FileOpsResult = await FileOpsManager.get_instance().write_to_file(path, content)
+    result: FileOpsResult = await FileOpsManager.get_instance(cwd).write_to_file(path, content)
     return ToolResult(result=result.diff, error=result.error)
 
 

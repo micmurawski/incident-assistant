@@ -6,14 +6,13 @@ from uuid import uuid4
 
 from framework import AsyncFlow
 from framework.decorators import node
-from agent.tooling.decorators import Tools
 from framework.viz import build_mermaid, to_png
+from openinference.instrumentation import Tool
 
 from agent.context_ops import SummarizeResponse, summarize_conversation
 from agent.providers.base import ApiHandler
 from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
                          StreamChunk)
-from openinference.instrumentation import Tool
 
 T = TypeVar('T')
 
@@ -296,14 +295,15 @@ class LLMAgent(ABC):
                 return {"messages": result.messages}
         return {"messages": messages}, "default"
 
-    def bind_tools(self, tools: Tools, tool_format_arguments: dict[str, Any] = None):
+    def bind_tools(self, tools: Any, tool_format_arguments: dict[str, Any] = None):
         self.tools_arguments = tool_format_arguments
-        self.tools_definitions = tools.tools_definitions(
+        self.tools = tools
+        self.tools_definitions = self.tools.tools_definitions(
             format=self.api_handler.provider,
             format_kwargs=self.tools_arguments
         )
 
-    def update_tools_definitions(self, tools: Tools | None = None, tool_format_arguments: dict[str, Any] = None):
+    def update_tools_definitions(self, tools: Any = None, tool_format_arguments: dict[str, Any] = None):
         if tool_format_arguments is not None:
             self.tools_arguments.update(tool_format_arguments)
 

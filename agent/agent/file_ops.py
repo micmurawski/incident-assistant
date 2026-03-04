@@ -7,7 +7,6 @@ from typing import Literal, Optional
 
 from agent.code_index.code_analysis import parse_source_code_definitions
 from agent.list_files import Ignore, list_files, regex_search_files
-from agent.settings import SettingsManager
 from agent.utils.formatting import create_pretty_patch
 
 
@@ -53,11 +52,10 @@ class FileOpsManager:
         return instance
 
     @classmethod
-    def get_instance(cls, cwd: str | None = None) -> "FileOpsManager":
-        cwd = cwd or SettingsManager.get_instance().get("workspace.path") or os.getcwd()
+    def get_instance(cls, cwd: str) -> "FileOpsManager":
         abs_cwd = os.path.abspath(cwd)
         if abs_cwd not in cls._instances:
-            cls._instances[abs_cwd] = FileOpsManager(cwd)
+            cls._instances[abs_cwd] = FileOpsManager(abs_cwd)
         return cls._instances[abs_cwd]
 
     def __init__(self, cwd: str):

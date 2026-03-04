@@ -58,6 +58,7 @@ async def codebase_search(
 
 @tool(tags=["read", "codebase"])
 async def get_list_code_definitions_names_descriptions(
+    cwd: Hidden[str],
     path: Annotated[
         str,
         "The path of the file or directory (relative to the current working directory {cwd}) to analyze. When given a directory, it lists definitions from all top-level source files.",
@@ -71,12 +72,13 @@ async def get_list_code_definitions_names_descriptions(
     Example: Requesting to list definitions in a specific directory
     get_list_code_definitions_names_descriptions(path="src")
     """
-    res: FileOpsResult = await FileOpsManager.get_instance().list_code_definitions_names_descriptions(path)
+    res: FileOpsResult = await FileOpsManager.get_instance(cwd).list_code_definitions_names_descriptions(path)
     return ToolResult(result=res.diff, error=res.error)
 
 
 @tool(tags=["codebase", "read"])
 async def read_file(
+    cwd: Hidden[str],
     path: Annotated[str, "File path (relative to workspace directory {cwd})"],
     start_line: Annotated[Optional[int], "Start line number (1-based) for range reading (default: 1)"] = 1,
     end_line: Annotated[
@@ -98,7 +100,7 @@ async def read_file(
     read_file(path="src/main.ts", end_line=-10)
     """
     try:
-        res: FileOpsResult = await FileOpsManager.get_instance().read_file(path, start_line, end_line)
+        res: FileOpsResult = await FileOpsManager.get_instance(cwd).read_file(path, start_line, end_line)
         return ToolResult(result=res.content, error=res.error)
     except Exception as e:
         return ToolResult(result=None, error=str(e))
@@ -114,6 +116,7 @@ class FileContent(TypedDict):
 
 @tool(tags=["codebase", "read"])
 async def read_multiple_files(
+    cwd: Hidden[str],
     files: Annotated[list[FileContent], "List of file properties to read (relative to workspace directory {cwd})"],
 ) -> ToolResult:
     """
@@ -124,12 +127,13 @@ async def read_multiple_files(
     Example: Requesting to read the contents of multiple files
     read_multiple_files(files=[{"path": "src/main.ts", "start_line": 1, "end_line": 10}, {"path": "src/utils.ts", "start_line": 1, "end_line": 10}])
     """
-    res: FileOpsResult = await FileOpsManager.get_instance().read_multiple_files(files)
+    res: FileOpsResult = await FileOpsManager.get_instance(cwd).read_multiple_files(files)
     return ToolResult(result=res.content, error=res.error)
 
 
 @tool(tags=["codebase", "read"])
 async def search_file(
+    cwd: Hidden[str],
     path: Annotated[
         str,
         "The path of the directory to search in (relative to the current workspace directory {cwd}). This directory will be recursively searched.",
@@ -148,12 +152,13 @@ async def search_file(
     Example: Requesting to search for all .ts files in the current directory
     search_file(path=".", regex=".*", file_pattern="*.ts")
     """
-    res: FileOpsResult = await FileOpsManager.get_instance().search_file(path, regex, file_pattern)
+    res: FileOpsResult = await FileOpsManager.get_instance(cwd).search_file(path, regex, file_pattern)
     return ToolResult(result=res.content, error=res.error)
 
 
 @tool(tags=["codebase", "read"])
 async def list_files(
+    cwd: Hidden[str],
     path: Annotated[
         str, " The path of the directory to list contents for (relative to the current workspace directory {cwd})"
     ],
@@ -175,7 +180,7 @@ async def list_files(
     Example: Requesting to list the files in the current directory recursively
     list_files(path=".", recursive=true)
     """
-    res: FileOpsResult = await FileOpsManager.get_instance().list_files_tool(path, bool(recursive))
+    res: FileOpsResult = await FileOpsManager.get_instance(cwd).list_files_tool(path, bool(recursive))
     return ToolResult(result=res.content, error=res.error)
 
 
