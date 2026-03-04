@@ -20,9 +20,6 @@ class FileOpsResult:
     error: Optional[Exception] = field(default=None)
     reason: Optional[str] = field(default=None)
 
-    def __post_init__(self) -> None:
-        self.print_diff()
-
     @property
     def changed(self) -> bool:
         return self.diff is not None
@@ -282,16 +279,38 @@ class FileOpsManager:
         if not is_file:
             raise Exception(f"The path {path} is not file.")
 
-        lines = open(full_path).read().splitlines(keepends=True)
+        # Read the original content once so we can both
+        # (a) preserve the existing newline structure and
+        # (b) generate an accurate diff afterwards.
+        original_content = open(full_path).read()
 
-        line = len(lines) - 1 if line is None else line - 1
-        res = "\n".join(self._insert_content(lines, [{"index": line, "content": content.split("\n")}]))
+        # Work with logical lines *without* embedded newline characters.
+        # This avoids doubling newlines when we later join with "\n".
+        lines = original_content.splitlines()
+
+        # Convert the 1-based line number (or None) to a safe insertion index.
+        # If `line` is None, append to the end of the file.
+        if line is None:
+            insert_at = len(lines)
+        else:
+            # Clamp to [0, len(lines)] to avoid index errors.
+            insert_at = max(0, min(line - 1, len(lines)))
+
+        insert_content_lines = content.splitlines()
+        new_lines = self._insert_content(
+            lines, [{"index": insert_at, "content": insert_content_lines}]
+        )
+
+        # Reconstruct the file content with a single newline separator between
+        # logical lines. This prevents the extra blank lines that previously
+        # appeared due to mixing keepends=True with an additional join.
+        res = "\n".join(new_lines)
         with open(full_path, "w") as file:
             file.write(res)
 
         return FileOpsResult(
             path=path,
-            diff=_generate_diff("".join(lines), res),
+            diff=_generate_diff(original_content, res),
         )
 
     async def search_file(self, path: str, regex: str, file_pattern: str | None = None) -> FileOpsResult:

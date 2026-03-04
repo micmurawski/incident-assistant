@@ -56,7 +56,7 @@ ANTHROPIC_MODELS = {
 	},
 }
 
-GEMINI_DEFAULT_MODEL_ID = "gemini-2.0-flash-001"
+GEMINI_DEFAULT_MODEL_ID = "gemini-2.5-flash"
 
 GEMINI_MODELS = {
     "gemini-2.5-flash:thinking": {
@@ -109,7 +109,7 @@ GEMINI_MODELS = {
                 "cache_reads_price": 0.625,
             },
         ],
-    }
+    },
 }
 
 OLLAMA_DEFAULT_MODEL_ID = "devstral:24b"

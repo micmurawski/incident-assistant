@@ -162,7 +162,9 @@ async def list_files(
     ]] = False,
 ) -> ToolResult:
     """
-    Request to list files and directories within the specified directory. If recursive is true, it will list all files and directories recursively. If recursive is false or not provided, it will only list the top-level contents. Do not use this tool to confirm the existence of files you may have created, as the user will let you know if the files were created successfully or not
+    Request to list files and directories within the specified directory. If recursive is true, it will list all files and directories recursively. 
+    If recursive is false or not provided, it will only list the top-level contents. 
+    Do not use this tool to confirm the existence of files you may have created, as the user will let you know if the files were created successfully or not
 
     Usage:
     list_files(path=<directory path>, recursive=<true/false>)
@@ -173,7 +175,7 @@ async def list_files(
     Example: Requesting to list the files in the current directory recursively
     list_files(path=".", recursive=true)
     """
-    res: FileOpsResult = await FileOpsManager.get_instance().list_files_tool(path, recursive)
+    res: FileOpsResult = await FileOpsManager.get_instance().list_files_tool(path, bool(recursive))
     return ToolResult(result=res.content, error=res.error)
 
 

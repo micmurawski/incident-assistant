@@ -2,7 +2,8 @@ import inspect
 import weakref
 from typing import Any, Callable
 
-from framework import AsyncNode, Node
+from framework import (AsyncBatchNode, AsyncNode, AsyncParallelBatchNode,
+                       BatchNode, Node)
 from pydantic import Field, create_model
 
 
@@ -82,7 +83,7 @@ def create_prep(signature: inspect.Signature) -> Callable[[Node, Any], dict]:
                 elif field.default is not inspect._empty:
                     res[name] = field.default
                 else:
-                    raise ValueError(f"Parameter {name} has no default value")
+                    raise ValueError(f"Parameter {name} has no default value, and is not present in shared")
         return res
 
     return prep_inner
@@ -103,7 +104,7 @@ def __reduce_shared(self, shared, prep_res, exec_res):
     return action
 
 
-def node(func=None, *, max_retries=1, wait=0):
+def node(func=None, *, max_retries=1, wait=0, batch: bool = False, parallel_batch: bool = False):
     """
     Decorator that creates a PocketFlow Node instance from a function.
 
@@ -146,12 +147,13 @@ def node(func=None, *, max_retries=1, wait=0):
             return node_init
 
         if not is_async:
+            node_class = Node if not batch else BatchNode
             if is_method_or_cls:
                 def exec_sync(self, prep_res):
                     return func(self.owner, **input_model(**prep_res).model_dump())
                 node_class = type(
                     class_name,
-                    (Node,),
+                    (node_class,),
                     {
                         "__init__": make_node_init(True),
                         "exec": exec_sync,
@@ -165,7 +167,7 @@ def node(func=None, *, max_retries=1, wait=0):
                 return _NodeDescriptor(node_class)
             node_class = type(
                 class_name,
-                (Node,),
+                (node_class,),
                 {
                     "__init__": make_node_init(False),
                     "exec": lambda self, prep_res: func(**input_model(**prep_res).model_dump()),
@@ -178,6 +180,12 @@ def node(func=None, *, max_retries=1, wait=0):
             )
             return node_class()
         else:
+            node_class = AsyncNode
+            if parallel_batch:
+                node_class = AsyncParallelBatchNode
+            elif batch:
+                node_class = AsyncBatchNode
+            
             async def exec_async(self, prep_res):
                 if is_method_or_cls:
                     return await func(self.owner, **input_model(**prep_res).model_dump())
@@ -187,12 +195,13 @@ def node(func=None, *, max_retries=1, wait=0):
                 return __reduce_shared(self, shared, prep_res, exec_res)
 
             async def prep(self, shared):
+                #raise Exception(self, shared, signature, shared)
                 return create_prep(signature)(self, shared)
 
             if is_method_or_cls:
                 node_class = type(
                     class_name,
-                    (AsyncNode,),
+                    (node_class,),
                     {
                         "__init__": make_node_init(True),
                         "exec_async": exec_async,
@@ -206,7 +215,7 @@ def node(func=None, *, max_retries=1, wait=0):
                 return _NodeDescriptor(node_class)
             node_class = type(
                 class_name,
-                (AsyncNode,),
+                (node_class,),
                 {
                     "__init__": make_node_init(False),
                     "exec_async": exec_async,

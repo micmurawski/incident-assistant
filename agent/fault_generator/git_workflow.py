@@ -62,14 +62,26 @@ You will be given a fault class (2, 3, or 4) and context about the app. You must
 
 1. **Apply changes** only under the current working directory. Edit code or K8s manifests to introduce the fault. Use the minimum necessary edits (e.g. one wrong env var, one broken line, one misconfigured limit).
 
-2. **Write FAULT.md** at `./FAULT.md` with this structure:
+2. **Write FAULT.md** at `FAULT.md` with this structure:
    - **Title**: One line describing the fault.
    - **Description**: What was changed and where.
    - **Symptom**: What users or monitoring will see.
    - **Root cause**: Why this causes the symptom.
    - **Fix**: How to fix it (revert, correct config, etc.).
 
-Use the codebase read/write tools to inspect and edit files. When done, reply briefly that you have applied the fault and written FAULT.md. Do not run shell commands."""
+Use the codebase read/write tools to inspect and edit files. When done, reply briefly that you have applied the fault and written FAULT.md. Do not run shell commands.
+
+- DON'T MAKE COMMENTS, LOGS, OR EXCEPTIONS, OR USE VAR NAMES THAT WOULD BE HINTING FOR THE FAULT. 
+- DON'T USE METHOD NAMES OR FUNCTION NAMES THAT WOULD BE HINTING FOR THE FAULT.
+- DON'T USE VARIABLE NAMES THAT WOULD BE HINTING FOR THE FAULT.
+- DON'T USE CLASS NAMES THAT WOULD BE HINTING FOR THE FAULT.
+- DON'T USE MODULE NAMES THAT WOULD BE HINTING FOR THE FAULT.
+- DON'T USE PACKAGE NAMES THAT WOULD BE HINTING FOR THE FAULT.
+- DON'T USE PROJECT NAMES THAT WOULD BE HINTING FOR THE FAULT.
+- DON'T USE USER NAMES THAT WOULD BE HINTING FOR THE FAULT.
+
+YOUR FAULTS NEED TO BE DISCRITE. 
+"""
 
 
 def _run_git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -125,6 +137,7 @@ class FaultInjector(LLMAgent):
     def __init__(self, name: str, system_prompt: str, api_settings: dict[str, Any] | None = None):
         settings = SettingsManager.get_instance()
         api_settings = api_settings or settings.get("api")
+        api_settings["temperature"] = 0.8 
         self.cwd = settings.get("workspace.path") or os.getcwd()
         self.system_prompt = system_prompt
         self.api_handler: ApiHandler = build_api_handler(**api_settings)
@@ -134,7 +147,7 @@ class FaultInjector(LLMAgent):
 
 settings = SettingsManager.get_instance()
 settings.set("api.provider", "gemini")
-settings.set("api.model_id", "gemini-2.5-flash:thinking")
+settings.set("api.model_id", "gemini-2.5-pro:thinking")
 settings.set("api.api_key", "AIzaSyAmNJmXdpejo2LQWDowsqsK3bvMhZSXfII")
 settings.set("workspace.path", str(REPO_ROOT))
 
@@ -154,7 +167,10 @@ async def start_fault_injector(service_name: str, fault_class: int, uuid: str):
         "messages": [
             {
                 "role": "user",
-                "content": f"You are a fault-injector for the {service_name} service. You are tasked with introducing a fault into the codebase. The fault class is {fault_class}. The fault is {FAULT_CLASS_DESCRIPTIONS[fault_class]}."}
+                "content": f"You are a fault-injector for the {service_name} service. "
+                "You are tasked with introducing a fault into the codebase. "
+                "The fault class is {fault_class}. The fault is {FAULT_CLASS_DESCRIPTIONS[fault_class]}. " 
+            }
         ],
         "branch_name": branch_name
     }
@@ -164,11 +180,12 @@ async def start_fault_injector(service_name: str, fault_class: int, uuid: str):
 async def end_fault_injector(branch_name: str):
     patch_out_path = CURRENT_DIR / "fault-vault" / branch_name / "git.patch"
     patch_out_path.parent.mkdir(parents=True, exist_ok=True)
-    git_commit_and_format_patch(branch_name, patch_out_path)
-    # copy FAULT.md to the fault-vault directory
     fault_vault_dir = CURRENT_DIR / "fault-vault" / branch_name
     fault_vault_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(REPO_ROOT / "FAULT.md", fault_vault_dir / "FAULT.md")
+    os.remove(REPO_ROOT / "FAULT.md")
+    git_commit_and_format_patch(branch_name, patch_out_path)
+
 
 
 start_fault_injector >> fault_injector.call_llm >> end_fault_injector
@@ -185,6 +202,8 @@ async def main():
         "fault_class": fault_id,
         "uuid": str(uuid.uuid4())
     }
+    print(f"Injecting fault {fault_id} into {select_service} with UUID {shared['uuid']}")
+    await asyncio.sleep(1)
     await async_flow.run_async(shared)
     print("Fault injection complete")
 

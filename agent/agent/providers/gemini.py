@@ -387,10 +387,11 @@ class GeminiHandler(ApiHandler):
         return total_cost
 
     def get_model(self) -> ModelInfo:
-        _id = self.model_id if self.model_id in GEMINI_MODELS else GEMINI_DEFAULT_MODEL_ID
+        is_thinking = self.model_id.endswith(":thinking")
+        _model_id = self.model_id.replace(":thinking", "")
+        _id = _model_id if _model_id in GEMINI_MODELS else GEMINI_DEFAULT_MODEL_ID
         info = GEMINI_MODELS[_id]
         params = get_model_params(format="gemini", model_id=_id, model=info, settings=self.kwargs)
-        is_thinking = _id.endswith(":thinking")
         data = {
             "id": _id.replace(":thinking", "") if is_thinking else _id,
             **info,
@@ -398,6 +399,8 @@ class GeminiHandler(ApiHandler):
         }
         if is_thinking:
             data["reasoning"].update({"include_thoughts": True})
+        else:
+            data["reasoning"] = None
         return ModelInfo(**data)
 
 
