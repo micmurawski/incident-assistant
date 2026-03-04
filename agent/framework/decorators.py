@@ -89,6 +89,33 @@ def create_prep(signature: inspect.Signature) -> Callable[[Node, Any], dict]:
     return prep_inner
 
 
+def create_batch_prep(
+    signature: inspect.Signature,
+    input_model: type,
+    items_key: str = "items",
+) -> Callable[[Any, Any], list[dict]]:
+    """Prep for batch/parallel_batch nodes: reads shared[items_key] and returns a list of validated item dicts."""
+
+    def prep_inner(self, shared: Any) -> list[dict]:
+        raw_items = shared.get(items_key)
+        if raw_items is None:
+            raw_items = []
+        if not isinstance(raw_items, list):
+            raise TypeError(
+                f"For batch/parallel_batch nodes, shared[{items_key!r}] must be a list of dicts, got {type(raw_items).__name__}"
+            )
+        prepped = []
+        for i, raw in enumerate(raw_items):
+            if not isinstance(raw, dict):
+                raise TypeError(
+                    f"Batch item at index {i} must be a dict of arguments, got {type(raw).__name__}"
+                )
+            prepped.append(input_model(**raw).model_dump())
+        return prepped
+
+    return prep_inner
+
+
 def __reduce_shared(self, shared, prep_res, exec_res):
     if isinstance(exec_res, tuple) and len(exec_res) > 1:
         state, action = exec_res
@@ -104,7 +131,26 @@ def __reduce_shared(self, shared, prep_res, exec_res):
     return action
 
 
-def node(func=None, *, max_retries=1, wait=0, batch: bool = False, parallel_batch: bool = False):
+def create_batch_post(results_key: str = "results"):
+    """Returns a batch node post that stores per-item results in shared[results_key]."""
+
+    def __reduce_shared_batch(self, shared, prep_res, exec_res):
+        shared[results_key] = exec_res if isinstance(exec_res, list) else []
+        return "default"
+
+    return __reduce_shared_batch
+
+
+def node(
+    func=None,
+    *,
+    max_retries=1,
+    wait=0,
+    batch: bool = False,
+    parallel_batch: bool = False,
+    items_key: str = "items",
+    results_key: str = "results",
+):
     """
     Decorator that creates a PocketFlow Node instance from a function.
 
@@ -112,11 +158,16 @@ def node(func=None, *, max_retries=1, wait=0, batch: bool = False, parallel_batc
     - @node (uses default args)
     - @node() (uses default args)
     - @node(max_retries=3, wait=2) (custom args)
+    - @node(batch=True) or @node(parallel_batch=True) for batch nodes (reads shared[items_key])
 
     Args:
         func: The function to decorate (when used as @node)
         max_retries (int): Maximum number of retries for the node (default: 1)
         wait (int): Wait time in seconds between retries (default: 0)
+        batch (bool): If True, use BatchNode/AsyncBatchNode; prep reads shared[items_key] as list of item dicts.
+        parallel_batch (bool): If True, use AsyncParallelBatchNode; same prep contract as batch.
+        items_key (str): Key in shared for the list of batch items when batch or parallel_batch is True (default: "items").
+        results_key (str): Key in shared where the list of per-item results is stored for batch nodes (default: "results").
 
     Returns:
         A Node instance with the function name as the class name
@@ -148,6 +199,9 @@ def node(func=None, *, max_retries=1, wait=0, batch: bool = False, parallel_batc
 
         if not is_async:
             node_class = Node if not batch else BatchNode
+            is_batch = node_class is BatchNode
+            prep_fn = create_batch_prep(signature, input_model, items_key) if is_batch else create_prep(signature)
+            post_fn = create_batch_post(results_key) if is_batch else __reduce_shared
             if is_method_or_cls:
                 def exec_sync(self, prep_res):
                     return func(self.owner, **input_model(**prep_res).model_dump())
@@ -157,8 +211,8 @@ def node(func=None, *, max_retries=1, wait=0, batch: bool = False, parallel_batc
                     {
                         "__init__": make_node_init(True),
                         "exec": exec_sync,
-                        "prep": create_prep(signature),
-                        "post": __reduce_shared,
+                        "prep": prep_fn,
+                        "post": post_fn,
                         "__doc__": func.__doc__,
                         "__module__": func.__module__,
                         "__name__": func.__name__,
@@ -171,8 +225,8 @@ def node(func=None, *, max_retries=1, wait=0, batch: bool = False, parallel_batc
                 {
                     "__init__": make_node_init(False),
                     "exec": lambda self, prep_res: func(**input_model(**prep_res).model_dump()),
-                    "prep": create_prep(signature),
-                    "post": __reduce_shared,
+                    "prep": prep_fn,
+                    "post": post_fn,
                     "__doc__": func.__doc__,
                     "__module__": func.__module__,
                     "__name__": func.__name__,
@@ -185,18 +239,24 @@ def node(func=None, *, max_retries=1, wait=0, batch: bool = False, parallel_batc
                 node_class = AsyncParallelBatchNode
             elif batch:
                 node_class = AsyncBatchNode
-            
+            is_batch = node_class in (AsyncBatchNode, AsyncParallelBatchNode)
+            prep_fn = (
+                create_batch_prep(signature, input_model, items_key)
+                if is_batch
+                else create_prep(signature)
+            )
+            post_fn = create_batch_post(results_key) if is_batch else __reduce_shared
+
             async def exec_async(self, prep_res):
                 if is_method_or_cls:
                     return await func(self.owner, **input_model(**prep_res).model_dump())
                 return await func(**input_model(**prep_res).model_dump())
 
             async def post(self, shared, prep_res, exec_res):
-                return __reduce_shared(self, shared, prep_res, exec_res)
+                return post_fn(self, shared, prep_res, exec_res)
 
             async def prep(self, shared):
-                #raise Exception(self, shared, signature, shared)
-                return create_prep(signature)(self, shared)
+                return prep_fn(self, shared)
 
             if is_method_or_cls:
                 node_class = type(
