@@ -494,7 +494,7 @@ class Tools(AsyncNode):
         # Filter the tools by tags (if provided)
         filtered = [t for t in self.tools if tags is None or t.tags & tags]
         definitions = [t.tool_definition for t in filtered]
-        if format == "anthropic":
+        if format in ["anthropic", "minimax"]:
             for definition in definitions:
                 definition["input_schema"] = definition.pop("parameters")
         elif format == "ollama":
@@ -510,6 +510,8 @@ class Tools(AsyncNode):
                 definition["parameters"] = self._strip_unsupported_schema_fields(
                     definition.get("parameters", {})
                 )
+        else:
+            raise ValueError(f"Unknown format: {format}")
 
         # Substitute formatted placeholders if requested
         if format_kwargs:

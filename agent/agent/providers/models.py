@@ -35,25 +35,25 @@ ANTHROPIC_MODELS = {
         ],
     },
     "claude-opus-4-6": {
-		"max_tokens": 128_000, 
-		"context_window": 200_000, 
-		"supports_images": True,
-		"supports_prompt_cache": True,
-		"input_price": 5.0, 
-		"output_price": 25.0, 
-		"cache_writes_price": 6.25, 
-		"cache_reads_price": 0.5, 
-		"supports_reasoning_budget": True,
-		"tiers": [
-			{
-				"context_window": 1_000_000, 
-				"input_price": 10.0, 
-				"output_price": 37.5, 
-				"cache_writes_price": 12.5, 
-				"cache_reads_price": 1.0, 
-			},
-		],
-	},
+        "max_tokens": 128_000,
+        "context_window": 200_000,
+        "supports_images": True,
+        "supports_prompt_cache": True,
+        "input_price": 5.0,
+        "output_price": 25.0,
+        "cache_writes_price": 6.25,
+        "cache_reads_price": 0.5,
+        "supports_reasoning_budget": True,
+        "tiers": [
+            {
+                "context_window": 1_000_000,
+                "input_price": 10.0,
+                "output_price": 37.5,
+                "cache_writes_price": 12.5,
+                "cache_reads_price": 1.0,
+            },
+        ],
+    },
 }
 
 GEMINI_DEFAULT_MODEL_ID = "gemini-2.5-flash"
@@ -139,3 +139,21 @@ OPENAI_DEFAULT_MODEL_INFO = {
     "input_price": 0,
     "output_price": 0,
 }
+
+MINIMAX_MODELS = {
+    "MiniMax-M2.5": {
+        "max_tokens": 16_384,
+        "context_window": 204_800,
+        "supports_images": False,
+        "supports_prompt_cache": True,
+        # "included_tools": ["search_and_replace"],
+        # "excluded_tools": ["apply_diff"],
+        "preserve_reasoning": True,
+        "input_price": 0.3,
+        "output_price": 1.2,
+        "cache_writes_price": 0.375,
+        "cache_reads_price": 0.03,
+        "description": "MiniMax M2.5, the latest MiniMax model with enhanced coding and agentic capabilities, building on the strengths of the M2 series.",
+    },
+}
+MINIMAX_DEFAULT_MODEL_ID = "MiniMax-M2.5"

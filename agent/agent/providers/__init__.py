@@ -17,5 +17,9 @@ def build_api_handler(*, provider: ApiProvider, **configuration: dict[str, Any])
         from agent.providers.ollama import OllamaHandler
 
         return OllamaHandler(**configuration)
+    elif provider == "minimax":
+        from agent.providers.minimax import MiniMaxHandler
+        
+        return MiniMaxHandler(**configuration)
     else:
         raise ValueError(f"Unknown provider: {provider}")

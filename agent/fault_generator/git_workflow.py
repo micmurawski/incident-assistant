@@ -178,10 +178,11 @@ async def create_agent(repo_root: Path, work_tree_path: Path, branch_name: str):
     agent.flow = AsyncFlow(start=start_fault_injector)
     return agent
 
+MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY")
 settings = SettingsManager.get_instance()
-settings.set("api.provider", "gemini")
-settings.set("api.model_id", "gemini-2.5-flash")
-settings.set("api.api_key", "AIzaSyAmNJmXdpejo2LQWDowsqsK3bvMhZSXfII")
+settings.set("api.provider", "minimax")
+settings.set("api.model_id", "MiniMax-M2.5")
+settings.set("api.api_key", MINIMAX_API_KEY)
 
 
 shared = {
@@ -294,11 +295,10 @@ async def main(batch: bool = False):
     fault_id = random.choice([2, 3, 4])
     uuid_value = str(uuid.uuid4())
     branch_name = f"fault-{select_service}-{fault_id}-{uuid_value}"
-    agent = await create_agent(REPO_ROOT, WORKTREES_DIR / branch_name, branch_name)
-    agent.cwd = WORKTREES_DIR / branch_name
-    agent.update_tools_definitions(tool_format_arguments={"cwd": str(agent.cwd)})
+    worktree_path = WORKTREES_DIR / branch_name
+    agent = await create_agent(REPO_ROOT, str(worktree_path), branch_name)
     shared_state = {
-        "cwd": str(agent.cwd),
+        "cwd": str(worktree_path),
         "service_name": select_service,
         "fault_class": fault_id,
         "uuid_value": uuid_value,
