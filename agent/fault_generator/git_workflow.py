@@ -11,8 +11,8 @@ executed in parallel without sharing the same working directory.
 """
 
 import asyncio
+import glob
 import os
-import random
 import shutil
 import subprocess
 import uuid
@@ -21,14 +21,38 @@ from typing import Any
 
 from framework import AsyncBatchFlow, AsyncFlow, AsyncNode
 from framework.decorators import node
+from openinference.instrumentation import using_attributes
+from openinference.instrumentation.anthropic import AnthropicInstrumentor
+from opentelemetry import trace
+from phoenix.otel import register
 
-from agent.file_ops import FileOpsManager
 from agent.llm import LLMAgent
 from agent.providers import build_api_handler
 from agent.providers.base import ApiHandler
 from agent.settings import SettingsManager
 from agent.tooling import CodebaseReadTools, CodebaseWriteTools
+from agent.tracing import trace_flow
 from agent.worktree import WorkTreeService
+
+os.environ["PHOENIX_CLIENT_HEADERS"] = "Authorization=Bearer YOUR_API_KEY"
+os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:6006"
+
+tracer_provider = register(project_name="fault-generator-tracing")
+
+
+
+# Get a tracer for your application
+tracer = trace.get_tracer(__name__)
+
+tracer_provider = register(
+    auto_instrument=True
+)
+
+# Instrument Anthropic SDK so traces use Anthropic semantics (calls still go to
+# whatever base_url the client uses, e.g. Minimax when using MiniMaxHandler).
+AnthropicInstrumentor().instrument(tracer_provider=tracer_provider)
+#GoogleGenAIInstrumentor().instrument(tracer_provider=tracer_provider)
+
 
 work_tree_service = WorkTreeService()
 
@@ -76,6 +100,11 @@ You will be given a fault class (2, 3, or 4) and context about the app. You must
    - **Symptom**: What users or monitoring will see.
    - **Root cause**: Why this causes the symptom.
    - **Fix**: How to fix it (revert, correct config, etc.).
+
+3. **Write INCIDENT.md** at `INCIDENT.md` with this structure:
+    - **Title**: One line describing the incident.
+    - **Description**: What happened. How it's observed by the user, what is metrics are affected.
+    - This message will be used to announce the incident to a team. You CANNOT give any information about the fault or the fix.
 
 Use the codebase read/write tools to inspect and edit files. When done, reply briefly that you have applied the fault and written FAULT.md. Do not run shell commands.
 
@@ -168,6 +197,8 @@ async def create_agent(repo_root: Path, work_tree_path: Path, branch_name: str):
     tools = CodebaseReadTools | CodebaseWriteTools
     agent.bind_tools(tools, {"cwd": agent.cwd})
 
+    # react agent
+    
     agent.call_llm - "tools" >> tools
     tools >> agent.call_llm
 
@@ -175,15 +206,21 @@ async def create_agent(repo_root: Path, work_tree_path: Path, branch_name: str):
     agent.call_llm - "default" >> check_fault_injector
     check_fault_injector - "reflect" >> agent.call_llm
     check_fault_injector - "default" >> end_fault_injector
-    agent.flow = AsyncFlow(start=start_fault_injector)
+    agent.flow = _TracedFlow(start=start_fault_injector)
+    agent.get_flow_graph_png("fault_injector.png")
     return agent
 
 MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic")
 settings = SettingsManager.get_instance()
-settings.set("api.provider", "minimax")
-settings.set("api.model_id", "MiniMax-M2.5")
-settings.set("api.api_key", MINIMAX_API_KEY)
-
+#settings.set("api.provider", "minimax")
+#settings.set("api.model_id", "MiniMax-M2.5")
+#settings.set("api.api_key", MINIMAX_API_KEY)
+# Override Minimax API endpoint (passed to MiniMaxHandler as base_url)
+settings.set("api.provider", "gemini")
+settings.set("api.model_id", "gemini-3.1-pro-preview:thinking")
+settings.set("api.api_key", GEMINI_API_KEY)
 
 shared = {
     "apps": APP_SERVICES,
@@ -231,9 +268,27 @@ async def select_service_and_fault_class(apps: list[str], fault_classes: list[in
 
 
 @node
+async def create_batch(apps: list[str], fault_classes: list[int]):
+    """Populate shared['items'] with all (service_name, fault_class) combinations."""
+    items = [
+        {"service_name": app, "fault_class": fc}
+        for app in apps
+        for fc in fault_classes
+    ]
+    return {"items": items[::-1]}
+
+
+@node
 async def start_fault_injector(service_name: str, fault_class: int, uuid_value: str):
     _run_git("checkout", "master", "-f", cwd=REPO_ROOT)
     branch_name = f"fault-{service_name}-{fault_class}-{uuid_value}"
+    
+    res = glob.glob(str(CURRENT_DIR / "fault-vault" / f"fault-{service_name}-{fault_class}-*/FAULT.md"))
+    content = "Here are the faults that already exist, try to create a new fault that is different from the ones that already exist:\n"
+    for r in res:
+        content += f"FAULT: {Path(r).parent.name}\n"
+        content += Path(r).read_text()
+        content += "\n"
     return {
         "messages": [
             {
@@ -241,7 +296,8 @@ async def start_fault_injector(service_name: str, fault_class: int, uuid_value: 
                 "content": (
                     f"You are a fault-injector for the {service_name} service. "
                     f"You are tasked with introducing a fault into the codebase. "
-                    f"The fault class is {fault_class}. The fault is {FAULT_CLASS_DESCRIPTIONS[fault_class]}."
+                    f"The fault class is {fault_class}. The fault is {FAULT_CLASS_DESCRIPTIONS[fault_class]}. \n"
+                    f"{content}"
                 )
             }
         ],
@@ -254,14 +310,20 @@ async def check_fault_injector(cwd: str, messages: list[dict]):
     # check if FAULT.md exists, and there are no uncommitted changes (in the worktree)
     feedback = ""
     cwd = Path(cwd)
-    print(cwd / "FAULT.md", "does it exist?", (cwd / "FAULT.md").exists())
     if not (cwd / "FAULT.md").exists():
         feedback += "FAULT.md does not exist\n"
+    if not (cwd / "INCIDENT.md").exists():
+        feedback += "INCIDENT.md does not exist\n"
     r = _run_git("status", "--porcelain", cwd=cwd)
-    changes = [line for line in r.stdout.splitlines() if "FAULT.md" not in line]
+    changes = [
+        line.replace("?? ", "")
+        for line in r.stdout.splitlines()
+        if not line.strip().endswith(".md")
+    ]
     print("CHANGES: ", changes)
     if not (r.returncode != 0 or changes):
-        feedback += "There are no changes to commit besides FAULT.md\n"
+        print("no changes to commit")
+        feedback += f"There are no changes to commit besides {' and '.join(changes)}\n"
     if feedback:
         print("FEEDBACK: ", feedback)
         messages.append({
@@ -279,7 +341,9 @@ async def end_fault_injector(branch_name: str, cwd: str):
     fault_vault_dir = CURRENT_DIR / "fault-vault" / branch_name
     fault_vault_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(worktree_root / "FAULT.md", fault_vault_dir / "FAULT.md")
+    shutil.copy(worktree_root / "INCIDENT.md", fault_vault_dir / "INCIDENT.md")
     os.remove(worktree_root / "FAULT.md")
+    os.remove(worktree_root / "INCIDENT.md")
     git_commit_and_format_patch(branch_name, patch_out_path, repo_root=worktree_root)
     delete_result = await work_tree_service.delete_worktree(
         cwd=str(REPO_ROOT),
@@ -290,23 +354,72 @@ async def end_fault_injector(branch_name: str, cwd: str):
         raise RuntimeError(f"Failed to remove worktree: {delete_result.message}")
 
 
-async def main(batch: bool = False):
-    select_service = random.choice(APP_SERVICES)
-    fault_id = random.choice([2, 3, 4])
+@node(batch=True)
+async def batch_inject_fault(service_name: str, fault_class: int):
+    """Batch node: for each (service_name, fault_class) create a worktree, run the agent, and store the fault."""
     uuid_value = str(uuid.uuid4())
-    branch_name = f"fault-{select_service}-{fault_id}-{uuid_value}"
+    branch_name = f"fault-{service_name}-{fault_class}-{uuid_value}"
     worktree_path = WORKTREES_DIR / branch_name
-    agent = await create_agent(REPO_ROOT, str(worktree_path), branch_name)
+    agent = await create_agent(REPO_ROOT, worktree_path, branch_name)
     shared_state = {
         "cwd": str(worktree_path),
-        "service_name": select_service,
-        "fault_class": fault_id,
+        "service_name": service_name,
+        "fault_class": fault_class,
         "uuid_value": uuid_value,
     }
-    print(f"Injecting fault {fault_id} into {select_service} with UUID {shared_state['uuid_value']}")
+    print(
+        f"[BATCH] Injecting fault {fault_class} into {service_name} "
+        f"with UUID {shared_state['uuid_value']}"
+    )
     await agent.call(shared_state)
-    print("Fault injection complete")
+    print(f"[BATCH] Fault injection complete for {service_name}, class {fault_class}")
+    return {"service_name": service_name, "fault_class": fault_class}
+
+@trace_flow(flow_name="single-fault-generator-execution-flow")
+class _TracedFlow(AsyncFlow):
+    def __init__(self, start):
+        super().__init__(start=start)
+
+# Flow wiring: create_batch >> batch_inject_fault
+create_batch >> batch_inject_fault
+fault_batch_flow = _TracedFlow(start=create_batch)
+
+
+async def main(batch: bool = False):
+    if not batch:
+        # Inject all possible (service, fault_id) combinations
+        for select_service in APP_SERVICES:
+            for fault_id in [2, 3, 4]:
+                uuid_value = str(uuid.uuid4())
+                branch_name = f"fault-{select_service}-{fault_id}-{uuid_value}"
+                worktree_path = WORKTREES_DIR / branch_name
+                agent = await create_agent(REPO_ROOT, worktree_path, branch_name)
+                shared_state = {
+                    "cwd": str(worktree_path),
+                    "service_name": select_service,
+                    "fault_class": fault_id,
+                    "uuid_value": uuid_value,
+                }
+                print(f"Injecting fault {fault_id} into {select_service} with UUID {shared_state['uuid_value']}")
+                SESSION_ID = str(uuid.uuid4())
+                
+                with tracer.start_as_current_span("single-fault-generator-execution-flow-session-" + SESSION_ID):
+                    with using_attributes(session_id=SESSION_ID):
+                        await agent.call(shared_state)
+                
+                print(f"Fault injection complete for {select_service}, fault_id {fault_id}")
+        return
+
+    # Batch mode: create items in a node, then run batch_inject_fault via a flow
+    raise Exception("Batch mode is not supported yet")
+    shared = {
+        "apps": APP_SERVICES,
+        "fault_classes": [2, 3, 4],
+    }
+    print("[BATCH] Starting batch injection flow")
+    await fault_batch_flow.run_async(shared)
+    print("[BATCH] All batch fault injections complete via flow")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(batch=False))

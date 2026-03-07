@@ -54,13 +54,29 @@ class TreeSitterLoader:
                 def import_resolver_class():
                     return None
                 from .queries.toml import QUERY
+            #case "html":
+            #    from tree_sitter_html import language
+
+            #    def import_resolver_class():
+            #        return None
+            #    from .queries.html import QUERY
+            #case "css":
+            #    from tree_sitter_css import language
+
+            #    def import_resolver_class():
+            #        return None
+            #    from .queries.css import QUERY
             case _:
                 logging.error(f"Unsupported language: {ext}")
                 return None
-        lang_ptr = Language(language())
-        parser = Parser(lang_ptr)
-        query = Query(lang_ptr, QUERY)
-        cursor = QueryCursor(query)
+        try:
+            lang_ptr = Language(language())
+            parser = Parser(lang_ptr)
+            query = Query(lang_ptr, QUERY)
+            cursor = QueryCursor(query)
+        except Exception as e:
+            raise Exception(f"Error loading parser: {e} at ext: {ext}") from e
+            
         return dict(parser=parser, cursor=cursor, import_resolver=import_resolver_class())
 
 

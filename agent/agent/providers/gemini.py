@@ -5,6 +5,7 @@ from anthropic.types.message_param import MessageParam
 from google import genai
 from google.genai import types
 
+from agent.message_utils import paths_not_json_serializable
 from agent.providers.base import ApiHandler
 from agent.providers.formatters.gemini_format import convert_to_gemini_messages
 from agent.providers.models import GEMINI_DEFAULT_MODEL_ID, GEMINI_MODELS
@@ -88,6 +89,9 @@ class GeminiHandler(ApiHandler):
             client_kwargs["http_options"] = {"api_endpoint": base_url}
 
         self.client = genai.Client(**client_kwargs, **kwargs)
+        # Gemini 3+ requires thought_signature on function call parts when round-tripping history.
+        # Capture from any part during stream; inject when converting messages (Roo-Code pattern).
+        self._last_thought_signature: Optional[bytes] = None
 
     async def create_message(
         self,
@@ -107,10 +111,21 @@ class GeminiHandler(ApiHandler):
         Yields:
             StreamChunk objects containing usage, text, reasoning, or grounding data
         """
+        bad_paths = paths_not_json_serializable(messages, "messages")
+        if bad_paths:
+            raise TypeError(
+                "Messages are not JSON-serializable at the following paths (e.g. SerializationIterator or Pydantic model): "
+                + ", ".join(bad_paths)
+            )
         config = self.get_model()
         model_id = config["id"]
-        # Convert messages to Gemini format
-        contents = convert_to_gemini_messages(messages)
+        # Convert messages to Gemini format; inject last round's thought_signature for tool calls (Roo-Code pattern)
+        include_thought_signatures = bool(kwargs.get("tools"))
+        contents = convert_to_gemini_messages(
+            messages,
+            last_thought_signature=self._last_thought_signature,
+            include_thought_signatures=include_thought_signatures,
+        )
         # print("converted contents")
         # print(contents)
 
@@ -155,6 +170,10 @@ class GeminiHandler(ApiHandler):
                     # Process content parts
                     if candidate.content and candidate.content.parts:
                         for part in candidate.content.parts:
+                            # Capture thought_signature from any part for next request (Roo-Code pattern)
+                            thought_sig = getattr(part, "thought_signature", None)
+                            if thought_sig is not None and include_thought_signatures:
+                                self._last_thought_signature = thought_sig
                             # Check if this is a thinking/reasoning part
                             if hasattr(part, "thought") and part.thought:
                                 if part.text:
@@ -167,6 +186,7 @@ class GeminiHandler(ApiHandler):
                                     id=f"call_{uuid4().hex[:12]}",
                                     name=func_call.name,
                                     input=dict(func_call.args) if func_call.args else {},
+                                    thought_signature=self._last_thought_signature,
                                 )
                             else:
                                 # Regular content
@@ -389,15 +409,18 @@ class GeminiHandler(ApiHandler):
     def get_model(self) -> ModelInfo:
         is_thinking = self.model_id.endswith(":thinking")
         _model_id = self.model_id.replace(":thinking", "")
-        _id = _model_id if _model_id in GEMINI_MODELS else GEMINI_DEFAULT_MODEL_ID
-        info = GEMINI_MODELS[_id]
-        params = get_model_params(format="gemini", model_id=_id, model=info, settings=self.kwargs)
+        if _model_id not in GEMINI_MODELS:
+            raise ValueError(f"Model {_model_id} not found in Gemini models")
+        info = GEMINI_MODELS[_model_id]
+        params = get_model_params(format="gemini", model_id=_model_id, model=info, settings=self.kwargs)
         data = {
-            "id": _id.replace(":thinking", "") if is_thinking else _id,
+            "id": _model_id,
             **info,
             **params,
         }
         if is_thinking:
+            if data.get("reasoning") is None:
+                data["reasoning"] = {}
             data["reasoning"].update({"include_thoughts": True})
         else:
             data["reasoning"] = None

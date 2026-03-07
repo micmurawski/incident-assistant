@@ -4,6 +4,7 @@ from typing import Any, Callable
 
 from framework import (AsyncBatchNode, AsyncNode, AsyncParallelBatchNode,
                        BatchNode, Node)
+from framework.utils import _deep_materialize
 from pydantic import BaseModel, Field, create_model
 
 # Sentinel: return NO_APPEND from a batch node to exclude that item from the stored results list.
@@ -139,6 +140,7 @@ def __reduce_shared(self, shared, prep_res, exec_res):
 
     if not isinstance(state, dict):
         raise ValueError(f"Error at {self.__name__}: state must be a dict, got {type(state)}")
+    state = _deep_materialize(state)
     shared.update(state)
     return action
 
@@ -246,7 +248,7 @@ def node(
             post_fn = create_batch_post(results_key, results_type) if is_batch else __reduce_shared
             if is_method_or_cls:
                 def exec_sync(self, prep_res):
-                    return func(self.owner, **input_model(**prep_res).model_dump())
+                    return func(self.owner, **_deep_materialize(input_model(**prep_res).model_dump()))
                 node_class = type(
                     class_name,
                     (node_class,),
@@ -266,7 +268,7 @@ def node(
                 (node_class,),
                 {
                     "__init__": make_node_init(False),
-                    "exec": lambda self, prep_res: func(**input_model(**prep_res).model_dump()),
+                    "exec": lambda self, prep_res: func(**_deep_materialize(input_model(**prep_res).model_dump())),
                     "prep": prep_fn,
                     "post": post_fn,
                     "__doc__": func.__doc__,
@@ -290,9 +292,10 @@ def node(
             post_fn = create_batch_post(results_key, results_type) if is_batch else __reduce_shared
 
             async def exec_async(self, prep_res):
+                kwargs = _deep_materialize(input_model(**prep_res).model_dump())
                 if is_method_or_cls:
-                    return await func(self.owner, **input_model(**prep_res).model_dump())
-                return await func(**input_model(**prep_res).model_dump())
+                    return await func(self.owner, **kwargs)
+                return await func(**kwargs)
 
             async def post(self, shared, prep_res, exec_res):
                 return post_fn(self, shared, prep_res, exec_res)

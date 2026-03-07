@@ -7,7 +7,6 @@ from uuid import uuid4
 from framework import AsyncFlow
 from framework.decorators import node
 from framework.viz import build_mermaid, to_png
-from openinference.instrumentation import Tool
 
 from agent.context_ops import SummarizeResponse, summarize_conversation
 from agent.providers.base import ApiHandler
@@ -39,47 +38,6 @@ adjectives = [
     "deciding",
     "discombobulating",
 ]
-
-
-def _to_plain(obj: Any) -> Any:
-    """Recursively convert a Pydantic model / iterator / typed-dict to a plain dict/list."""
-    if obj is None or isinstance(obj, (str, int, float, bool)):
-        return obj
-    if hasattr(obj, "model_dump"):
-        return _to_plain(obj.model_dump())
-    if isinstance(obj, dict):
-        return {k: _to_plain(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_to_plain(item) for item in obj]
-    try:
-        return [_to_plain(item) for item in obj]
-    except Exception:
-        return str(obj)
-
-
-def _materialize_messages(messages: list) -> list[dict]:
-    """
-    Deep-materialize message content from Pydantic's SerializationIterator
-    and model objects. Ensures every message is a plain dict with content
-    that is either a str or a list of plain dicts (valid content blocks).
-    Drops messages whose content is not valid conversation content (e.g.
-    usage metadata dicts).
-    """
-    result = []
-    for msg in messages:
-        if isinstance(msg, dict):
-            m = dict(msg)
-        else:
-            m = {"role": getattr(msg, "role", "user"), "content": getattr(msg, "content", "")}
-        content = m.get("content")
-        if content is None or isinstance(content, str):
-            result.append(m)
-            continue
-        if isinstance(content, dict) and content.get("type") == "usage":
-            continue
-        m["content"] = _to_plain(content)
-        result.append(m)
-    return result
 
 
 class ChunkProxyIterator[T]:
@@ -255,9 +213,6 @@ class LLMAgent(ABC):
         **kwargs: dict[str, Any],
     ) -> tuple[dict[str, list[AnthropicMessage]], str]:
         kwargs = {**kwargs.pop("kwargs", {}), **kwargs}
-        # Materialize messages to consume any one-shot SerializationIterators
-        # injected by Pydantic's model_dump() in the @node decorator pipeline.
-        messages = _materialize_messages(messages)
 
         iter: ChunkProxyIterator = await self.create_message(
             messages=messages,
@@ -279,20 +234,19 @@ class LLMAgent(ABC):
         self,
         messages: List[AnthropicMessage],
     ) -> List[AnthropicMessage]:
-
         total_tokens = await self.api_handler.count_tokens(messages)
-        model_info = await self.api_handler.get_model()
-        if model_info["max_tokens"] >= total_tokens:
+        model_info = self.api_handler.get_model()
+        if model_info["max_tokens"] <= total_tokens:
             result: SummarizeResponse = await summarize_conversation(
                 messages=messages,
                 api_handler=self.api_handler,
                 system_prompt=self.system_prompt,
                 prev_context_tokens=total_tokens,
             )
-            if result.error:
-                pr_red(f"Error summarizing context: {result.error}", flush=True)
+            if result.get("error"):
+                pr_red(f"Error summarizing context: {result['error']}", flush=True)
             else:
-                return {"messages": result.messages}
+                return {"messages": result["messages"]}
         return {"messages": messages}, "default"
 
     def bind_tools(self, tools: Any, tool_format_arguments: dict[str, Any] = None):

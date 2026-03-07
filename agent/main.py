@@ -1,26 +1,13 @@
 import asyncio
 
-from agent.cache_manager import CacheManager
-from agent.scanner import (CodeParser, DirectoryScanner, Embedder, Ignore,
-                           VectorStoreClient)
+from agent.file_ops import FileOpsManager
 
 
 async def main():
-    embedder = Embedder()
-    vector_store_client = VectorStoreClient()
-    code_parser = CodeParser()
-    cache_manager = CacheManager()
-    ignore_config = Ignore()
-    scanner = DirectoryScanner(
-        embedder,
-        vector_store_client,
-        code_parser,
-        cache_manager,
-        ignore_config,
-    )
-    result = await scanner.scan_directory("/Users/micmur/GITHUB/o8s/agent/agent")
-    print(result)
-
+    file_ops_manager = FileOpsManager.get_instance("/Users/micmur/GITHUB/o8s/services/robot-shop-worktrees/fault-web-4-e44494a0-3799-4b62-9983-c87b45c50d93")
+    result = await file_ops_manager.list_files_tool(".", False)
+    for line in result.content.split("\n"):
+        print(line)
 
 if __name__ == "__main__":
     asyncio.run(main())

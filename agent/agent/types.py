@@ -52,6 +52,8 @@ class ToolUse(TypedDict, total=False):
     id: str
     name: str
     input: dict[str, Any]
+    # Gemini: opaque signature for thought; must be passed back when sending tool_use in history
+    thought_signature: Optional[bytes]
 
 
 class ToolResult(TypedDict, total=False):

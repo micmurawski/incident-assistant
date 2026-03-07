@@ -1,5 +1,6 @@
 import asyncio
 import os
+import shlex
 from typing import Annotated, Optional
 
 from agent.settings import SettingsManager
@@ -11,8 +12,8 @@ MAX_OUTPUT_LENGTH = 4000
 @tool(tags=["cli"])
 async def bash(
     command: Annotated[
-        list[str],
-        "The CLI command to run as a list, e.g., ['ls', '-la'] or ['npm', 'run', 'dev']. Each argument must be a separate list item; do not concatenate into one string.",
+        str,
+        "The CLI command to run as a string, e.g., 'ls -la' or 'npm run dev'. Each argument must be a separate string; do not concatenate into one string.",
     ],
     cwd: Annotated[Optional[str], "Working directory for command execution (default: {cwd})"] = None,
     env: Annotated[Optional[dict[str, str]], "Environment variables for the process (default: None)"] = None,
@@ -26,16 +27,17 @@ async def bash(
     - Avoid scripts when a single command does the job.
 
     **Usage:**  
-    bash(command=['your', 'command', 'args'], cwd="optional/path")
+    bash(command='your command args', cwd="optional/path")
 
     **Examples:**  
-    bash(command=['npm', 'run', 'dev'])  
-    bash(command=['ls', '-la'], cwd="/home/user/projects")
+    bash(command='npm run dev')  
+    bash(command='ls -la', cwd="/home/user/projects")
     """
     cwd = cwd or SettingsManager.get_instance().get("workspace.path") or os.getcwd()
     try:
+        args = shlex.split(command.strip())
         process = await asyncio.create_subprocess_exec(
-            *command,
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,

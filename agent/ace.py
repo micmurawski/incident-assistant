@@ -1,9 +1,10 @@
 import json
 import os
-from dataclasses import dataclass, field
+import asyncio
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, List
-from uuid import uuid4, uuid5
+from uuid import uuid5
 
 import yaml
 from anthropic import Anthropic
@@ -21,13 +22,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE_PATH = os.path.join(BASE_DIR, "incidents")
 POST_MORTEM_SEPARATOR = "--POST-MORTEM-- \n\n"
 
+
 @dataclass
 class IncidentData:
     """The raw input: what the agent sees when the pager goes off."""
     id: str
     description: str
     metrics_dashboard: str  # Text representation of graphs (e.g., "CPU: 99%, DB_Conn: 0")
-
 
     def to_markdown(self) -> str:
         return f"""
@@ -37,18 +38,19 @@ class IncidentData:
         ## Metrics Dashboard: \n
         {self.metrics_dashboard} \n
         """
-        
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "description": self.description,
             "metrics_dashboard": self.metrics_dashboard,
         }
-        
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "IncidentData":
         return cls(id=data["id"], description=data["description"], metrics_dashboard=data["metrics_dashboard"])
-            
+
+
 @dataclass
 class PostMortem:
     """The Ground Truth: provided after the fact to teach the agent."""
@@ -64,7 +66,7 @@ class PostMortem:
         ## Successful Fix
         {self.successful_fix}
         """
-        
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -82,7 +84,7 @@ class IncidentTask(Task):
     """An ACE Task that tracks incident data, post-mortem, and performance."""
     incident_data: IncidentData = None
     post_mortem: PostMortem = None
-    
+
     @property
     def ttr(self) -> float | None:
         """Time To Resolution in seconds."""
@@ -93,6 +95,7 @@ class IncidentTask(Task):
     @property
     def success(self) -> bool:
         return self.status == TaskStatus.DONE
+
 
 @dataclass
 class RunbookRule:
@@ -119,14 +122,14 @@ class Incident:
         # save to file
         file_path = f"incidents/incident_{self.id}.yaml"
         num_of_lines = len(yaml_text.split("\n"))
-        
+
         with open(file_path, "w") as f:
             f.write(yaml_text)
-        
-        embedding_result: EmbedderResponse = await embedder.create_embeddings([yaml_text]) 
+
+        embedding_result: EmbedderResponse = await embedder.create_embeddings([yaml_text])
         embedding = embedding_result.embeddings[0]
         point_id = str(uuid5(QDRANT_INCIDENT_NAMESPACE, self.id))
-        
+
         point = PointStruct(
             id=point_id,
             vector=embedding,
@@ -188,7 +191,7 @@ class IncidentManagerACE:
         ACTOR: Responds to an incident using the evolved playbook.
         """
         print(f"\n🚀 [ACTOR] Responding to incident {incident.id}...")
-        
+
         system = f"""You are an Expert SRE Agent. 
         Use the following Evolving Runbook (SOP) to mitigate the incident.
         
@@ -201,14 +204,14 @@ class IncidentManagerACE:
         
         What is your mitigation plan?
         """
-        
+
         plan = self._call(system, user)
         return plan
 
     # 2. REFLECTOR: The Post-Mortem Analyst
     async def analyze_performance(self, task: IncidentTask) -> str:
         print(f"\n🔍 [REFLECTOR] Analyzing performance for {task.incident_data.id}...")
-        
+
         system = """You are an Expert Incident Analyst. 
         Compare the Agent's performance against the HISTORICAL POST-MORTEM (Ground Truth).
         
@@ -230,7 +233,7 @@ class IncidentManagerACE:
         Success: {task.success}
         TTR: {task.ttr} seconds
         """
-        
+
         # Search for similar incidents for context
         try:
             similar_incidents: list[VectorStoreSearchResult] = await self.vector_store.search(task.incident_data.description, collection_name="incidents")
@@ -304,8 +307,6 @@ class IncidentManagerACE:
 
 # --- EXECUTION SCENARIO ---
 
-import asyncio
-
 
 async def run_scenario():
     ace_manager = IncidentManagerACE()
@@ -331,11 +332,11 @@ async def run_scenario():
     # Create a task representing the resolution effort
     task_1 = IncidentTask(
         id="task_001",
-        status=TaskStatus.DONE, # Assume it was successful for training
+        status=TaskStatus.DONE,  # Assume it was successful for training
         incident_data=inc_1,
         post_mortem=pm_1,
         created_at=datetime.now(),
-        resolved_at=datetime.now() # Mock TTR
+        resolved_at=datetime.now()  # Mock TTR
     )
 
     print("\n--- 📂 TRAINING ON HISTORICAL INCIDENT 1 ---")

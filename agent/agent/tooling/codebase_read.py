@@ -1,13 +1,30 @@
 import os
+from functools import wraps
 from typing import Annotated, Optional, TypedDict
 
 from agent.code_index.code_index_search_service import CodeIndexSearchService
 from agent.code_index.models import VectorStoreSearchResult
-from agent.file_ops import FileOpsManager, FileOpsResult
+from agent.file_ops import (FileOpsError, FileOpsManager, FileOpsResult,
+                            PathNotAllowedError)
 from agent.telemetry_service import get_telemetry_service
 from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
 
 logging = get_telemetry_service()
+
+HANDLED_ERRORS = (PathNotAllowedError,)
+
+
+def _handle_path_not_allowed(func):
+    """Private decorator: catch PathNotAllowedError and return ToolResult(result=None, error=str(e))."""
+
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except HANDLED_ERRORS as e:
+            return ToolResult(result=None, error=str(e))
+
+    return wrapper
 
 
 @tool(tags=["read", "codebase"])
@@ -73,7 +90,7 @@ async def get_list_code_definitions_names_descriptions(
     get_list_code_definitions_names_descriptions(path="src")
     """
     res: FileOpsResult = await FileOpsManager.get_instance(cwd).list_code_definitions_names_descriptions(path)
-    return ToolResult(result=res.diff, error=res.error)
+    return ToolResult(result=res.diff, error=str(res.error))
 
 
 @tool(tags=["codebase", "read"])
@@ -101,9 +118,9 @@ async def read_file(
     """
     try:
         res: FileOpsResult = await FileOpsManager.get_instance(cwd).read_file(path, start_line, end_line)
-        return ToolResult(result=res.content, error=res.error)
-    except Exception as e:
+    except FileOpsError as e:
         return ToolResult(result=None, error=str(e))
+    return ToolResult(result=res.content, error=str(res.error) if res.error else None)
 
 
 class FileContent(TypedDict):
@@ -128,10 +145,11 @@ async def read_multiple_files(
     read_multiple_files(files=[{"path": "src/main.ts", "start_line": 1, "end_line": 10}, {"path": "src/utils.ts", "start_line": 1, "end_line": 10}])
     """
     res: FileOpsResult = await FileOpsManager.get_instance(cwd).read_multiple_files(files)
-    return ToolResult(result=res.content, error=res.error)
+    return ToolResult(result=res.content, error=str(res.error) if res.error else None)
 
 
 @tool(tags=["codebase", "read"])
+@_handle_path_not_allowed
 async def search_file(
     cwd: Hidden[str],
     path: Annotated[
@@ -153,10 +171,11 @@ async def search_file(
     search_file(path=".", regex=".*", file_pattern="*.ts")
     """
     res: FileOpsResult = await FileOpsManager.get_instance(cwd).search_file(path, regex, file_pattern)
-    return ToolResult(result=res.content, error=res.error)
+    return ToolResult(result=res.content, error=str(res.error) if res.error else None)
 
 
 @tool(tags=["codebase", "read"])
+@_handle_path_not_allowed
 async def list_files(
     cwd: Hidden[str],
     path: Annotated[
@@ -181,7 +200,7 @@ async def list_files(
     list_files(path=".", recursive=true)
     """
     res: FileOpsResult = await FileOpsManager.get_instance(cwd).list_files_tool(path, bool(recursive))
-    return ToolResult(result=res.content, error=res.error)
+    return ToolResult(result=res.content, error=str(res.error) if res.error else None)
 
 
 CodebaseReadTools = Tools(

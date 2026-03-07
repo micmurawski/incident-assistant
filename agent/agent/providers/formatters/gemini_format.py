@@ -1,4 +1,5 @@
-from typing import Any, Dict, List
+import base64
+from typing import Any, Dict, List, Optional
 
 from google.genai import types
 
@@ -92,9 +93,18 @@ def _build_tool_use_map(messages: List[dict]) -> Dict[str, str]:
     return mapping
 
 
+def _decode_thought_signature(thought_sig: Any) -> Optional[bytes]:
+    """Decode thought_signature from block (bytes or base64 str) to bytes."""
+    if thought_sig is None:
+        return None
+    return thought_sig if isinstance(thought_sig, bytes) else base64.b64decode(thought_sig)
+
+
 def _convert_anthropic_message(
     message: dict,
     tool_use_map: Dict[str, str],
+    last_thought_signature: Optional[Any] = None,
+    include_thought_signatures: bool = False,
 ) -> types.Content:
     """Convert a materialized Anthropic message dict to Gemini format."""
     role = message.get("role", "user")
@@ -103,6 +113,7 @@ def _convert_anthropic_message(
     gemini_role = "model" if role == "assistant" else "user"
     # Convert content
     parts = []
+    injected_sig: Optional[bytes] = None
     if isinstance(content, str):
         if content:
             parts.append(types.Part(text=content))
@@ -115,13 +126,27 @@ def _convert_anthropic_message(
                 if text:
                     parts.append(types.Part(text=text))
             elif block_type == "tool_use":
-                # Convert to Gemini FunctionCall
-                parts.append(types.Part(
-                    function_call=types.FunctionCall(
+                # Convert to Gemini FunctionCall; include thought_signature (required for Gemini 3+ tools)
+                part_kw: dict = {
+                    "function_call": types.FunctionCall(
                         name=_get_block_field(block, "name"),
                         args=_get_block_field(block, "input", {}),
                     )
-                ))
+                }
+                thought_sig = _decode_thought_signature(_get_block_field(block, "thought_signature", None))
+                if thought_sig is not None:
+                    injected_sig = thought_sig
+                    part_kw["thought_signature"] = thought_sig
+                elif include_thought_signatures and last_thought_signature is not None:
+                    # Inject handler-stored signature when block has none (Roo-Code pattern)
+                    sig_bytes = _decode_thought_signature(last_thought_signature)
+                    if sig_bytes is not None:
+                        injected_sig = injected_sig or sig_bytes
+                        part_kw["thought_signature"] = sig_bytes
+                elif injected_sig is not None:
+                    # Reuse first part's signature for parallel function calls
+                    part_kw["thought_signature"] = injected_sig
+                parts.append(types.Part(**part_kw))
             elif block_type == "tool_result":
                 # Convert to Gemini FunctionResponse
                 tool_use_id = _get_block_field(block, "tool_use_id", "")
@@ -148,11 +173,17 @@ def _convert_anthropic_message(
     return types.Content(role=gemini_role, parts=parts)
 
 
-def convert_to_gemini_messages(anthropic_messages: List[AnthropicMessage]) -> List[types.Content]:
+def convert_to_gemini_messages(
+    anthropic_messages: List[AnthropicMessage],
+    last_thought_signature: Optional[Any] = None,
+    include_thought_signatures: bool = False,
+) -> List[types.Content]:
     """Convert Anthropic message format to Gemini format.
 
     Materializes all message content up-front so that one-shot iterators
     (SerializationIterator from Pydantic round-trips) are consumed exactly once.
+    When include_thought_signatures is True, injects last_thought_signature into
+    assistant tool_use parts that lack it (required for Gemini 3+ tool round-trip).
     """
     # Step 1: Materialize all content ONCE — this is critical for one-shot iterators
     materialized = _materialize_messages(anthropic_messages)
@@ -160,6 +191,11 @@ def convert_to_gemini_messages(anthropic_messages: List[AnthropicMessage]) -> Li
     tool_use_map = _build_tool_use_map(materialized)
     # Step 3: Convert each message using the already-materialized content
     return [
-        _convert_anthropic_message(message, tool_use_map)
+        _convert_anthropic_message(
+            message,
+            tool_use_map,
+            last_thought_signature=last_thought_signature,
+            include_thought_signatures=include_thought_signatures,
+        )
         for message in materialized
     ]

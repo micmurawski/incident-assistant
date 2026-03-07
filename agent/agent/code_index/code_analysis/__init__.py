@@ -3,14 +3,15 @@ import os
 import re
 from typing import Any
 
-from tree_sitter import Node
+from tree_sitter import Node, Parser, QueryCursor
 
 from agent.code_index.code_analysis.loader import TreeSitterLoader
-from agent.code_index.code_analysis.markdown_parser import parse_markdown
+from agent.code_index.code_analysis.markdown_parser import (MockNode,
+                                                            parse_markdown)
 from agent.constants import DEFAULT_MIN_COMPONENT_LINES_VALUE, EXTENSIONS
 
 
-def process_captures(captures: list[dict[str, list[Node]]], lines: list[str], language: str) -> str:
+def process_captures(captures: dict[str, list[Node | MockNode]], lines: list[str], language: str) -> str:
     needs_html_filtering = language in ["jsx", "tsx"]
 
     def is_not_html_element(line: str) -> bool:
@@ -28,7 +29,8 @@ def process_captures(captures: list[dict[str, list[Node]]], lines: list[str], la
 
     captures = sorted([(name, nodes) for name, nodes in captures.items()], key=lambda x: x[1][0].start_point.row)
     processed_lines: set[str] = set()
-
+    nodes: list[Node | MockNode]
+    name: str
     for name, nodes in captures:
         if "definition" not in name and "name" not in name:
             continue
@@ -42,7 +44,8 @@ def process_captures(captures: list[dict[str, list[Node]]], lines: list[str], la
             end_line = definition_capture.end_point.row
             line_count = end_line - start_line + 1
 
-            if line_count < DEFAULT_MIN_COMPONENT_LINES_VALUE:
+            min_lines = 1 if language == "markdown" else DEFAULT_MIN_COMPONENT_LINES_VALUE
+            if line_count < min_lines:
                 continue
 
             line_key = f"{start_line}--{end_line}"
@@ -84,6 +87,15 @@ def parse_source_code_definitions(file_path: str) -> str:
     file_exists = os.path.exists(file_path)
     if not file_exists:
         raise FileNotFoundError(f"File not found: {file_path}")
+    if os.path.isdir(file_path):
+        content = ""
+        for file in os.listdir(file_path):
+            res = parse_source_code_definitions(os.path.join(file_path, file))
+            if res:
+                content += res + "\n"
+        if content != "":
+            content = "# Directory: " + file_path + "\n" + content
+        return content
     ext = os.path.splitext(file_path)[1]
 
     if ext not in EXTENSIONS:
@@ -91,21 +103,19 @@ def parse_source_code_definitions(file_path: str) -> str:
 
     if ext == ".md" or ext == ".markdown":
         content = open(file_path, "rb").read()
-        lines = content.split("\n")
         markdown_captures = parse_markdown(content)
-
+        lines = content.decode("utf-8").split("\n")
         markdown_definitions = process_captures(markdown_captures, lines, "markdown")
         if markdown_definitions:
             return f"# {os.path.basename(file_path)}\n{markdown_definitions}"
-        return
+        return None
 
     lang = ext[1:]
-    try:
-        parsers = TreeSitterLoader.load_parser(lang)
-        print(parsers)
-    except Exception:
+    
+    parsers = TreeSitterLoader.load_parser(lang)
+    if parsers is None:
         return f"Unsupported file type: {file_path}"
-
+    
     definitions = parse_file(file_path, parsers, lang)
     if definitions:
         return f"# {os.path.basename(file_path)}\n{definitions}"
@@ -114,11 +124,11 @@ def parse_source_code_definitions(file_path: str) -> str:
 
 def parse_file(file_path: str, parsers: dict[str, Any], lang: str) -> str:
     content = open(file_path, "rb").read()
-    cursor = parsers["cursor"]
-    parser = parsers["parser"]
+    cursor: QueryCursor = parsers["cursor"]
+    parser: Parser = parsers["parser"]
     try:
         tree = parser.parse(content)
-        captures = cursor.captures(tree.root_node) if tree else []
+        captures: dict[str, list[Node]] = cursor.captures(tree.root_node) if tree else {}
         lines = content.decode("utf-8").split("\n")
         return process_captures(captures, lines, lang)
     except Exception as e:

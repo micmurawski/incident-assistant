@@ -6,8 +6,8 @@ import uuid
 from typing import Any, TypeVar
 
 from framework import AsyncFlow
-from openinference.instrumentation import using_attributes, using_session
-from openinference.instrumentation.openai import OpenAIInstrumentor
+from openinference.instrumentation import using_attributes
+from openinference.instrumentation.anthropic import AnthropicInstrumentor
 from opentelemetry import trace
 from phoenix.otel import register
 
@@ -26,20 +26,16 @@ T = TypeVar('T')
 os.environ["PHOENIX_CLIENT_HEADERS"] = "Authorization=Bearer YOUR_API_KEY"
 os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:6006"
 
-tracer_provider = register(auto_instrument=True)
 SESSION_ID = str(uuid.uuid4())
-# To this (manual registration):
-
+tracer_provider = register(project_name="agent-tracing")
 
 # Get a tracer for your application
 tracer = trace.get_tracer(__name__)
 
-tracer_provider = register(
-    auto_instrument=True
-)
 
-OpenAIInstrumentor().instrument(tracer_provider=tracer_provider)
-
+#OpenAIInstrumentor().instrument(tracer_provider=tracer_provider)
+AnthropicInstrumentor().instrument(tracer_provider=tracer_provider)
+#GoogleGenAIInstrumentor().instrument(tracer_provider=tracer_provider)
 
 class Agent(LLMAgent):
     def __init__(self, name: str, system_prompt: str, api_settings: dict[str, Any] | None = None):
@@ -59,16 +55,19 @@ class Agent(LLMAgent):
 
 
 async def main():
-    with tracer.start_as_current_span("agent-execution-flow-session-" + SESSION_ID) as span:
+    with tracer.start_as_current_span("agent-execution-flow-session-" + SESSION_ID):
         with using_attributes(session_id=SESSION_ID):
             settings = SettingsManager.get_instance()
             # memory_service = MemoryService()
             from agent.tooling.planning import PlanningTools
             tools = PlanningTools | CodebaseReadTools
             settings.get("workspace.path") or os.getcwd()
-            settings.set("api.provider", "gemini")
-            settings.set("api.model_id", "gemini-2.5-flash")
-            settings.set("api.api_key", "AIzaSyAmNJmXdpejo2LQWDowsqsK3bvMhZSXfII")
+            #settings.set("api.provider", "gemini")
+            #settings.set("api.model_id", "gemini-2.5-flash")
+            #settings.set("api.api_key", "AIzaSyAmNJmXdpejo2LQWDowsqsK3bvMhZSXfII")
+            settings.set("api.provider", "minimax")
+            settings.set("api.model_id", "MiniMax-M2.5")
+            settings.set("api.api_key", os.getenv("MINIMAX_API_KEY"))
 
             agent_manager = Agent(
                 name="agent manager",
@@ -87,7 +86,7 @@ async def main():
                 assignee="helpful_agent",
                 assigner="human",
                 conversation=[
-                    {"role": "user", "content": "Hey, may ask devops if we are using java and kubernetes in our production services?"}],
+                    {"role": "user", "content": "Can you list files in the current directory?"}],
             )
 
             shared = {
@@ -96,6 +95,7 @@ async def main():
                 "file_ops_manager": agent_manager.file_ops_manager,
                 "task": goal,
                 "llm": agent_manager,
+                "cwd": agent_manager.cwd,
             }
 
             devops_tools = CliTools | CodebaseReadTools | PlanningTools.select({"update_todo"})
@@ -117,7 +117,7 @@ async def main():
             agent_manager.register()
             print(agent_manager.get_flow_graph())
             agent_manager.get_flow_graph_png("agent_manager.png")
-            # await agent_manager.call(shared)
+            await agent_manager.call(shared)
             # span.set_status(StatusCode.OK)
 
 if __name__ == "__main__":

@@ -1,0 +1,4 @@
+# Incident: Catalogue Service Reporting Healthy While Database Operations Fail
+
+## Description
+Users are reporting intermittent failures and slow responses when browsing products and categories in the Robot Shop. Despite these issues, the catalogue service's health checks are consistently reporting a healthy status. This discrepancy is causing confusion and making it difficult to diagnose the root cause of the product browsing problems. Metrics show an increase in error rates for database-related endpoints and potentially elevated resource usage on the catalogue service, such as an increasing number of open connections to the MongoDB instance.

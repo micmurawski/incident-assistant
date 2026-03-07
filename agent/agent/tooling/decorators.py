@@ -2,7 +2,7 @@ import asyncio
 import inspect
 import json
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from inspect import Parameter
 from typing import (Annotated, Any, Callable, Coroutine, GenericAlias, Literal,
                     Optional, TypedDict, TypeVar, Union, _AnnotatedAlias,
@@ -39,7 +39,7 @@ ToolFormat = Literal["openai", "ollama", "anthropic", "gemini"]
 @dataclass
 class ToolResult:
     result: Any
-    error: Optional[str] = None
+    error: Optional[str] = field(default=lambda: None)
 
     @property
     def is_success(self) -> bool:
@@ -440,12 +440,14 @@ class Tools(AsyncNode):
             messages.append(
                 AnthropicMessage(
                     role="user",
-                    content=[{
-                        "type": "tool_result",
-                        "tool_use_id": tool_use_id,
-                        "content": tool_result.result if tool_result.is_success else tool_result.error,
-                        "is_error": not tool_result.is_success,
-                    }],
+                    content=[
+                        dict(
+                            type="tool_result",
+                            tool_use_id=tool_use_id,
+                            content=tool_result.result if tool_result.is_success else tool_result.error,
+                            is_error=not tool_result.is_success,
+                        )
+                    ]
                 )
             )
         return {"messages": messages}

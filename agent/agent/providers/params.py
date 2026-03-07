@@ -203,7 +203,6 @@ def get_model_params(
         "reasoning_budget": reasoning_budget,
         "verbosity": verbosity,
     }
-
     # Provider-specific return dict
     if format == "anthropic":
         result = {"format": format, **params}

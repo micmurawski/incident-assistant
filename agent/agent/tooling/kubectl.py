@@ -1,4 +1,5 @@
 import asyncio
+import shlex
 from typing import Annotated, Optional
 
 from agent.tooling._utils import run_cli_command
@@ -603,7 +604,7 @@ async def kubectl_delete_pod(
 async def kubectl_exec(
     pod_name: Annotated[str, "Name of the pod"],
     namespace: Annotated[str, "Namespace of the pod"],
-    command: Annotated[list[str], "Command to run inside the container, e.g. ['cat', '/etc/config/app.yaml']"],
+    command: Annotated[str, "Command to run inside the container, e.g. 'cat /etc/config/app.yaml'"],
     container: Annotated[Optional[str], "Container name (required for multi-container pods)"] = None,
 ) -> ToolResult:
     """
@@ -621,7 +622,7 @@ async def kubectl_exec(
     args = ["exec", pod_name, "-n", namespace]
     if container:
         args += ["-c", container]
-    args += ["--"] + command
+    args += ["--"] + shlex.split(command.strip())   # split the command into a list of arguments
     return await _run_kubectl(args, timeout=30)
 
 
@@ -1000,3 +1001,132 @@ KubectlMutateTools = Tools(tools=[
     # Networking
     kubectl_port_forward,
 ])
+
+
+# ===========================================================================
+# SMALL KUBECTL — single flexible tool (saves context vs many specialized tools)
+# ===========================================================================
+
+@tool(tags=["kubectl", "small"])
+async def kubectl(
+    args: Annotated[
+        str,
+        "Subcommand and flags passed to kubectl, e.g. ['get','pods','-n','default'] or ['logs','my-pod','-n','default','--tail=100']. See tool description for all documented behaviors.",
+    ],
+    timeout: Annotated[int, "Command timeout in seconds (default 30; use 60+ for logs/apply/delete)"] = 30,
+) -> ToolResult:
+    """
+    Run kubectl with the given subcommand and arguments. One tool for all read and mutate operations.
+    Pass args as a list, e.g. ['get','pods','-n','default'] or ['logs','my-pod','-n','default','--tail=200'].
+
+    --- READ (observability) ---
+
+    - cluster-info
+      Get high-level cluster information (control plane address, CoreDNS). Use first to verify cluster connectivity.
+
+    - get nodes [-o wide] [--show-labels]
+      List all nodes with status, roles, age, version, and resource capacity. Essential for node health and available resources.
+
+    - top nodes
+      Show CPU and memory usage per node (requires metrics-server). Identify resource-constrained or overloaded nodes.
+
+    - get namespaces
+      List all namespaces with status and age. Discover namespaces before querying workloads.
+
+    - get pods [-n NS] [--all-namespaces] [-l label] [--field-selector ...] [--sort-by ...] -o wide
+      List pods with status, restarts, age, node, IP. High restart counts or non-Running phases signal problems.
+      Field selectors: status.phase=Pending (stuck scheduling), status.phase=Failed, status.phase!=Running.
+
+    - logs <pod> -n <ns> [--tail=N] [-c container] [--previous] [--since=10m]
+      Retrieve container logs. Use --previous for crashed container instance; --since for time window (e.g. 10m).
+
+    - top pods [-n NS] [--all-namespaces] [--sort-by=cpu|memory]
+      CPU and memory per pod (requires metrics-server). Find resource-hungry pods or memory leaks.
+
+    - get pod <name> -n <ns> (-o jsonpath=... for container status)
+      Detailed container status: ready/started, restart counts, last termination reason, image. Diagnose CrashLoopBackOff, ImagePullBackOff, probe failures.
+
+    - get events [-n NS] [--all-namespaces] [--field-selector type=Warning] [--sort-by=.lastTimestamp]
+      Events sorted by time. First place for scheduling failures, probe failures, image pull errors, OOMKills, volume issues. Filter type=Warning for problems only.
+
+    - get deployments|statefulsets|daemonsets|jobs|cronjobs -o wide [-n NS]
+      Deployments: desired/ready/up-to-date/available (mismatch = rollout issue). StatefulSets: ready/desired (databases, caches). DaemonSets: desired/current/ready (one per node). Jobs/CronJobs: completions, duration, status.
+
+    - rollout status|history deployment|statefulset <name> -n <ns>
+      Status: whether rollout completed, in progress, or stalled. History: revision history for rollback.
+
+    - get services|endpoints|ingress|networkpolicies -o wide [-n NS]
+      Services: type, cluster IP, ports. Endpoints: pod IPs backing each service (empty = 503). Ingress: hosts, paths, backends. NetworkPolicies: traffic rules (misconfig = connectivity issues).
+
+    - describe <type> <name> [-n <ns>]
+      Detailed info: conditions, events, volumes, probes, resource limits, scheduling decisions. Primary deep-dive for unhealthy resources.
+
+    - get <type> <name> [-n <ns>] -o yaml
+      Full YAML manifest. Inspect spec, annotations, labels, env, volume mounts.
+
+    - get configmap <name> -n <ns> -o jsonpath={.data}
+      ConfigMap data. Verify application config, feature flags, connection strings.
+
+    - get pvc -o wide [-n NS]
+      PVCs with status, capacity, access modes, storage class. Pending PVCs block pod scheduling.
+
+    - auth can-i <verb> <resource> [-n NS]
+      Check if current kubeconfig identity has permission. Use before commands to avoid permission errors.
+
+    - get hpa -o wide [-n NS]
+      HorizontalPodAutoscalers: current/target metrics, replica counts. Check if HPAs scale correctly.
+
+    - api-resources [--sort-by=name]
+      List all resource types (built-in and CRDs). Discover installed types (e.g. Prometheus, Istio, cert-manager).
+
+    - get <resource> [name] [-n NS] [-l label] -o wide
+      Generic list for any resource type including CRDs. Fallback when no specialized tool exists.
+
+    --- MUTATE ---
+
+    - delete pod <name> -n <ns> [--grace-period=0]
+      Delete pod; controller recreates it. Force-restart misbehaving pod or clear CrashLoopBackOff. grace-period=0 for immediate.
+
+    - exec <pod> -n <ns> [-c container] -- <cmd>...
+      Run command in container. Inspect files, DNS (nslookup), env, volumes, health endpoint.
+
+    - scale deployment|statefulset|replicaset <name> --replicas=N -n <ns>
+      Scale to N replicas. Scale up/down or to 0 to stop workload.
+
+    - rollout restart|undo|pause|resume deployment|statefulset|daemonset <name> -n <ns> [--to-revision=N]
+      Restart: rolling restart (pick up ConfigMap/Secret changes). Undo: rollback to previous or --to-revision. Pause/Resume: halt or continue rollout.
+
+    - label|annotate <type> <name> key=val [key-= to remove] [-n <ns>] [--overwrite]
+      Labels: selectors, scheduling, policy. Annotations: config hints, Prometheus/Istio settings. Use --overwrite to replace.
+
+    - cordon|uncordon <node>
+      Cordon: mark node unschedulable (existing pods keep running). Use before drain. Uncordon: mark schedulable again.
+
+    - drain <node> [--ignore-daemonsets] [--timeout=300s] [--force] [--delete-emptydir-data]
+      Evict all pods from node for maintenance. Controllers reschedule. Cordon first. WARNING: disrupts node.
+
+    - patch <type> <name> -n <ns> --type strategic|merge|json -p '<json>'
+      Patch specific field (image, replicas, env) without full replace. Example: -p '{"spec":{"replicas":5}}'.
+
+    - delete <type> <name> -n <ns> [--grace-period=N]
+      Delete resource. WARNING: destructive (e.g. deleting Deployment removes all pods; PVC may lose data).
+
+    - create namespace <name>
+      Create namespace for isolating workloads.
+
+    - create configmap <name> -n <ns> [--from-literal=KEY=val ...]
+      Create ConfigMap from literal key-value pairs. Consumed by pods as env or mounted files.
+
+    - create secret generic|docker-registry|tls <name> -n <ns> --from-literal=KEY=val ...
+      Create Secret (values base64-encoded). Use for passwords, API keys, certificates.
+
+    - port-forward <resource> <ports> -n <ns> (e.g. pod/my-pod 8080:80 or svc/my-svc 8080:80)
+      Forward local port to pod/svc/deploy. For cluster-internal dashboards, DBs, APIs. Starts background process; kill to stop.
+
+    Note: apply -f - (YAML from stdin) is not supported by this tool; use the dedicated kubectl_apply tool for that.
+    """
+    args = shlex.split(args.strip())
+    return await _run_kubectl(args, timeout=timeout)
+
+
+SmallKubeCtlTools = Tools(tools=[kubectl])

@@ -2,6 +2,8 @@ import json
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from anthropic import Anthropic, AsyncAnthropic
+from anthropic.resources.messages.messages import (
+    AsyncMessagesWithStreamingResponse, RawMessageStreamEvent)
 from anthropic.types.message_param import MessageParam as AnthropicMessageParam
 
 from agent.providers.base import ApiHandler
@@ -9,8 +11,27 @@ from agent.providers.models import ANTHROPIC_DEFAULT_MODEL_ID, ANTHROPIC_MODELS
 from agent.providers.params import get_model_params
 from agent.providers.settings import AnthropicSettings, ModelInfo
 from agent.providers.utils.cost import calculate_api_cost_anthropic
-from agent.types import (ReasoningChunk, StreamChunk, TextChunk, ToolUse,
-                         UsageChunk)
+from agent.types import StreamChunk
+
+
+def _plain_chunk(typ: str, **kwargs: Any) -> Dict[str, Any]:
+    """
+    Build a JSON-serializable chunk dict. Coerces SDK/iterator values to plain
+    types so chunks never contain SerializationIterator or Pydantic objects.
+    """
+    out: Dict[str, Any] = {"type": typ}
+    for k, v in kwargs.items():
+        if v is None:
+            continue
+        if isinstance(v, (str, int, float, bool)):
+            out[k] = v
+        elif isinstance(v, dict):
+            out[k] = dict(v)
+        elif isinstance(v, list):
+            out[k] = list(v)
+        else:
+            raise ValueError(f"Unsupported type: {type(v)}")
+    return out
 
 
 class AnthropicHandler(ApiHandler):
@@ -118,8 +139,8 @@ class AnthropicHandler(ApiHandler):
                         ],
                     }
                 )
-            elif isinstance(content, list):
-                # Add cache control to the last content block
+            elif isinstance(content, list) and content:
+                # Add cache control to the last content block (skip if content is empty)
                 new_content = content[:-1] + [{**content[-1], "cache_control": cache_control}]
                 cached_messages.append(
                     {
@@ -188,6 +209,7 @@ class AnthropicHandler(ApiHandler):
         # Add beta headers if needed
         extra_headers = {}
         # Create streaming response
+        stream: AsyncMessagesWithStreamingResponse[RawMessageStreamEvent]
         stream = await self.client.messages.create(
             **request_params,
             extra_headers=extra_headers if extra_headers else None,
@@ -206,6 +228,7 @@ class AnthropicHandler(ApiHandler):
         current_tool_use_json: str = ""
 
         # Process stream chunks
+        chunk: RawMessageStreamEvent
         async for chunk in stream:
             if chunk.type == "message_start":
                 # Extract usage information
@@ -216,8 +239,8 @@ class AnthropicHandler(ApiHandler):
                 cache_write_tokens += getattr(usage, "cache_creation_input_tokens", 0)
                 cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0)
 
-                yield UsageChunk(
-                    type="usage",
+                yield _plain_chunk(
+                    "usage",
                     input_tokens=usage.input_tokens,
                     output_tokens=usage.output_tokens,
                     cache_write_tokens=getattr(usage, "cache_creation_input_tokens", None),
@@ -227,8 +250,8 @@ class AnthropicHandler(ApiHandler):
             elif chunk.type == "message_delta":
                 # Output token updates
                 if chunk.usage.output_tokens:
-                    yield UsageChunk(
-                        type="usage",
+                    yield _plain_chunk(
+                        "usage",
                         input_tokens=0,
                         output_tokens=chunk.usage.output_tokens,
                     )
@@ -245,26 +268,26 @@ class AnthropicHandler(ApiHandler):
                     # Add line break between multiple blocks
                     if chunk.index > 0:
                         if block.type == "thinking":
-                            yield ReasoningChunk(type="reasoning", text="\n")
+                            yield _plain_chunk("reasoning", text="\n")
                         elif block.type == "text":
-                            yield TextChunk(type="text", text="\n")
+                            yield _plain_chunk("text", text="\n")
 
-                    # Yield initial content
+                    # Yield initial content (coerce to str in case SDK returns non-plain type)
                     if block.type == "thinking":
-                        yield ReasoningChunk(type="reasoning", text=block.thinking)
+                        yield _plain_chunk("reasoning", text=str(block.thinking or ""))
                     elif block.type == "text":
-                        yield TextChunk(type="text", text=block.text)
+                        yield _plain_chunk("text", text=str(block.text or ""))
 
             elif chunk.type == "content_block_delta":
                 delta = chunk.delta
 
                 if delta.type == "thinking_delta":
-                    yield ReasoningChunk(type="reasoning", text=delta.thinking)
+                    yield _plain_chunk("reasoning", text=str(delta.thinking or ""))
                 elif delta.type == "text_delta":
-                    yield TextChunk(type="text", text=delta.text)
+                    yield _plain_chunk("text", text=str(delta.text or ""))
                 elif delta.type == "input_json_delta":
-                    # Accumulate partial JSON for tool use input
-                    current_tool_use_json += delta.partial_json
+                    # Accumulate partial JSON for tool use input (coerce to str)
+                    current_tool_use_json += str(delta.partial_json or "")
 
             elif chunk.type == "content_block_stop":
                 # If we were accumulating a tool use block, emit it now
@@ -274,8 +297,8 @@ class AnthropicHandler(ApiHandler):
                     except json.JSONDecodeError:
                         tool_input = {}
 
-                    yield ToolUse(
-                        type="tool_use",
+                    yield _plain_chunk(
+                        "tool_use",
                         id=current_tool_use_id,
                         name=current_tool_use_name,
                         input=tool_input,
@@ -296,8 +319,8 @@ class AnthropicHandler(ApiHandler):
                 cache_read_tokens,
             )
 
-            yield UsageChunk(
-                type="usage",
+            yield _plain_chunk(
+                "usage",
                 input_tokens=0,
                 output_tokens=0,
                 total_cost=total_cost,
@@ -344,7 +367,7 @@ class AnthropicHandler(ApiHandler):
 
             response = await self.client.messages.count_tokens(
                 model=config["id"],
-                messages=[{"role": "user", "content": content}],
+                messages=content,
             )
 
             return response.input_tokens

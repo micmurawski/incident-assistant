@@ -28,6 +28,8 @@ class Ignore:
             self.patterns.extend(lines)
 
     def ignores(self, path: str) -> bool:
+        if not self.patterns:
+            return False
         return any(fnmatch(path, pattern) for pattern in self.patterns)
 
 
@@ -95,9 +97,12 @@ async def execute_ripgrep(ripgrep_path: str, args: list[str], limit: int, cwd: s
 
 async def list_files_with_ripgrep(ripgrep_path: str, dir_path: str, recursive: bool, limit: int) -> list[str]:
     args = build_args(dir_path, recursive)
-    files = await execute_ripgrep(ripgrep_path, args, limit)
-    base = os.path.abspath(dir_path)
-    return [os.path.relpath(f, base) for f in files]
+    # Run ripgrep with cwd=dir_path so it only searches inside the target directory.
+    # Otherwise it uses the process CWD and returns paths that, when made relative to
+    # dir_path, become like ../../../.DS_Store (parent directories "above" the target).
+    files = await execute_ripgrep(ripgrep_path, args, limit, cwd=dir_path)
+    # With cwd=dir_path, ripgrep outputs paths relative to dir_path; keep them that way.
+    return [os.path.normpath(f) for f in files]
 
 
 async def find_gitignore_files(start_path: str) -> list[str]:

@@ -10,8 +10,8 @@ from typing import List, Optional
 
 
 @dataclass
-class Position:
-    """Position information for a node"""
+class Point:
+    """Point information for a node"""
 
     row: int
 
@@ -20,8 +20,8 @@ class Position:
 class MockNode:
     """Interface to mimic tree-sitter node structure"""
 
-    start_position: Position
-    end_position: Position
+    start_point: Point
+    end_point: Point
     text: str
     parent: Optional["MockNode"] = None
 
@@ -35,7 +35,7 @@ class MockCapture:
     pattern_index: int
 
 
-def parse_markdown(content: bytes) -> List[MockCapture]:
+def parse_markdown(content: bytes) -> dict[str, list[MockNode]]:
     """
     Parse a markdown file and extract headers and section line ranges
 
@@ -46,10 +46,10 @@ def parse_markdown(content: bytes) -> List[MockCapture]:
         A list of mock captures compatible with tree-sitter captures
     """
     if not content or content.strip() == "":
-        return []
+        return {}
 
     lines = content.decode("utf-8").split("\n")
-    captures: List[MockCapture] = []
+    captures: dict[str, list[MockNode]] = {}
 
     # Regular expressions for different header types
     atx_header_regex = re.compile(r"^(#{1,6})\s+(.+)$")
@@ -68,13 +68,11 @@ def parse_markdown(content: bytes) -> List[MockCapture]:
             text = atx_match.group(2).strip()
 
             # Create a mock node for this header
-            node = MockNode(start_position=Position(row=i), end_position=Position(row=i), text=text)
+            node = MockNode(start_point=Point(row=i), end_point=Point(row=i), text=text)
 
-            # Create a mock capture for this header
-            captures.append(MockCapture(node=node, name=f"name.definition.header.h{level}", pattern_index=0))
-
-            # Also create a definition capture
-            captures.append(MockCapture(node=node, name=f"definition.header.h{level}", pattern_index=0))
+            # Append to list so multiple headers of same level are all kept
+            captures.setdefault(f"name.definition.header.h{level}", []).append(node)
+            captures.setdefault(f"definition.header.h{level}", []).append(node)
 
             continue
 
@@ -85,13 +83,10 @@ def parse_markdown(content: bytes) -> List[MockCapture]:
                 text = lines[i - 1].strip()
 
                 # Create a mock node for this header
-                node = MockNode(start_position=Position(row=i - 1), end_position=Position(row=i), text=text)
+                node = MockNode(start_point=Point(row=i - 1), end_point=Point(row=i), text=text)
 
-                # Create a mock capture for this header
-                captures.append(MockCapture(node=node, name="name.definition.header.h1", pattern_index=0))
-
-                # Also create a definition capture
-                captures.append(MockCapture(node=node, name="definition.header.h1", pattern_index=0))
+                captures.setdefault("name.definition.header.h1", []).append(node)
+                captures.setdefault("definition.header.h1", []).append(node)
 
                 continue
 
@@ -100,42 +95,32 @@ def parse_markdown(content: bytes) -> List[MockCapture]:
                 text = lines[i - 1].strip()
 
                 # Create a mock node for this header
-                node = MockNode(start_position=Position(row=i - 1), end_position=Position(row=i), text=text)
+                node = MockNode(start_point=Point(row=i - 1), end_point=Point(row=i), text=text)
 
-                # Create a mock capture for this header
-                captures.append(MockCapture(node=node, name="name.definition.header.h2", pattern_index=0))
-
-                # Also create a definition capture
-                captures.append(MockCapture(node=node, name="definition.header.h2", pattern_index=0))
+                captures.setdefault("name.definition.header.h2", []).append(node)
+                captures.setdefault("definition.header.h2", []).append(node)
 
                 continue
 
-    # Calculate section ranges
-    # Sort captures by their start position
-    captures.sort(key=lambda x: x.node.start_position.row)
+    # Flatten to (name, node) and sort by node position so we can set section end = next header start - 1
+    flat: list[tuple[str, MockNode]] = []
+    for name, nodes in captures.items():
+        for node in nodes:
+            flat.append((name, node))
+    flat.sort(key=lambda x: x[1].start_point.row)
 
-    # Group captures by header (name and definition pairs)
-    header_captures: List[List[MockCapture]] = []
-    for i in range(0, len(captures), 2):
-        if i + 1 < len(captures):
-            header_captures.append([captures[i], captures[i + 1]])
+    # Set each node's end_point to the line before the next header (or end of file)
+    for idx, (_, node) in enumerate(flat):
+        if idx + 1 < len(flat):
+            node.end_point.row = flat[idx + 1][1].start_point.row - 1
         else:
-            header_captures.append([captures[i]])
+            node.end_point.row = len(lines) - 1
 
-    # Update end positions for section ranges
-    for i, header_pair in enumerate(header_captures):
-        if i < len(header_captures) - 1:
-            # End position is the start of the next header minus 1
-            next_header_start_row = header_captures[i + 1][0].node.start_position.row
-            for capture in header_pair:
-                capture.node.end_position.row = next_header_start_row - 1
-        else:
-            # Last header extends to the end of the file
-            for capture in header_pair:
-                capture.node.end_position.row = len(lines) - 1
-
-    # Flatten the grouped captures back to a single array
-    return [capture for header_pair in header_captures for capture in header_pair]
+    # Build dict expected by process_captures: name -> list of nodes
+    header_captures: dict[str, list[MockNode]] = {}
+    for name, node in flat:
+        header_captures.setdefault(name, []).append(node)
+    return header_captures
 
 
 def format_markdown_captures(captures: List[MockCapture], min_section_lines: int = 4) -> Optional[str]:
@@ -158,8 +143,8 @@ def format_markdown_captures(captures: List[MockCapture], min_section_lines: int
     # Process only the definition captures (every other capture)
     for i in range(1, len(captures), 2):
         capture = captures[i]
-        start_line = capture.node.start_position.row
-        end_line = capture.node.end_position.row
+        start_line = capture.node.start_point.row
+        end_line = capture.node.end_point.row
 
         # Only include sections that span at least min_section_lines lines
         section_length = end_line - start_line + 1

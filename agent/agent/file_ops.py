@@ -3,21 +3,43 @@ import os
 import re
 from dataclasses import dataclass, field
 from functools import cmp_to_key
-from typing import Literal, Optional
+from typing import Literal
 
 from agent.code_index.code_analysis import parse_source_code_definitions
 from agent.list_files import Ignore, list_files, regex_search_files
 from agent.utils.formatting import create_pretty_patch
 
 
+class FileOpsError(Exception):
+    pass
+
+
+class PathDoesNotExistError(FileOpsError):
+    pass
+
+
+class PathIsNotFileError(FileOpsError):
+    pass
+
+
+class PathNotAllowedError(FileOpsError):
+    """Raised when a path resolves outside the allowed CWD (whitelist)."""
+
+    def __init__(self, path: str, cwd: str, message: str | None = None):
+        self.path = path
+        self.cwd = cwd
+        msg = message or f"Path not allowed: {path!r} is outside CWD {cwd!r}. Operations are restricted to the current working directory."
+        super().__init__(msg)
+
+
 @dataclass
 class FileOpsResult:
     path: str
-    content: str | None = field(default=None)
-    diff: str | None = field(default=None)
+    content: str | None = field(default_factory=lambda: None)
+    diff: str | None = field(default_factory=lambda: None)
     status: Literal["success", "error"] = field(default="success")
-    error: Optional[Exception] = field(default=None)
-    reason: Optional[str] = field(default=None)
+    error: Exception | None = field(default_factory=lambda: None)
+    reason: str | None = field(default_factory=lambda: None)
 
     @property
     def changed(self) -> bool:
@@ -41,6 +63,11 @@ def add_line_numbers(content: list[str], start_line: int = 1, separator: str = "
 
 
 class FileOpsManager:
+    """
+    File operations scoped to a single CWD. All path arguments are resolved and must
+    lie under the CWD; paths outside it (e.g. absolute paths like /Users/other or
+    relative like ../../etc) raise PathNotAllowedError and are forbidden.
+    """
     _instances = {}
 
     def __new__(cls, cwd: str):
@@ -71,9 +98,29 @@ class FileOpsManager:
         self.ignore = Ignore()
         self._initialized = True
 
+    def _resolve_within_cwd(self, path: str) -> str:
+        """
+        Resolve path to an absolute path that must lie under self.cwd.
+        Raises PathNotAllowedError if the path would escape the CWD (e.g. absolute path
+        like /Users/micmur or relative path like ../../etc).
+        """
+        if not path or path.strip() == "":
+            raise PathNotAllowedError(path, self.cwd, "Path cannot be empty.")
+        resolved_cwd = os.path.realpath(self.cwd)
+        if os.path.isabs(path):
+            resolved_path = os.path.realpath(path)
+        else:
+            resolved_path = os.path.realpath(os.path.join(self.cwd, path))
+        if resolved_path != resolved_cwd and not resolved_path.startswith(resolved_cwd + os.sep):
+            raise PathNotAllowedError(path, self.cwd)
+        return resolved_path
+
     async def list_code_definitions_names_descriptions(self, path: str) -> FileOpsResult:
-        full_path = os.path.join(self.cwd, path)
-        content = await parse_source_code_definitions(full_path)
+        full_path = self._resolve_within_cwd(path)
+        try:
+            content = await parse_source_code_definitions(full_path)
+        except FileNotFoundError as e:
+            return FileOpsResult(path=path, content=None, error=str(e))
         return FileOpsResult(path=path, content=content)
 
     async def read_file(
@@ -83,13 +130,13 @@ class FileOpsManager:
         end_line: str | None = None,
         number_lines: bool = True,
     ) -> FileOpsResult:
-        full_path = os.path.join(self.cwd, path)
+        full_path = self._resolve_within_cwd(path)
         path_exists = os.path.exists(full_path)
         is_file = os.path.isfile(full_path)
         if not path_exists:
-            raise Exception(f"The path: {path} does not exists.")
+            raise PathDoesNotExistError(f"The path: {path} does not exists.")
         if not is_file:
-            raise Exception(f"The path {path} is not file.")
+            raise PathIsNotFileError(f"The path {path} is not file.")
 
         lines = open(full_path).read().splitlines(keepends=True)
         start_line = start_line or 1
@@ -107,16 +154,22 @@ class FileOpsManager:
     async def read_multiple_files(self, files: list[dict]) -> FileOpsResult:
         content = ""
         for file in files:
-            result = await self.read_file(file["path"], file.get("start_line"), file.get("end_line"))
-            content += f"# {file['path']}\n {result.content}\n ----\n"
-
+            try:
+                result = await self.read_file(file["path"], file.get("start_line"), file.get("end_line"))
+                content += f"# {file['path']}\n {result.content}\n ----\n"
+            except FileOpsError as e:
+                return FileOpsResult(
+                    path=self.cwd,
+                    error=e,
+                )
         return FileOpsResult(
             path=self.cwd,
             content=content,
         )
 
     async def list_files_tool(self, path: str, recursive: bool) -> FileOpsResult:
-        full_path = os.path.join(self.cwd, path)
+        full_path = self._resolve_within_cwd(path)
+        
         if not os.path.exists(full_path):
             return FileOpsResult(
                 path=path,
@@ -125,8 +178,6 @@ class FileOpsManager:
             )
 
         files, did_hit_limit = await list_files(full_path, recursive, 200)
-        # files = list(filter(lambda f: self.ignore.ignores(f), files))
-
         result = self._format_files_list(full_path, files, did_hit_limit)
         return FileOpsResult(
             path=path,
@@ -178,7 +229,7 @@ class FileOpsManager:
         start_line: int | None = None,
         end_line: int | None = None,
     ) -> FileOpsResult:
-        full_path = os.path.join(self.cwd, path)
+        full_path = self._resolve_within_cwd(path)
         path_exists = os.path.exists(full_path)
         is_file = os.path.isfile(full_path)
 
@@ -190,7 +241,16 @@ class FileOpsManager:
 
         # Build regex flags correctly as an integer bitmask
         flags = re.IGNORECASE if ignore_case else 0
-        search_pattern = search if use_regex else escape_regex(search)
+        if use_regex:
+            try:
+                re.compile(search)
+                search_pattern = search
+            except re.error:
+                # Pattern invalid (e.g. LLM passed literal code with use_regex=True).
+                # Fall back to literal match so search_and_replace still succeeds.
+                search_pattern = escape_regex(search)
+        else:
+            search_pattern = escape_regex(search)
 
         # Read original content once so we can generate a proper diff later
         with open(full_path, "r") as f:
@@ -210,7 +270,7 @@ class FileOpsManager:
             before_lines = lines[0:start]
             after_lines = lines[end + 1:]
 
-            target_lines = lines[start : end + 1]
+            target_lines = lines[start: end + 1]
             segment = "\n".join(target_lines)
             modified_segment = re.sub(search_pattern, replace, segment, flags=flags)
             modified_lines = modified_segment.split("\n")
@@ -231,7 +291,7 @@ class FileOpsManager:
         new_content: str,
         create_if_not_exists: bool = True,
     ) -> FileOpsResult:
-        full_path = os.path.join(self.cwd, path)
+        full_path = self._resolve_within_cwd(path)
 
         if new_content.startswith("```"):
             new_content = "\n".join(new_content.split("\n")[1:])
@@ -269,7 +329,7 @@ class FileOpsManager:
         content: str,
         line: int,
     ) -> FileOpsResult:
-        full_path = os.path.join(self.cwd, path)
+        full_path = self._resolve_within_cwd(path)
         path_exists = os.path.exists(full_path)
         is_file = os.path.isfile(full_path)
         if not path_exists:
@@ -312,11 +372,13 @@ class FileOpsManager:
         )
 
     async def search_file(self, path: str, regex: str, file_pattern: str | None = None) -> FileOpsResult:
-        result = await regex_search_files(self.cwd, path, regex, file_pattern)
-        return FileOpsResult(
-            path=path,
-            content=result,
-        )
+        # Restrict search to a path under CWD (forbids e.g. path=/Users/micmur)
+        try:
+            full_path = self._resolve_within_cwd(path)
+            result = await regex_search_files(self.cwd, full_path, regex, file_pattern)
+            return FileOpsResult(path=path, content=result)
+        except PathNotAllowedError as e:
+            return FileOpsResult(path=path, content=None, error=e)
 
 
 def escape_regex(reg: str) -> str:

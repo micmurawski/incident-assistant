@@ -4,6 +4,30 @@ from typing import Any, Callable
 from framework import Node
 from pydantic import BaseModel, Field, create_model
 
+# JSON-serializable primitives; anything else (dict/list we recurse; iterators/models we materialize).
+_JSON_PRIMITIVES = (type(None), str, int, float, bool)
+
+
+def _deep_materialize(obj: Any) -> Any:
+    """
+    Recursively convert to JSON-serializable plain dict/list/primitive.
+    Consumes one-shot iterators (e.g. Pydantic SerializationIterator) and
+    converts Pydantic models via model_dump(). Use when writing to shared or
+    when passing prep result into node exec so nodes never see non-serializable types.
+    """
+    if obj is None or isinstance(obj, _JSON_PRIMITIVES):
+        return obj
+    if hasattr(obj, "model_dump"):
+        return _deep_materialize(obj.model_dump())
+    if isinstance(obj, dict):
+        return {k: _deep_materialize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_deep_materialize(x) for x in obj]
+    try:
+        return [_deep_materialize(x) for x in obj]
+    except TypeError:
+        return str(obj)
+
 
 def signature_to_field_definitions(parameters: dict[str, inspect.Parameter]) -> dict:
     res = {}
@@ -61,7 +85,7 @@ def shallow_deserialize(model: BaseModel) -> dict:
     return res
 
 
-def __reduce_shared(self, shared, prep_res, exec_res) ->  str:
+def __reduce_shared(self, shared, prep_res, exec_res) -> str:
     if isinstance(exec_res, tuple) and len(exec_res) > 1:
         state, action = exec_res
     else:
@@ -72,6 +96,8 @@ def __reduce_shared(self, shared, prep_res, exec_res) ->  str:
 
     if not isinstance(state, dict):
         raise ValueError(f"Error at {self.__name__}: state must be a dict, got {type(state)}")
+    # Never store non-JSON-serializable values (e.g. SerializationIterator, Pydantic models) in shared.
+    state = _deep_materialize(state)
     shared.update(state)
     return action
 
@@ -104,7 +130,7 @@ def node(func=None, *, max_retries=1, wait=0):
             {
                 "__init__": lambda self, **kwargs: __init(self, max_retries=max_retries, wait=wait, **kwargs),
                 "_input_model": signature_to_input_model(f"{class_name}_input_model", signature),
-                "exec": lambda self, prep_res: func(**shallow_deserialize(self._input_model(**prep_res))),
+                "exec": lambda self, prep_res: func(**_deep_materialize(shallow_deserialize(self._input_model(**prep_res)))),
                 "prep": create_prep(signature),
                 "post": __reduce_shared,
                 "__doc__": func.__doc__,

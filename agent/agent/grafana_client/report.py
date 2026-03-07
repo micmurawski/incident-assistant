@@ -45,7 +45,7 @@ def format_status_report(
         Markdown string
     """
     lines = [
-        f"# App Status Report",
+        "# App Status Report",
         f"**Namespace:** `{namespace}` | **Window:** {window}",
         "",
     ]

@@ -1,8 +1,7 @@
 from agent.providers._anthropic import AnthropicHandler
-from agent.providers.settings import AnthropicSettings
+from agent.providers.models import MINIMAX_DEFAULT_MODEL_ID, MINIMAX_MODELS
 from agent.providers.params import get_model_params
-from agent.providers.models import MINIMAX_MODELS, MINIMAX_DEFAULT_MODEL_ID
-from agent.providers.settings import ModelInfo
+from agent.providers.settings import AnthropicSettings, ModelInfo
 
 
 class MiniMaxHandler(AnthropicHandler):

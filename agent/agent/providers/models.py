@@ -59,6 +59,7 @@ ANTHROPIC_MODELS = {
 GEMINI_DEFAULT_MODEL_ID = "gemini-2.5-flash"
 
 GEMINI_MODELS = {
+    
     "gemini-2.5-flash:thinking": {
         "max_tokens": 65_535,
         "context_window": 1_048_576,
@@ -70,6 +71,34 @@ GEMINI_MODELS = {
         "supports_reasoning_budget": True,
         "required_reasoning_budget": True,
     },
+	"gemini-3.1-pro-preview": {
+		"max_tokens": 65_536,
+		"context_window": 1_048_576,
+		"supports_images": True,
+		"supports_prompt_cache": True,
+		"supports_reasoning_effort": ["low", "medium", "high"],
+		"reasoning_effort": "low",
+		"supports_temperature": True,
+		"default_temperature": 1,
+		"input_price": 4.0,
+		"output_price": 18.0,
+		"cache_reads_price": 0.4,
+		"cache_writes_price": 4.5,
+		"tiers": [
+			{
+				"context_window": 200_000,
+				"input_price": 2.0,
+				"output_price": 12.0,
+				"cache_reads_price": 0.2,
+			},
+			{
+				"context_window": math.inf,
+				"input_price": 4.0,
+				"output_price": 18.0,
+				"cache_reads_price": 0.4,
+			},
+		],
+	},
     "gemini-2.5-flash": {
         "max_tokens": 64_000,
         "context_window": 1_048_576,
