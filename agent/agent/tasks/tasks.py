@@ -143,7 +143,9 @@ class Task:
         return deepest
 
     def get_conversation_with_swapped_roles(self) -> list[dict]:
-        return swap_roles_in_conversation(self.conversation)
+        return swap_roles_in_conversation(
+            get_conversation_text_messages(self.conversation.copy())
+        )
 
 
 def swap_roles_in_conversation(conversation: list[dict]) -> list[dict]:
@@ -166,6 +168,23 @@ def swap_roles_in_conversation(conversation: list[dict]) -> list[dict]:
         # Otherwise leave unchanged
         swapped.append(msg_copy)
     return swapped
+
+
+def get_conversation_text_messages(conversation: list[dict]) -> list[dict]:
+    selected_messages = []
+    for msg in filter(lambda msg: msg.get("role") in ("user", "assistant"), conversation):
+        content = msg.get("content")
+        if isinstance(content, str):
+            selected_messages.append(msg)
+        elif isinstance(content, list):
+            selected_content = []
+            for item in content:
+                if item.get("type") == "text":
+                    selected_content.append(item)
+            if selected_content:
+                msg["content"] = selected_content
+                selected_messages.append(msg)
+    return selected_messages
 
 
 if __name__ == "__main__":

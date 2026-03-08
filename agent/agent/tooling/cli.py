@@ -4,7 +4,7 @@ import shlex
 from typing import Annotated, Optional
 
 from agent.settings import SettingsManager
-from agent.tooling.decorators import ToolResult, Tools, tool
+from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
 
 MAX_OUTPUT_LENGTH = 4000
 
@@ -17,10 +17,11 @@ async def bash(
     ],
     cwd: Annotated[Optional[str], "Working directory for command execution (default: {cwd})"] = None,
     env: Annotated[Optional[dict[str, str]], "Environment variables for the process (default: None)"] = None,
+    base_env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Run a CLI command using a list of arguments. Use for system operations or terminal commands related to the user's task.
-    
+
     - Use only safe, clear commands.
     - Prefer relative paths for consistency.
     - Use `cwd` to specify a working directory if needed.
@@ -33,6 +34,10 @@ async def bash(
     bash(command='npm run dev')  
     bash(command='ls -la', cwd="/home/user/projects")
     """
+    env = {} if env is None else env
+    base_env = {} if base_env is None else base_env
+    env = {**env, **base_env}
+
     cwd = cwd or SettingsManager.get_instance().get("workspace.path") or os.getcwd()
     try:
         args = shlex.split(command.strip())

@@ -18,7 +18,15 @@ def trace_flow(
     Session id is read from shared["session_id"] at flow start.
 
     Usage:
+        @trace_flow
+        class MyFlow(AsyncFlow):
+            ...
+
         @trace_flow()
+        class MyFlow(AsyncFlow):
+            ...
+
+        @trace_flow("CustomName")
         class MyFlow(AsyncFlow):
             ...
     """
@@ -26,6 +34,10 @@ def trace_flow(
         if inspect.isclass(flow_class_or_func):
             return _trace_flow_class(flow_class_or_func, flow_name)
         return _trace_flow_function(flow_class_or_func, flow_name)
+
+    # Support @trace_flow without call: first arg is the class/function being decorated
+    if flow_name is not None and (inspect.isclass(flow_name) or inspect.isfunction(flow_name)):
+        return decorator(flow_name)
     return decorator
 
 

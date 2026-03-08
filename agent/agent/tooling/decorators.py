@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from inspect import Parameter
@@ -8,11 +9,10 @@ from typing import (Annotated, Any, Callable, Coroutine, GenericAlias, Literal,
                     Optional, TypedDict, TypeVar, Union, _AnnotatedAlias,
                     _TypedDictMeta)
 
+from agent.types import AnthropicMessage
 from framework import AsyncNode
 from framework.generic_messages import select_tools_use
 from framework.utils import __reduce_shared as reduce_shared
-
-from agent.types import AnthropicMessage
 
 # Mapping from Python types to OpenAPI schema types
 CLASS_TO_TYPE = {
@@ -516,11 +516,23 @@ class Tools(AsyncNode):
             raise ValueError(f"Unknown format: {format}")
 
         # Substitute formatted placeholders if requested
-        if format_kwargs:
-            txt = json.dumps(definitions)
-            for k, v in format_kwargs.items():
-                txt = txt.replace(f"{{{k}}}", v)
-            definitions = json.loads(txt)
+        if format_kwargs is None:
+            format_kwargs = {}
+
+        txt = json.dumps(definitions)
+        to_replace = set(re.findall(r"\{(\w+)\}", txt))
+        remaining_to_replace = to_replace.copy()
+        for k in to_replace:
+            v = format_kwargs.get(k, None)
+            print(f"Replacing {k} with {v}")
+            if v is None:
+                continue
+            txt = txt.replace(f"{{{k}}}", v)
+            remaining_to_replace.remove(k)
+            # After replacements, check if any unreplaced placeholders remain
+        if remaining_to_replace:
+            raise ValueError(f"Unresolved placeholders in tool definitions: {remaining_to_replace}")
+        definitions = json.loads(txt)
         return definitions
 
 

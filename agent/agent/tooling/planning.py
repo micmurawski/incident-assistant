@@ -1,6 +1,5 @@
-from typing import Annotated
+from typing import Annotated, Any
 
-from agent.llm import LLMAgent
 from agent.tasks.executor import TaskExecutor
 from agent.tasks.formatting import parse_markdown_checklist
 from agent.tasks.tasks import Task
@@ -11,28 +10,37 @@ from .decorators import Hidden, Tools, tool
 
 @tool(tags=["planning", "assign"])
 async def assign_task(
-    agent: Hidden[LLMAgent],
     task: Hidden[Task],
-    assignee: Annotated[str, "The slug of the mode to start the new task in (e.g., {available_agents})"],
+    assignee: Annotated[str, "The slug of an assignee to start the new task in (e.g., {available_agents})"],
     message: Annotated[str, "The initial user message or instructions for this new task."],
     todos: Annotated[str, "The initial todo list in markdown checklist format for the new task."],
+    shared_context: Hidden[dict[str, Any]] = None,
 ) -> ToolResult:
     """
     This will let you create a new task instance in the chosen mode using your provided message and initial todo list.
-
+    Your are able only to assign tasks to the following agents: {available_agents}
     Usage:
-    assign_task(assignee="coder", message="Implement user authentication", todos="[ ] Set up auth middleware\n[ ] Create login endpoint\n[ ] Add session management\n[ ] Write tests")
+    assign_task(assignee=<assignee_slug>, message="Implement user authentication", todos="[ ] Set up auth middleware\n[ ] Create login endpoint\n[ ] Add session management\n[ ] Write tests")
 
     Example:
-    assign_task(assignee="coder", message="Implement user authentication", todos="[ ] Set up auth middleware\n[ ] Create login endpoint\n[ ] Add session management\n[ ] Write tests")
+    assign_task(assignee=<assignee_slug>, message="Implement user authentication", todos="[ ] Set up auth middleware\n[ ] Create login endpoint\n[ ] Add session management\n[ ] Write tests")
     """
+    if shared_context is None:
+        shared_context = {}
 
-    return await TaskExecutor.assign_and_run(task=task, assigner_agent=agent, assignee=assignee, message=message, todos_str=todos, feedback_tools=Tools(tools=[provide_feedback]))
+    return await TaskExecutor.assign_and_run(
+        parent_task=task,
+        assigner=task.assignee,
+        assignee=assignee,
+        message=message,
+        todos_str=todos,
+        shared_context=shared_context,
+        feedback_tools=FeedbackTools,
+    )
 
 
 @tool(tags=["planning", "update_todo"])
 async def update_todo(
-    agent: Hidden[LLMAgent],
     task: Hidden[Task],
     todos: Annotated[str, "The updated todo list in markdown checklist format for the task."],
 ) -> ToolResult:
@@ -109,6 +117,7 @@ async def provide_feedback(
     provide_feedback(discard=True)
     provide_feedback(feedback="The task is not complete. Can you please try to make sure that second todo is finished?")
     """
-    return ToolResult(result="", error=None)
+    return ToolResult(result={"feedback": feedback, "discard": discard, "approve": approve}, error=None)
 
 PlanningTools = Tools(tools=[assign_task, update_todo])
+FeedbackTools = Tools(tools=[provide_feedback])
