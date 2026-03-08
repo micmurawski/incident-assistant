@@ -33,6 +33,16 @@ echo "Installing Linkerd Viz..."
 helm upgrade --install linkerd-viz linkerd/linkerd-viz -n ${NAMESPACE} \
 ${VIZ_VALUES[@]}
 
+# Escape newlines as \n so -----END CERTIFICATE----- is not parsed as YAML document separator (awk works on macOS and Linux)
+export CA_CERT=$(awk '{printf "%s\\n", $0}' ca.crt)
+envsubst < linkerd-config-map.yml | kubectl apply -f -
+
+
+linkerd check --linkerd-namespace ${NAMESPACE}
+
+
+
+
 echo "Installing Loki..."
 
 helm upgrade --install loki grafana/loki-stack \
@@ -64,9 +74,14 @@ kubectl -n ${NAMESPACE} rollout status deploy/prometheus
 
 echo "Installing Chaos Mesh RBAC..."
 kubectl apply -f "${SCRIPT_DIR}/chaos-meshr-rbac.yml"
+kubectl apply -f "${SCRIPT_DIR}/incident-assistant-rbac.yml"
 kubectl create token account-cluster-manager-zqqat --duration=8760h > cluster-manager-token.txt
 kubectl create secret generic account-cluster-manager-zqqat --from-file=token=cluster-manager-token.txt --dry-run=client -o yaml | kubectl apply -f -
 kubectl describe secrets account-cluster-manager-zqqat
 
 echo "Annotating application namespace for Linkerd injection..."
+kubectl create namespace application
 kubectl annotate namespace application linkerd.io/inject=enabled
+
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+

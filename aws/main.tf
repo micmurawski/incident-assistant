@@ -20,8 +20,9 @@ module "eks" {
   # Security: Allow public access to the API (required for kubectl from your laptop)
   endpoint_public_access = true
 
-  # Grant admin permissions to the user creating the cluster
-  enable_cluster_creator_admin_permissions = true
+  # Cluster admin is granted via access_entries (robot_access). Disable automatic
+  # cluster-creator entry to avoid 409 when the Terraform runner is the same principal.
+  enable_cluster_creator_admin_permissions = false
 
   addons = {
     coredns = {}
@@ -31,6 +32,13 @@ module "eks" {
     kube-proxy = {}
     vpc-cni = {
       before_compute = true
+      most_recent    = true # To ensure access to the latest settings provided
+      configuration_values = jsonencode({ # This increases number of pods that can be scheduled on the node
+        env = {
+          ENABLE_PREFIX_DELEGATION = "true"
+          WARM_PREFIX_TARGET       = "1"
+        }
+      })
     }
   }
 
@@ -74,7 +82,7 @@ module "eks" {
   }
   access_entries = {
     robot_access = {
-      principal_arn = "arn:aws:iam::189429133920:root"
+      principal_arn = "arn:aws:iam::189429133920:user/robot"
       policy_associations = {
         cluster_admin = {
           policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
@@ -83,7 +91,26 @@ module "eks" {
           }
         }
       }
+    }
 
+    # Incident assistant: namespace-scoped edit in application + cluster-scoped view (e.g. list nodes)
+    incident_assistant = {
+      principal_arn = "arn:aws:iam::189429133920:user/incident-assistant"
+      policy_associations = {
+        namespace_edit = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy"
+          access_scope = {
+            type       = "namespace"
+            namespaces = ["application"]
+          }
+        }
+        cluster_view = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy"
+          access_scope = {
+            type = "cluster"
+          }
+        }
+      }
     }
   }
   

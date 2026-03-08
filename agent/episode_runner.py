@@ -111,7 +111,7 @@ def step5_apply_fault(workspace_dir: Path, fault_dir: Path) -> bool:
         return False
     try:
         result = subprocess.run(
-            ["git", "apply", "--whitespace=fix", str(patch_file)],
+            ["patch", "-p1", "<", str(patch_file)],
             cwd=workspace_dir,
             capture_output=True,
             text=True,
@@ -167,22 +167,17 @@ def step10_build_agent_prompt(
     """Build the prompt for the agent to fix the fault."""
     return f"""# Incident: {fault_id}
 
-## Incident announcement (what the team sees)
-
+## Incident announcement
 {incident_md}
-
 ---
-
 ## Metrics before fault
 
 {metrics_before}
 
 ---
-
 ## Metrics after fault
 
 {metrics_after}
-
 ---
 
 Your task: diagnose and fix the fault. Use the codebase and metrics; do not assume the cause from the incident description alone.
