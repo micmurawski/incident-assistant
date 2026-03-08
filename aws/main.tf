@@ -128,6 +128,7 @@ resource "aws_ecr_repository" "robot_shop" {
   image_scanning_configuration {
     scan_on_push = true
   }
+  force_delete = true
 
   encryption_configuration {
     encryption_type = "AES256"
