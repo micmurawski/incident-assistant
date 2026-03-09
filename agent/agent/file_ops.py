@@ -348,7 +348,7 @@ class FileOpsManager:
 
         # Convert the 1-based line number (or None) to a safe insertion index.
         # If `line` is None, append to the end of the file.
-        if line is None:
+        if line:
             insert_at = len(lines)
         else:
             # Clamp to [0, len(lines)] to avoid index errors.

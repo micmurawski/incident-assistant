@@ -193,23 +193,32 @@ class LLMAgent(ABC):
     name: str
     flow: AsyncFlow | None = None
     tools_arguments: dict[str, Any] = {}
+    tools: list[dict] | None = None
+    cwd: str | None = None
+    shared_context: dict[str, Any] | None = None
 
     def __repr__(self):
         return f"LLMAgent(name={self.name})"
 
-    async def call(self, shared: dict[str, Any]):
+    def get_shared(self) -> dict[str, Any]:
+        res = {
+            "agent": self,
+            **self.shared_context,
+        }
+        if self.tools:
+            res["tools"] = self.tools
+        return res
+
+    async def call(self):
         if self.flow is None:
             raise ValueError("Flow is not bound")
-        shared["agent"] = self
-        return await self.flow.run_async(shared)
+        return await self.flow.run_async(self.get_shared())
 
     @node
     async def call_llm(
         self,
         messages: List[AnthropicMessage],
         metadata: Optional[ApiHandlerCreateMessageMetadata] = None,
-        worktree_path: Optional[str] = None,
-        cwd: Optional[str] = None,
         **kwargs: dict[str, Any],
     ) -> tuple[dict[str, list[AnthropicMessage]], str]:
         kwargs = {**kwargs.pop("kwargs", {}), **kwargs}
@@ -233,8 +242,9 @@ class LLMAgent(ABC):
     async def summarize_context(
         self,
         messages: List[AnthropicMessage],
+        tools: list[dict] | None = None,
     ) -> List[AnthropicMessage]:
-        total_tokens = await self.api_handler.count_tokens(messages)
+        total_tokens = await self.api_handler.count_tokens(messages, tools)
         model_info = self.api_handler.get_model()
         if model_info["max_tokens"] <= total_tokens:
             result: SummarizeResponse = await summarize_conversation(

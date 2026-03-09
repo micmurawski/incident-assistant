@@ -18,13 +18,14 @@ def get_tiktoken_encoder():
     return _encoder
 
 
-def count_tokens(content: List[AnthropicMessageParam]) -> int:
+def count_tokens(content: List[AnthropicMessageParam], tools: List[dict] | None = None) -> int:
     """
     Count tokens in Anthropic message content blocks.
 
     Args:
         content: List of content blocks (text, image, etc.)
-
+        tools: List of tools to count tokens for
+        If tools are provided, the total token count will be the sum of the tokens in the content and tools.
     Returns:
         Estimated token count with fudge factor applied
     """
@@ -33,6 +34,17 @@ def count_tokens(content: List[AnthropicMessageParam]) -> int:
 
     total_tokens = 0
     encoder = get_tiktoken_encoder()
+
+    if tools:
+        for tool in tools:
+            for parameter in tool["parameters"]:
+                total_tokens += len(encoder.encode(parameter))
+            for property in tool["properties"]:
+                total_tokens += len(encoder.encode(property))
+            for example in tool["examples"]:
+                total_tokens += len(encoder.encode(example))
+            for required in tool["required"]:
+                total_tokens += len(encoder.encode(required))
 
     # Process each content block
     for block in content:

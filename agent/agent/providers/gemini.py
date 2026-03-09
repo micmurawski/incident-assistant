@@ -317,7 +317,7 @@ class GeminiHandler(ApiHandler):
         except Exception as e:
             raise Exception(f"Gemini complete prompt error: {str(e)}") from e
 
-    async def count_tokens(self, content: List[MessageParam]) -> int:
+    async def count_tokens(self, content: List[MessageParam], tools: List[dict] | None = None) -> int:
         """
         Count tokens for the given content using Gemini's API.
 
@@ -329,12 +329,14 @@ class GeminiHandler(ApiHandler):
         """
         try:
             config = self.get_model()
-
             gemini_content = convert_to_gemini_messages(content)
-
+            count_tokens_config = types.CountTokensConfig()
+            if tools:
+                count_tokens_config.tools = tools
             response = await self.client.aio.models.count_tokens(
                 model=config["id"],
                 contents=gemini_content,
+                config=count_tokens_config,
             )
 
             total_tokens = getattr(response, "total_tokens", None)

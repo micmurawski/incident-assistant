@@ -3,11 +3,11 @@ import shlex
 from typing import Annotated, Optional
 
 from agent.tooling._utils import run_cli_command
-from agent.tooling.decorators import ToolResult, Tools, tool
+from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
 
 
-def _run_kubectl(args: list[str], timeout: int = 30) -> ToolResult:
-    return run_cli_command(["kubectl"] + args, None, timeout)
+def _run_kubectl(args: list[str], cwd: str, timeout: int = 30, env: Optional[dict[str, str]] = None) -> ToolResult:
+    return run_cli_command(["kubectl"] + args, None, timeout=timeout, cwd=cwd, env=env)
 
 
 # ---------------------------------------------------------------------------
@@ -15,16 +15,21 @@ def _run_kubectl(args: list[str], timeout: int = 30) -> ToolResult:
 # ---------------------------------------------------------------------------
 
 @tool(tags=["kubectl", "cluster"])
-async def kubectl_cluster_info() -> ToolResult:
+async def kubectl_cluster_info(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
+) -> ToolResult:
     """
     Get high-level Kubernetes cluster information including the control plane address and CoreDNS.
     Use this first to verify cluster connectivity before running other kubectl commands.
     """
-    return await _run_kubectl(["cluster-info"])
+    return await _run_kubectl(["cluster-info"], env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "cluster"])
 async def kubectl_get_nodes(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
     show_labels: Annotated[bool, "Include node labels in the output"] = False,
 ) -> ToolResult:
     """
@@ -34,16 +39,19 @@ async def kubectl_get_nodes(
     args = ["get", "nodes", "-o", "wide"]
     if show_labels:
         args.append("--show-labels")
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "cluster"])
-async def kubectl_top_nodes() -> ToolResult:
+async def kubectl_top_nodes(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
+) -> ToolResult:
     """
     Show CPU and memory usage for every node (requires metrics-server).
     Use to identify resource-constrained or overloaded nodes.
     """
-    return await _run_kubectl(["top", "nodes"])
+    return await _run_kubectl(["top", "nodes"], env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -51,12 +59,15 @@ async def kubectl_top_nodes() -> ToolResult:
 # ---------------------------------------------------------------------------
 
 @tool(tags=["kubectl", "namespace"])
-async def kubectl_get_namespaces() -> ToolResult:
+async def kubectl_get_namespaces(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
+) -> ToolResult:
     """
     List all namespaces in the cluster with their status and age.
     Use to discover which namespaces exist before querying workloads.
     """
-    return await _run_kubectl(["get", "namespaces"])
+    return await _run_kubectl(["get", "namespaces"], env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +76,7 @@ async def kubectl_get_namespaces() -> ToolResult:
 
 @tool(tags=["kubectl", "pods"])
 async def kubectl_get_pods(
+    cwd: Hidden[str],
     namespace: Annotated[Optional[str], "Namespace to query. Omit or pass null for all namespaces."] = None,
     label_selector: Annotated[Optional[str],
                               "Label selector filter, e.g. 'app=web' or 'tier in (frontend,backend)'"] = None,
@@ -72,6 +84,7 @@ async def kubectl_get_pods(
                               "Field selector filter, e.g. 'status.phase=Failed' or 'status.phase!=Running'"] = None,
     sort_by: Annotated[Optional[str],
                        "JSONPath to sort by, e.g. '.status.startTime' or '.metadata.creationTimestamp'"] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     List pods with status, restarts, age, node, and IP.
@@ -93,17 +106,19 @@ async def kubectl_get_pods(
         args += ["--field-selector", field_selector]
     if sort_by:
         args += ["--sort-by", sort_by]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "pods"])
 async def kubectl_get_pod_logs(
+    cwd: Hidden[str],
     pod_name: Annotated[str, "Name of the pod"],
     namespace: Annotated[str, "Namespace of the pod"],
     container: Annotated[Optional[str], "Container name (required for multi-container pods)"] = None,
     tail_lines: Annotated[int, "Number of most recent log lines to return"] = 200,
     previous: Annotated[bool, "Get logs from the previous (crashed) container instance"] = False,
     since: Annotated[Optional[str], "Only return logs newer than this duration, e.g. '1h', '30m', '5s'"] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Retrieve container logs from a pod.
@@ -119,11 +134,13 @@ async def kubectl_get_pod_logs(
         args.append("--previous")
     if since:
         args += [f"--since={since}"]
-    return await _run_kubectl(args, timeout=60)
+    return await _run_kubectl(args, timeout=60, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "pods"])
 async def kubectl_top_pods(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
     sort_by: Annotated[Optional[str], "'cpu' or 'memory' to sort results"] = None,
 ) -> ToolResult:
@@ -138,13 +155,15 @@ async def kubectl_top_pods(
         args.append("--all-namespaces")
     if sort_by:
         args += ["--sort-by", sort_by]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "pods"])
 async def kubectl_get_pod_containers(
+    cwd: Hidden[str],
     pod_name: Annotated[str, "Name of the pod"],
     namespace: Annotated[str, "Namespace of the pod"],
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Show detailed container status for a specific pod including init containers,
@@ -169,7 +188,7 @@ async def kubectl_get_pod_containers(
         '{"  image: "}{.image}{"\\n\\n"}'
         '{end}'
     ]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +197,8 @@ async def kubectl_get_pod_containers(
 
 @tool(tags=["kubectl", "events"])
 async def kubectl_get_events(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
     event_type: Annotated[Optional[str], "'Warning' or 'Normal' to filter event type"] = None,
     resource_name: Annotated[Optional[str], "Filter events for a specific resource, e.g. 'pod/my-pod'"] = None,
@@ -201,7 +222,7 @@ async def kubectl_get_events(
         args += ["--field-selector", f"involvedObject.name={resource_name}"]
     if sort_by_time:
         args += ["--sort-by", ".lastTimestamp"]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +231,8 @@ async def kubectl_get_events(
 
 @tool(tags=["kubectl", "workloads"])
 async def kubectl_get_deployments(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
 ) -> ToolResult:
     """
@@ -221,11 +244,13 @@ async def kubectl_get_deployments(
         args += ["-n", namespace]
     else:
         args.append("--all-namespaces")
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "workloads"])
 async def kubectl_get_statefulsets(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
 ) -> ToolResult:
     """
@@ -237,11 +262,13 @@ async def kubectl_get_statefulsets(
         args += ["-n", namespace]
     else:
         args.append("--all-namespaces")
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "workloads"])
 async def kubectl_get_daemonsets(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
 ) -> ToolResult:
     """
@@ -254,11 +281,13 @@ async def kubectl_get_daemonsets(
         args += ["-n", namespace]
     else:
         args.append("--all-namespaces")
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "workloads"])
 async def kubectl_get_jobs(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
     show_failed: Annotated[bool, "Only show failed jobs"] = False,
 ) -> ToolResult:
@@ -271,14 +300,14 @@ async def kubectl_get_jobs(
         args += ["-n", namespace]
     else:
         args.append("--all-namespaces")
-    result = await _run_kubectl(args)
+    result = await _run_kubectl(args, env=env, cwd=cwd)
 
     cronjob_args = ["get", "cronjobs", "-o", "wide"]
     if namespace:
         cronjob_args += ["-n", namespace]
     else:
         cronjob_args.append("--all-namespaces")
-    cronjob_result = await _run_kubectl(cronjob_args)
+    cronjob_result = await _run_kubectl(cronjob_args, env=env, cwd=cwd)
 
     combined = f"=== Jobs ===\n{result.result or ''}\n\n=== CronJobs ===\n{cronjob_result.result or ''}"
     error = result.error or cronjob_result.error
@@ -287,28 +316,32 @@ async def kubectl_get_jobs(
 
 @tool(tags=["kubectl", "workloads"])
 async def kubectl_rollout_status(
+    cwd: Hidden[str],
     resource: Annotated[str, "Resource to check, e.g. 'deployment/my-app' or 'statefulset/my-db'"],
     namespace: Annotated[str, "Namespace of the resource"],
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Check the rollout status of a deployment or statefulset.
     Shows whether the rollout completed successfully, is in progress, or has stalled.
     """
     args = ["rollout", "status", resource, "-n", namespace, "--timeout=10s"]
-    return await _run_kubectl(args, timeout=15)
+    return await _run_kubectl(args, timeout=15, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "workloads"])
 async def kubectl_rollout_history(
+    cwd: Hidden[str],
     resource: Annotated[str, "Resource to inspect, e.g. 'deployment/my-app'"],
     namespace: Annotated[str, "Namespace of the resource"],
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Show rollout revision history for a deployment or statefulset.
     Useful for understanding what changed and when, especially after an incident.
     """
     args = ["rollout", "history", resource, "-n", namespace]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +350,8 @@ async def kubectl_rollout_history(
 
 @tool(tags=["kubectl", "network"])
 async def kubectl_get_services(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
 ) -> ToolResult:
     """
@@ -328,11 +363,13 @@ async def kubectl_get_services(
         args += ["-n", namespace]
     else:
         args.append("--all-namespaces")
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "network"])
 async def kubectl_get_endpoints(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
     service_name: Annotated[Optional[str], "Filter endpoints for a specific service"] = None,
 ) -> ToolResult:
@@ -347,11 +384,13 @@ async def kubectl_get_endpoints(
         args += ["-n", namespace]
     else:
         args.append("--all-namespaces")
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "network"])
 async def kubectl_get_ingresses(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
 ) -> ToolResult:
     """
@@ -363,11 +402,13 @@ async def kubectl_get_ingresses(
         args += ["-n", namespace]
     else:
         args.append("--all-namespaces")
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "network"])
 async def kubectl_get_network_policies(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
 ) -> ToolResult:
     """
@@ -379,7 +420,7 @@ async def kubectl_get_network_policies(
         args += ["-n", namespace]
     else:
         args.append("--all-namespaces")
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -388,9 +429,11 @@ async def kubectl_get_network_policies(
 
 @tool(tags=["kubectl", "inspect"])
 async def kubectl_describe(
+    cwd: Hidden[str],
     resource_type: Annotated[str, "Resource type, e.g. 'pod', 'deployment', 'node', 'service', 'pvc'"],
     resource_name: Annotated[str, "Name of the resource"],
     namespace: Annotated[Optional[str], "Namespace (omit for cluster-scoped resources like nodes)"] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Show detailed information about a specific resource including conditions, events,
@@ -400,14 +443,16 @@ async def kubectl_describe(
     args = ["describe", resource_type, resource_name]
     if namespace:
         args += ["-n", namespace]
-    return await _run_kubectl(args, timeout=30)
+    return await _run_kubectl(args, timeout=30, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "inspect"])
 async def kubectl_get_yaml(
+    cwd: Hidden[str],
     resource_type: Annotated[str, "Resource type, e.g. 'pod', 'deployment', 'configmap', 'service'"],
     resource_name: Annotated[str, "Name of the resource"],
     namespace: Annotated[Optional[str], "Namespace (omit for cluster-scoped resources)"] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Get the full YAML manifest of a resource.
@@ -417,7 +462,7 @@ async def kubectl_get_yaml(
     args = ["get", resource_type, resource_name, "-o", "yaml"]
     if namespace:
         args += ["-n", namespace]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -426,8 +471,10 @@ async def kubectl_get_yaml(
 
 @tool(tags=["kubectl", "config"])
 async def kubectl_get_configmap(
+    cwd: Hidden[str],
     name: Annotated[str, "Name of the ConfigMap"],
     namespace: Annotated[str, "Namespace of the ConfigMap"],
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Retrieve a ConfigMap's data contents.
@@ -435,12 +482,14 @@ async def kubectl_get_configmap(
     that may be causing misbehavior.
     """
     args = ["get", "configmap", name, "-n", namespace, "-o", "jsonpath={.data}"]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "config"])
 async def kubectl_get_pvcs(
+    cwd: Hidden[str],
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     List PersistentVolumeClaims with status, capacity, access modes, and storage class.
@@ -451,7 +500,7 @@ async def kubectl_get_pvcs(
         args += ["-n", namespace]
     else:
         args.append("--all-namespaces")
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -460,9 +509,11 @@ async def kubectl_get_pvcs(
 
 @tool(tags=["kubectl", "security"])
 async def kubectl_auth_can_i(
+    cwd: Hidden[str],
     verb: Annotated[str, "Action to check, e.g. 'get', 'list', 'create', 'delete', 'watch'"],
     resource: Annotated[str, "Resource to check, e.g. 'pods', 'deployments', 'secrets'"],
     namespace: Annotated[Optional[str], "Namespace scope (omit for cluster-level check)"] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Check if the current kubeconfig identity has permission to perform an action.
@@ -471,7 +522,7 @@ async def kubectl_auth_can_i(
     args = ["auth", "can-i", verb, resource]
     if namespace:
         args += ["-n", namespace]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -480,6 +531,8 @@ async def kubectl_auth_can_i(
 
 @tool(tags=["kubectl", "autoscaling"])
 async def kubectl_get_hpa(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
 ) -> ToolResult:
     """
@@ -491,7 +544,7 @@ async def kubectl_get_hpa(
         args += ["-n", namespace]
     else:
         args.append("--all-namespaces")
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -499,20 +552,25 @@ async def kubectl_get_hpa(
 # ---------------------------------------------------------------------------
 
 @tool(tags=["kubectl"])
-async def kubectl_api_resources() -> ToolResult:
+async def kubectl_api_resources(
+    cwd: Hidden[str],
+    env: Hidden[Optional[dict[str, str]]] = None,
+) -> ToolResult:
     """
     List all available resource types in the cluster (built-in and CRDs).
     Use when you need to discover what resource types are installed,
     e.g. to check for Prometheus, Istio, or cert-manager CRDs.
     """
-    return await _run_kubectl(["api-resources", "--sort-by=name"])
+    return await _run_kubectl(["api-resources", "--sort-by=name"], env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl"])
 async def kubectl_get_resource(
+    cwd: Hidden[str],
     resource_type: Annotated[str, "Any valid resource type, e.g. 'certificates', 'virtualservices', 'prometheusrules'"],
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
     label_selector: Annotated[Optional[str], "Label selector filter"] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Generic tool to list any Kubernetes resource type (including CRDs).
@@ -525,7 +583,7 @@ async def kubectl_get_resource(
         args.append("--all-namespaces")
     if label_selector:
         args += ["-l", label_selector]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -584,10 +642,12 @@ KubectlTools = Tools(tools=[
 
 @tool(tags=["kubectl", "mutate", "pods"])
 async def kubectl_delete_pod(
+    cwd: Hidden[str],
     pod_name: Annotated[str, "Name of the pod to delete"],
     namespace: Annotated[str, "Namespace of the pod"],
     grace_period: Annotated[Optional[int],
                             "Seconds to wait for graceful shutdown. 0 for immediate force-delete."] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Delete a pod. Kubernetes will recreate it if managed by a controller (Deployment, StatefulSet, etc.).
@@ -597,15 +657,17 @@ async def kubectl_delete_pod(
     args = ["delete", "pod", pod_name, "-n", namespace]
     if grace_period is not None:
         args += [f"--grace-period={grace_period}"]
-    return await _run_kubectl(args, timeout=120)
+    return await _run_kubectl(args, timeout=120, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "mutate", "pods"])
 async def kubectl_exec(
+    cwd: Hidden[str],
     pod_name: Annotated[str, "Name of the pod"],
     namespace: Annotated[str, "Namespace of the pod"],
     command: Annotated[str, "Command to run inside the container, e.g. 'cat /etc/config/app.yaml'"],
     container: Annotated[Optional[str], "Container name (required for multi-container pods)"] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Execute a command inside a running container.
@@ -623,7 +685,7 @@ async def kubectl_exec(
     if container:
         args += ["-c", container]
     args += ["--"] + shlex.split(command.strip())   # split the command into a list of arguments
-    return await _run_kubectl(args, timeout=30)
+    return await _run_kubectl(args, timeout=30, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -632,16 +694,18 @@ async def kubectl_exec(
 
 @tool(tags=["kubectl", "mutate", "scaling"])
 async def kubectl_scale(
+    cwd: Hidden[str],
     resource: Annotated[str, "Resource to scale, e.g. 'deployment/my-app' or 'statefulset/my-db'"],
     replicas: Annotated[int, "Desired number of replicas"],
     namespace: Annotated[str, "Namespace of the resource"],
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Scale a deployment, statefulset, or replicaset to a desired replica count.
     Use to scale up under load, scale down to save resources, or scale to 0 to temporarily stop a workload.
     """
     args = ["scale", resource, f"--replicas={replicas}", "-n", namespace]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -650,8 +714,10 @@ async def kubectl_scale(
 
 @tool(tags=["kubectl", "mutate", "rollout"])
 async def kubectl_rollout_restart(
+    cwd: Hidden[str],
     resource: Annotated[str, "Resource to restart, e.g. 'deployment/my-app' or 'daemonset/my-agent'"],
     namespace: Annotated[str, "Namespace of the resource"],
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Trigger a rolling restart of all pods in a deployment, statefulset, or daemonset.
@@ -659,15 +725,17 @@ async def kubectl_rollout_restart(
     or clear transient issues across all replicas.
     """
     args = ["rollout", "restart", resource, "-n", namespace]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "mutate", "rollout"])
 async def kubectl_rollout_undo(
+    cwd: Hidden[str],
     resource: Annotated[str, "Resource to rollback, e.g. 'deployment/my-app'"],
     namespace: Annotated[str, "Namespace of the resource"],
     revision: Annotated[Optional[int],
                         "Specific revision to roll back to. Omit to rollback to the previous revision."] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Rollback a deployment or statefulset to a previous revision.
@@ -677,32 +745,36 @@ async def kubectl_rollout_undo(
     args = ["rollout", "undo", resource, "-n", namespace]
     if revision is not None:
         args += [f"--to-revision={revision}"]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "mutate", "rollout"])
 async def kubectl_rollout_pause(
+    cwd: Hidden[str],
     resource: Annotated[str, "Resource to pause, e.g. 'deployment/my-app'"],
     namespace: Annotated[str, "Namespace of the resource"],
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Pause an in-progress rollout. No new pods will be created until resumed.
     Use to halt a problematic deployment mid-rollout while you investigate.
     """
     args = ["rollout", "pause", resource, "-n", namespace]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "mutate", "rollout"])
 async def kubectl_rollout_resume(
+    cwd: Hidden[str],
     resource: Annotated[str, "Resource to resume, e.g. 'deployment/my-app'"],
     namespace: Annotated[str, "Namespace of the resource"],
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Resume a previously paused rollout so it can continue creating new pods.
     """
     args = ["rollout", "resume", resource, "-n", namespace]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -711,11 +783,13 @@ async def kubectl_rollout_resume(
 
 @tool(tags=["kubectl", "mutate", "metadata"])
 async def kubectl_label(
+    cwd: Hidden[str],
     resource_type: Annotated[str, "Resource type, e.g. 'pod', 'node', 'namespace'"],
     resource_name: Annotated[str, "Name of the resource"],
     labels: Annotated[dict[str, str], "Labels to set, e.g. {'env': 'staging', 'team': 'platform'}. Use value '-' to remove a label."],
     namespace: Annotated[Optional[str], "Namespace (omit for cluster-scoped resources)"] = None,
     overwrite: Annotated[bool, "Allow overwriting existing labels"] = True,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Add or update labels on a resource. Labels drive service selectors, scheduling,
@@ -727,16 +801,18 @@ async def kubectl_label(
         args += ["-n", namespace]
     if overwrite:
         args.append("--overwrite")
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "mutate", "metadata"])
 async def kubectl_annotate(
+    cwd: Hidden[str],
     resource_type: Annotated[str, "Resource type, e.g. 'pod', 'deployment', 'service'"],
     resource_name: Annotated[str, "Name of the resource"],
     annotations: Annotated[dict[str, str], "Annotations to set. Use value '-' to remove an annotation."],
     namespace: Annotated[Optional[str], "Namespace (omit for cluster-scoped resources)"] = None,
     overwrite: Annotated[bool, "Allow overwriting existing annotations"] = True,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Add or update annotations on a resource.
@@ -749,7 +825,7 @@ async def kubectl_annotate(
         args += ["-n", namespace]
     if overwrite:
         args.append("--overwrite")
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -758,32 +834,38 @@ async def kubectl_annotate(
 
 @tool(tags=["kubectl", "mutate", "nodes"])
 async def kubectl_cordon(
+    cwd: Hidden[str],
     node_name: Annotated[str, "Name of the node to cordon"],
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Mark a node as unschedulable. Existing pods keep running but no new pods will be placed here.
     Use before draining a node for maintenance.
     """
-    return await _run_kubectl(["cordon", node_name])
+    return await _run_kubectl(["cordon", node_name], env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "mutate", "nodes"])
 async def kubectl_uncordon(
+    cwd: Hidden[str],
     node_name: Annotated[str, "Name of the node to uncordon"],
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Mark a node as schedulable again after maintenance.
     """
-    return await _run_kubectl(["uncordon", node_name])
+    return await _run_kubectl(["uncordon", node_name], env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "mutate", "nodes"])
 async def kubectl_drain(
+    cwd: Hidden[str],
     node_name: Annotated[str, "Name of the node to drain"],
     ignore_daemonsets: Annotated[bool, "Ignore DaemonSet-managed pods (usually required)"] = True,
     delete_emptydir_data: Annotated[bool, "Delete pods using emptyDir volumes"] = False,
     force: Annotated[bool, "Force drain even with unmanaged pods"] = False,
     timeout: Annotated[int, "Seconds to wait for graceful eviction"] = 300,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Safely evict all pods from a node for maintenance.
@@ -799,7 +881,7 @@ async def kubectl_drain(
         args.append("--delete-emptydir-data")
     if force:
         args.append("--force")
-    return await _run_kubectl(args, timeout=timeout + 30)
+    return await _run_kubectl(args, timeout=timeout + 30, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -808,8 +890,10 @@ async def kubectl_drain(
 
 @tool(tags=["kubectl", "mutate", "lifecycle"])
 async def kubectl_apply(
+    cwd: Hidden[str],
     manifest_yaml: Annotated[str, "YAML manifest content to apply"],
     namespace: Annotated[Optional[str], "Namespace (overrides namespace in the manifest if set)"] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Apply a YAML manifest to create or update resources declaratively.
@@ -839,11 +923,13 @@ async def kubectl_apply(
 
 @tool(tags=["kubectl", "mutate", "lifecycle"])
 async def kubectl_patch(
+    cwd: Hidden[str],
     resource_type: Annotated[str, "Resource type, e.g. 'deployment', 'service', 'configmap'"],
     resource_name: Annotated[str, "Name of the resource"],
     patch: Annotated[str, "JSON patch content, e.g. '{\"spec\":{\"replicas\":3}}'"],
     namespace: Annotated[str, "Namespace of the resource"],
     patch_type: Annotated[str, "Patch strategy: 'strategic', 'merge', or 'json'"] = "strategic",
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Patch a specific field of a resource without replacing the whole manifest.
@@ -856,15 +942,17 @@ async def kubectl_patch(
     - Add env var: '{"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"DEBUG","value":"true"}]}]}}}}'
     """
     args = ["patch", resource_type, resource_name, "-n", namespace, "--type", patch_type, "-p", patch]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "mutate", "lifecycle"])
 async def kubectl_delete_resource(
+    cwd: Hidden[str],
     resource_type: Annotated[str, "Resource type, e.g. 'deployment', 'service', 'job', 'configmap'"],
     resource_name: Annotated[str, "Name of the resource to delete"],
     namespace: Annotated[str, "Namespace of the resource"],
     grace_period: Annotated[Optional[int], "Seconds for graceful shutdown. 0 for immediate."] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Delete a Kubernetes resource.
@@ -874,7 +962,7 @@ async def kubectl_delete_resource(
     args = ["delete", resource_type, resource_name, "-n", namespace]
     if grace_period is not None:
         args += [f"--grace-period={grace_period}"]
-    return await _run_kubectl(args, timeout=120)
+    return await _run_kubectl(args, timeout=120, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -883,12 +971,14 @@ async def kubectl_delete_resource(
 
 @tool(tags=["kubectl", "mutate", "namespace"])
 async def kubectl_create_namespace(
+    cwd: Hidden[str],
     name: Annotated[str, "Name of the namespace to create"],
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Create a new namespace for isolating workloads.
     """
-    return await _run_kubectl(["create", "namespace", name])
+    return await _run_kubectl(["create", "namespace", name], env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -897,9 +987,11 @@ async def kubectl_create_namespace(
 
 @tool(tags=["kubectl", "mutate", "config"])
 async def kubectl_create_configmap(
+    cwd: Hidden[str],
     name: Annotated[str, "Name of the ConfigMap"],
     namespace: Annotated[str, "Namespace to create the ConfigMap in"],
     from_literal: Annotated[Optional[dict[str, str]], "Key-value pairs for the ConfigMap data"] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Create a ConfigMap from literal key-value pairs.
@@ -909,15 +1001,17 @@ async def kubectl_create_configmap(
     if from_literal:
         for k, v in from_literal.items():
             args += [f"--from-literal={k}={v}"]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "mutate", "config"])
 async def kubectl_create_secret(
+    cwd: Hidden[str],
     name: Annotated[str, "Name of the Secret"],
     namespace: Annotated[str, "Namespace to create the Secret in"],
     from_literal: Annotated[dict[str, str], "Key-value pairs for the Secret data"],
     secret_type: Annotated[str, "Secret type, e.g. 'generic', 'docker-registry', 'tls'"] = "generic",
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Create a Secret from literal key-value pairs.
@@ -926,7 +1020,7 @@ async def kubectl_create_secret(
     args = ["create", "secret", secret_type, name, "-n", namespace]
     for k, v in from_literal.items():
         args += [f"--from-literal={k}={v}"]
-    return await _run_kubectl(args)
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -935,9 +1029,11 @@ async def kubectl_create_secret(
 
 @tool(tags=["kubectl", "mutate", "network"])
 async def kubectl_port_forward(
+    cwd: Hidden[str],
     resource: Annotated[str, "Resource to forward to, e.g. 'pod/my-pod', 'svc/my-service', 'deploy/my-app'"],
     ports: Annotated[str, "Port mapping, e.g. '8080:80' (local:remote) or '8080' (same port)"],
     namespace: Annotated[str, "Namespace of the resource"],
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Forward a local port to a port on a pod, service, or deployment.
@@ -951,6 +1047,8 @@ async def kubectl_port_forward(
             "kubectl", *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
+            cwd=cwd,
         )
         await asyncio.sleep(2)
         if process.returncode is not None:
@@ -1009,11 +1107,14 @@ KubectlMutateTools = Tools(tools=[
 
 @tool(tags=["kubectl", "small"])
 async def kubectl(
+    cwd: Hidden[str],
     args: Annotated[
         str,
-        "Subcommand and flags passed to kubectl, e.g. ['get','pods','-n','default'] or ['logs','my-pod','-n','default','--tail=100']. See tool description for all documented behaviors.",
+        "Subcommand and flags passed to kubectl, e.g. 'get pods -n default' or 'logs my-pod -n default --tail=100'."
+        " See tool description for all documented behaviors.",
     ],
     timeout: Annotated[int, "Command timeout in seconds (default 30; use 60+ for logs/apply/delete)"] = 30,
+    env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Run kubectl with the given subcommand and arguments. One tool for all read and mutate operations.
@@ -1126,7 +1227,7 @@ async def kubectl(
     Note: apply -f - (YAML from stdin) is not supported by this tool; use the dedicated kubectl_apply tool for that.
     """
     args = shlex.split(args.strip())
-    return await _run_kubectl(args, timeout=timeout)
+    return await _run_kubectl(args, timeout=timeout, env=env, cwd=cwd)
 
 
 SmallKubeCtlTools = Tools(tools=[kubectl])

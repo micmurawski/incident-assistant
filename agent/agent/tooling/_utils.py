@@ -6,7 +6,7 @@ from agent.tooling.decorators import ToolResult
 MAX_OUTPUT_LENGTH = 8000
 
 
-async def run_cli_command(cmd: list[str], stdin: Optional[str] = None, timeout: int = 30) -> ToolResult:
+async def run_cli_command(cmd: list[str], stdin: Optional[str] = None, timeout: int = 30, env: Optional[dict[str, str]] = None) -> ToolResult:
     try:
         if stdin is not None:
             process = await asyncio.create_subprocess_exec(
@@ -14,6 +14,7 @@ async def run_cli_command(cmd: list[str], stdin: Optional[str] = None, timeout: 
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(input=stdin.encode("utf-8")), timeout=timeout
@@ -23,6 +24,7 @@ async def run_cli_command(cmd: list[str], stdin: Optional[str] = None, timeout: 
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(), timeout=timeout

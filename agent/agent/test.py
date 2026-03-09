@@ -20,7 +20,7 @@ from agent.settings import SettingsManager
 from agent.tasks.tasks import Task
 from agent.tooling import CodebaseReadTools, CodebaseWriteTools
 from agent.tooling.cli import CliTools
-from agent.tooling.kubectl import (KubectlTools)
+from agent.tooling.kubectl import KubectlTools
 from agent.tooling.metrics import MetricsTools
 from agent.tooling.planning import PlanningTools
 from agent.tracing import trace_flow
@@ -65,11 +65,14 @@ class Agent(LLMAgent):
         name: str,
         system_prompt: str,
         api_settings: dict[str, Any] | None = None,
-
+        cwd: str | None = None,
+        tools: Any | None = None,
+        shared_context: dict[str, Any] | None = None,
     ):
         settings = SettingsManager.get_instance()
         api_settings = api_settings or settings.get("api")
         self.system_prompt = system_prompt
+        self.cwd = cwd
         self.api_handler: ApiHandler = build_api_handler(**api_settings)
         self.name = name
 
@@ -78,32 +81,63 @@ class Agent(LLMAgent):
             def __init__(self, start):
                 super().__init__(start=start)
         self.flow = _TracedFlow(start=self.call_llm)
-        
-        
+
+        self.shared_context = {**shared_context, "cwd": cwd}
         # create re-act agent with summarization
-        
+        self.bind_tools(tools, self.get_shared())
+        self.call_llm - "tools" >> tools
+        tools >> self.summarize_context
+        self.summarize_context >> self.call_llm
+
+        # from framework.decorators import end
+        # self.call_llm - "default" >> end
 
 
 async def main():
     with tracer.start_as_current_span("agent-execution-flow-session-" + SESSION_ID):
         with using_attributes(session_id=SESSION_ID):
+            cwd = "/Users/micmur/GITHUB/o8s/services/robot-shop"
+            update_todo_tools = PlanningTools.select({"update_todo"})
 
+            manager_tools = PlanningTools
+            devops_tools = CliTools | CodebaseReadTools | KubectlTools | update_todo_tools
+            metrics_tools = MetricsTools | CliTools | update_todo_tools
+            coder_tools = CodebaseWriteTools | CodebaseReadTools | update_todo_tools
             agent_manager = Agent(
                 name="agent_manager",
                 system_prompt="You are a manager of agents. "
                 "You are responsible for assigning tasks to agents and ensuring they are completed.",
+                cwd=cwd,
+                tools=manager_tools,
+                shared_context={"available_agents": "devops,metrics,coder"},
             )
+            agent_manager.register()
             devops_agent = Agent(
                 name="devops",
                 system_prompt="You are a devops helper. You know the codebase and the devops tasks."
                 "You are responsible for helping with the devops tasks.",
+                cwd=cwd,
+                tools=devops_tools,
             )
+            devops_agent.register()
 
-            Agent(
+            metrics_agent = Agent(
                 name="metrics",
                 system_prompt="You are a metrics helper. You know the codebase and the metrics."
                 "You are responsible for helping with the metrics.",
+                cwd=cwd,
+                tools=metrics_tools,
             )
+            metrics_agent.register()
+
+            coder_agent = Agent(
+                name="coder",
+                system_prompt="You are a coder helper. You know the codebase and the coder tasks."
+                "You are responsible for helping with the coder tasks.",
+                cwd=cwd,
+                tools=coder_tools,
+            )
+            coder_agent.register()
 
             goal = Task(
                 id="123",
@@ -114,37 +148,12 @@ async def main():
             )
 
             shared = {
-                "shared_context": {
-                    "cwd": "/Users/micmur/GITHUB/o8s/services/robot-shop",
-                },
                 "cwd": "/Users/micmur/GITHUB/o8s/services/robot-shop",
                 "session_id": SESSION_ID,
                 "messages": goal.conversation,
                 "task": goal,
             }
-            update_todo_tools = PlanningTools.select({"update_todo"})
 
-            manager_tools = PlanningTools
-            devops_tools = CliTools | CodebaseReadTools | KubectlTools | update_todo_tools
-            MetricsTools | CliTools | update_todo_tools
-            CodebaseWriteTools | CodebaseReadTools | update_todo_tools
-
-            devops_agent.bind_tools(devops_tools, shared)
-            devops_agent.call_llm - "tools" >> devops_tools
-            devops_tools >> devops_agent.summarize_context
-            devops_agent.summarize_context >> devops_agent.call_llm
-
-            devops_agent.register()
-
-            # define behavior
-            agent_manager.bind_tools(manager_tools, {**shared, "available_agents": "devops"})
-            agent_manager.call_llm - "tools" >> manager_tools
-            manager_tools >> agent_manager.summarize_context
-            agent_manager.summarize_context >> agent_manager.call_llm
-            # agent_manager.call_llm - "default" >> end
-
-            # register agent
-            agent_manager.register()
             print(agent_manager.get_flow_graph())
             agent_manager.get_flow_graph_png("agent_manager.png")
             await agent_manager.call(shared)

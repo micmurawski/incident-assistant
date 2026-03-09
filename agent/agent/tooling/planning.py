@@ -1,4 +1,4 @@
-from typing import Annotated, Any
+from typing import Annotated
 
 from agent.tasks.executor import TaskExecutor
 from agent.tasks.formatting import parse_markdown_checklist
@@ -14,7 +14,6 @@ async def assign_task(
     assignee: Annotated[str, "The slug of an assignee to start the new task in (e.g., {available_agents})"],
     message: Annotated[str, "The initial user message or instructions for this new task."],
     todos: Annotated[str, "The initial todo list in markdown checklist format for the new task."],
-    shared_context: Hidden[dict[str, Any]] = None,
 ) -> ToolResult:
     """
     This will let you create a new task instance in the chosen mode using your provided message and initial todo list.
@@ -25,16 +24,12 @@ async def assign_task(
     Example:
     assign_task(assignee=<assignee_slug>, message="Implement user authentication", todos="[ ] Set up auth middleware\n[ ] Create login endpoint\n[ ] Add session management\n[ ] Write tests")
     """
-    if shared_context is None:
-        shared_context = {}
-
     return await TaskExecutor.assign_and_run(
         parent_task=task,
         assigner=task.assignee,
         assignee=assignee,
         message=message,
         todos_str=todos,
-        shared_context=shared_context,
         feedback_tools=FeedbackTools,
     )
 

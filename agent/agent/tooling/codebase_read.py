@@ -208,7 +208,7 @@ CodebaseReadTools = Tools(
         # codebase_search,
         get_list_code_definitions_names_descriptions,
         read_file,
-        read_multiple_files,
+        # read_multiple_files,
         search_file,
         list_files,
     ]

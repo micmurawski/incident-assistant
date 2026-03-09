@@ -50,7 +50,7 @@ async def insert_content(
     line: Annotated[
         Optional[int],
         "Line number where content will be inserted (1-based). Use 0 to append at end of file. Use any positive number to insert before that line (default: None means append at end of file)",
-    ]= None,
+    ] = 0,
 ) -> ToolResult:
     """
     Use this tool specifically for adding new lines of content into a file without modifying existing content.

@@ -1,4 +1,3 @@
-from typing import Any
 
 from agent.llm import AgentRegistry, ChunkProxyIterator, LLMAgent
 from agent.tasks.tasks import Task
@@ -25,12 +24,8 @@ class TaskExecutor:
         assignee: str,
         message: str,
         todos_str: str,
-        shared_context: dict[str, Any] | None = None,
         feedback_tools: Tools | None = None,
     ) -> ToolResult:
-        if shared_context is None:
-            shared_context = {}
-
         messages = [
             {
                 "role": "user",
@@ -44,7 +39,7 @@ class TaskExecutor:
         )
         assignee_agent: LLMAgent = AgentRegistry.get_instance().get(assignee)
         assigner_agent: LLMAgent = AgentRegistry.get_instance().get(assigner)
-        shared = {**shared_context, "task": current_task, "messages": current_task.conversation}
+        shared = {"task": current_task, "messages": current_task.conversation}
 
         for _ in range(parent_task.consecutive_mistakes_limit):
             await assignee_agent.call(shared=shared)
@@ -53,7 +48,7 @@ class TaskExecutor:
 
             feedback_tools_definitions = feedback_tools.tools_definitions(
                 format=assignee_agent.api_handler.provider,
-                format_kwargs=shared_context
+                format_kwargs=assignee_agent.get_shared()
             )
 
             # How to elegantly add conversation trajectory fron assingner to feedback agent?
