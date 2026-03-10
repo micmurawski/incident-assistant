@@ -44,7 +44,8 @@ TOKEN=$(echo $TOKEN_RESPONSE | jq -r .key)
 #  -n $NAMESPACE \
 #  --dry-run=client -o yaml | kubectl apply -f -
 # add grafana_api_token to /Users/micmur/GITHUB/o8s/api_key.json
-JSON_FILE="/Users/micmur/GITHUB/o8s/api_key.json"
 
+JSON_FILE="/Users/micmur/GITHUB/o8s/api_key.json"
 jq '. += {"grafana_api_token": "'$TOKEN'"}' $JSON_FILE > $JSON_FILE.tmp && mv $JSON_FILE.tmp $JSON_FILE
+jq '. += {"grafana_url": "'$GRAFANA_URL'"}' $JSON_FILE > $JSON_FILE.tmp && mv $JSON_FILE.tmp $JSON_FILE
 echo "Done! The API token is securely stored."

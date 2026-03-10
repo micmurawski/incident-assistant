@@ -62,7 +62,7 @@ module "eks" {
       ami_type       = "AL2023_ARM_64_STANDARD"
       instance_types = ["t4g.medium"]
       min_size       = 1
-      max_size       = 1
+      max_size       = 2
       desired_size   = 1
 
       labels = {
@@ -128,11 +128,13 @@ resource "aws_ecr_repository" "robot_shop" {
   image_scanning_configuration {
     scan_on_push = true
   }
-  force_delete = true
-
   encryption_configuration {
     encryption_type = "AES256"
   }
+
+  #lifecycle {
+  #  prevent_destroy = true
+  #}
 }
 
 # ------------------------------------------------------------------------------

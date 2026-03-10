@@ -1,4 +1,4 @@
-# Agentic Context Evolution (ACE) for Kubernetes Auto-Remediation
+# Evolving Agentic Contexts for Self-Improving Auto-remediation of Microservice Applications
 
 The goal of this project is to experiment with whether a multi-agent system can increase performance on auto-remediations for applications running on a Kubernetes cluster using **Agentic Context Engineering**.
 

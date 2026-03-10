@@ -24,7 +24,8 @@ from agent.tooling.kubectl import KubectlTools
 from agent.tooling.metrics import MetricsTools
 from agent.tooling.planning import PlanningTools
 from agent.tracing import trace_flow
-
+import json
+from agent.grafana_client.client import GrafanaClient
 T = TypeVar('T')
 
 
@@ -33,26 +34,36 @@ os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:6006"
 
 SESSION_ID = str(uuid.uuid4())
 tracer_provider = register(project_name="agent-tracing")
+
 provider: Literal["anthropic", "openai", "google", "ollama", "minimax"] = "minimax"
-# Get a tracer for your application
 tracer = trace.get_tracer(__name__)
 
+api_keys = json.load(open("api_keys.json"))
+
+AGENT_ENV = {
+    "AWS_ACCESS_KEY_ID": api_keys["incident-assistant"]["access_key_id"],
+    "AWS_SECRET_ACCESS_KEY": api_keys["incident-assistant"]["secret_access_key"],
+    "AWS_REGION": "us-east-1",
+}
+
+GRAFANA_URL = api_keys["grafana_url"]
+GRAFANA_API_KEY = api_keys["grafana_api_key"]
+
 settings = SettingsManager.get_instance()
-
-
 settings.set("api.provider", provider)
+
 
 if provider in ["anthropic", "minimax"]:
     if provider == "minimax":
-        API_KEY = os.getenv("MINIMAX_API_KEY")
+        API_KEY = api_keys["minimax_api_key"]
     else:
-        API_KEY = os.getenv("ANTHROPIC_API_KEY")
+        API_KEY = api_keys["anthropic_api_key"]
     settings.set("api.api_key", API_KEY)
     AnthropicInstrumentor().instrument(tracer_provider=tracer_provider)
 elif provider == "openai":
     OpenAIInstrumentor().instrument(tracer_provider=tracer_provider)
 elif provider == "google":
-    API_KEY = os.getenv("GEMINI_API_KEY")
+    API_KEY = api_keys["gemini_api_key"]
     settings.set("api.api_key", API_KEY)
     GoogleGenAIInstrumentor().instrument(tracer_provider=tracer_provider)
 else:
@@ -68,6 +79,7 @@ class Agent(LLMAgent):
         cwd: str | None = None,
         tools: Any | None = None,
         shared_context: dict[str, Any] | None = None,
+        env: dict[str, str] | None = None,
     ):
         settings = SettingsManager.get_instance()
         api_settings = api_settings or settings.get("api")
@@ -82,7 +94,7 @@ class Agent(LLMAgent):
                 super().__init__(start=start)
         self.flow = _TracedFlow(start=self.call_llm)
 
-        self.shared_context = {**shared_context, "cwd": cwd}
+        self.shared_context = {**shared_context, "cwd": cwd, "env": env}
         # create re-act agent with summarization
         self.bind_tools(tools, self.get_shared())
         self.call_llm - "tools" >> tools
@@ -103,48 +115,58 @@ async def main():
             devops_tools = CliTools | CodebaseReadTools | KubectlTools | update_todo_tools
             metrics_tools = MetricsTools | CliTools | update_todo_tools
             coder_tools = CodebaseWriteTools | CodebaseReadTools | update_todo_tools
+
             agent_manager = Agent(
                 name="agent_manager",
                 system_prompt="You are a manager of agents. "
-                "You are responsible for assigning tasks to agents and ensuring they are completed.",
+                "You are responsible for assigning tasks to agents and ensuring they are completed."
+                "You have the following agents available: devops, metrics, coder"
+                "devops: is able to manage kubernetes cluster running apps"
+                "metrics: is able to collect metrics from the kubernetes cluster"
+                "coder: is able to code the application",
                 cwd=cwd,
                 tools=manager_tools,
                 shared_context={"available_agents": "devops,metrics,coder"},
+                env=AGENT_ENV,
             )
             agent_manager.register()
-            devops_agent = Agent(
+            Agent(
                 name="devops",
                 system_prompt="You are a devops helper. You know the codebase and the devops tasks."
                 "You are responsible for helping with the devops tasks.",
                 cwd=cwd,
                 tools=devops_tools,
-            )
-            devops_agent.register()
+                env=AGENT_ENV,
+            ).register()
 
-            metrics_agent = Agent(
+            Agent(
                 name="metrics",
                 system_prompt="You are a metrics helper. You know the codebase and the metrics."
                 "You are responsible for helping with the metrics.",
                 cwd=cwd,
                 tools=metrics_tools,
-            )
-            metrics_agent.register()
+                env=AGENT_ENV,
+            ).register()
 
-            coder_agent = Agent(
+            Agent(
                 name="coder",
                 system_prompt="You are a coder helper. You know the codebase and the coder tasks."
                 "You are responsible for helping with the coder tasks.",
                 cwd=cwd,
                 tools=coder_tools,
-            )
-            coder_agent.register()
+                env=AGENT_ENV,
+            ).register()
 
             goal = Task(
                 id="123",
                 assignee="agent_manager",
                 assigner="human",
                 conversation=[
-                    {"role": "user", "content": "Can you ask your team to check if we are using java in the codebase?"}],
+                    {
+                        "role": "user",
+                        "content": "Can you ask your team to check if we are using java in the codebase?"
+                    }
+                ],
             )
 
             shared = {
@@ -152,6 +174,7 @@ async def main():
                 "session_id": SESSION_ID,
                 "messages": goal.conversation,
                 "task": goal,
+                "grafana_client": GrafanaClient(url=GRAFANA_URL, api_key=GRAFANA_API_KEY),
             }
 
             print(agent_manager.get_flow_graph())
