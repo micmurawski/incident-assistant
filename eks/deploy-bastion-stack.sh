@@ -21,40 +21,37 @@ fi
 
 helm repo add grafana https://grafana.github.io/helm-charts
 helm repo add linkerd https://helm.linkerd.io/stable
+helm repo add linkerd-edge https://helm.linkerd.io/edge
 helm repo add chaos-mesh https://charts.chaos-mesh.org
 helm repo update
 
-echo "Installing Linkerd CRDs..."
-#helm upgrade --install linkerd-crds linkerd/linkerd-crds -n ${NAMESPACE} --wait
 
+#helm upgrade --install linkerd-crds linkerd/linkerd-crds -n ${NAMESPACE} --wait
+echo "Installing Gateway API..."
 kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
 
-linkerd upgrade --crds --linkerd-namespace ${NAMESPACE} \
-  --identity-issuer-certificate-file=issuer.crt \
-  --identity-issuer-key-file=issuer.key \
-  --identity-trust-anchors-file=ca.crt | kubectl apply -f -
+echo "Installing Linkerd CRDs..."
+helm upgrade --install linkerd-crds linkerd-edge/linkerd-crds -n ${NAMESPACE}
 
 echo "Installing Linkerd Control Plane..."
-helm upgrade --install linkerd-control-plane linkerd/linkerd-control-plane \
-  -n ${NAMESPACE} \
-  --set installNamespace=false \
-  --set namespace=${NAMESPACE} \
-  --set-file identityTrustAnchorsPEM=ca.crt \
-  --set-file identity.issuer.tls.crtPEM=issuer.crt \
-  --set-file identity.issuer.tls.keyPEM=issuer.key
+#helm install linkerd-control-plane \
+#  -n ${NAMESPACE} \
+#  --set-file identityTrustAnchorsPEM=ca.crt \
+#  --set-file identity.issuer.tls.crtPEM=issuer.crt \
+#  --set-file identity.issuer.tls.keyPEM=issuer.key \
+#  linkerd-edge/linkerd-control-plane
+
 
 echo "Installing Linkerd Viz..."
 helm upgrade --install linkerd-viz linkerd/linkerd-viz -n ${NAMESPACE} ${VIZ_VALUES[@]}
 
 # Escape newlines as \n so -----END CERTIFICATE----- is not parsed as YAML document separator (awk works on macOS and Linux)
 export CA_CERT=$(awk '{printf "%s\\n", $0}' ca.crt)
-envsubst < linkerd-config-map.yml | kubectl apply -f -
-
+envsubst < ${SCRIPT_DIR}/linkerd-config-map.yml | kubectl apply -f -
 
 # linkerd check --linkerd-namespace ${NAMESPACE}
 
 echo "Installing Loki..."
-
 helm upgrade --install loki grafana/loki-stack \
   --namespace=${NAMESPACE} \
   "${MONITORING_VALUES[@]}"
@@ -90,7 +87,7 @@ kubectl create secret generic account-cluster-manager-zqqat --from-file=token=cl
 kubectl describe secrets account-cluster-manager-zqqat -n ${NAMESPACE}
 
 echo "Annotating application namespace for Linkerd injection..."
-kubectl create namespace application
+kubectl create namespace application --dry-run=client -o yaml | kubectl apply -f -
 kubectl annotate namespace application linkerd.io/inject=enabled
 
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml

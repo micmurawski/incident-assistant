@@ -1,11 +1,11 @@
 
 
 import asyncio
+import json
 import os
 import uuid
 from typing import Any, Literal, TypeVar
 
-from framework import AsyncFlow
 from openinference.instrumentation import using_attributes
 from openinference.instrumentation.anthropic import AnthropicInstrumentor
 from openinference.instrumentation.google_genai import GoogleGenAIInstrumentor
@@ -13,6 +13,7 @@ from openinference.instrumentation.openai import OpenAIInstrumentor
 from opentelemetry import trace
 from phoenix.otel import register
 
+from agent.grafana_client.client import GrafanaClient
 from agent.llm import LLMAgent
 from agent.providers import build_api_handler
 from agent.providers.base import ApiHandler
@@ -24,8 +25,8 @@ from agent.tooling.kubectl import KubectlTools
 from agent.tooling.metrics import MetricsTools
 from agent.tooling.planning import PlanningTools
 from agent.tracing import trace_flow
-import json
-from agent.grafana_client.client import GrafanaClient
+from framework import AsyncFlow
+
 T = TypeVar('T')
 
 

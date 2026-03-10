@@ -46,10 +46,10 @@ module "eks" {
     # Node Group for your 8 Microservices
     apps = {
       ami_type       = "AL2023_ARM_64_STANDARD"
-      instance_types = ["t4g.medium"]
+      instance_types = ["t4g.medium", "t4g.small"]
       min_size       = 1
-      max_size       = 1
-      desired_size   = 1
+      max_size       = 3
+      desired_size   = 2
 
       labels = {
         role = "application"
@@ -115,6 +115,13 @@ module "eks" {
   }
 
   tags = local.default_tags
+}
+
+
+# Grant incident-assistant read/write access to ECR
+resource "aws_iam_user_policy_attachment" "incident_assistant_ecr_poweruser" {
+  user       = data.aws_iam_user.incident-assistant.user_name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
 }
 
 
