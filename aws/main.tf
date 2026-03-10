@@ -32,7 +32,7 @@ module "eks" {
     kube-proxy = {}
     vpc-cni = {
       before_compute = true
-      most_recent    = true # To ensure access to the latest settings provided
+      most_recent    = true               # To ensure access to the latest settings provided
       configuration_values = jsonencode({ # This increases number of pods that can be scheduled on the node
         env = {
           ENABLE_PREFIX_DELEGATION = "true"
@@ -82,7 +82,7 @@ module "eks" {
   }
   access_entries = {
     robot_access = {
-      principal_arn = "arn:aws:iam::189429133920:user/robot"
+      principal_arn = data.aws_iam_user.robot.arn
       policy_associations = {
         cluster_admin = {
           policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
@@ -95,7 +95,7 @@ module "eks" {
 
     # Incident assistant: namespace-scoped edit in application + cluster-scoped view (e.g. list nodes)
     incident_assistant = {
-      principal_arn = "arn:aws:iam::189429133920:user/incident-assistant"
+      principal_arn = data.aws_iam_user.incident-assistant.arn
       policy_associations = {
         namespace_edit = {
           policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy"
@@ -113,29 +113,29 @@ module "eks" {
       }
     }
   }
-  
+
   tags = local.default_tags
 }
 
 
 # ECR Repositories for Robot Shop services
-resource "aws_ecr_repository" "robot_shop" {
-  for_each = toset(var.robot_shop_services)
-
-  name                 = "robot-shop-${each.key}"
-  image_tag_mutability = "MUTABLE"
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-  encryption_configuration {
-    encryption_type = "AES256"
-  }
-
-  #lifecycle {
-  #  prevent_destroy = true
-  #}
-}
+#resource "aws_ecr_repository" "robot_shop" {
+#  for_each = toset(var.robot_shop_services)
+#
+#  name                 = "robot-shop-${each.key}"
+#  image_tag_mutability = "MUTABLE"
+#
+#  image_scanning_configuration {
+#    scan_on_push = true
+#  }
+#  encryption_configuration {
+#    encryption_type = "AES256"
+#  }
+#
+#  #lifecycle {
+#  #  prevent_destroy = true
+#  #}
+#}
 
 # ------------------------------------------------------------------------------
 # Outputs (for kubeconfig and scripts)

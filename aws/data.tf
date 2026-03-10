@@ -3,6 +3,17 @@ data "aws_vpc" "default" {
   default = true
 }
 
+data "aws_caller_identity" "current" {}
+
+
+data "aws_iam_user" "robot" {
+  user_name = "robot"
+}
+
+data "aws_iam_user" "incident-assistant" {
+  user_name = "incident-assistant"
+}
+
 data "aws_subnets" "default" {
   filter {
     name   = "vpc-id"
