@@ -5,6 +5,7 @@ MONITORING_VALUES=(-f "${SCRIPT_DIR}/values-o11y-monitoring-node.yaml")
 VIZ_VALUES=(-f "${SCRIPT_DIR}/values-viz-monitoring-node.yaml")
 
 kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+kubectl create namespace application --dry-run=client -o yaml | kubectl apply -f -
 kubectl label namespace ${NAMESPACE} config.linkerd.io/admission-webhooks=disabled --overwrite
 # check if ca.crt and ca.key exist
 if [ ! -f "ca.crt" ] || [ ! -f "ca.key" ]; then
@@ -34,12 +35,12 @@ echo "Installing Linkerd CRDs..."
 helm upgrade --install linkerd-crds linkerd-edge/linkerd-crds -n ${NAMESPACE}
 
 echo "Installing Linkerd Control Plane..."
-#helm install linkerd-control-plane \
-#  -n ${NAMESPACE} \
-#  --set-file identityTrustAnchorsPEM=ca.crt \
-#  --set-file identity.issuer.tls.crtPEM=issuer.crt \
-#  --set-file identity.issuer.tls.keyPEM=issuer.key \
-#  linkerd-edge/linkerd-control-plane
+helm upgrade --install linkerd-control-plane \
+  -n ${NAMESPACE} \
+  --set-file identityTrustAnchorsPEM=ca.crt \
+  --set-file identity.issuer.tls.crtPEM=issuer.crt \
+  --set-file identity.issuer.tls.keyPEM=issuer.key \
+  linkerd-edge/linkerd-control-plane
 
 
 echo "Installing Linkerd Viz..."
@@ -87,7 +88,7 @@ kubectl create secret generic account-cluster-manager-zqqat --from-file=token=cl
 kubectl describe secrets account-cluster-manager-zqqat -n ${NAMESPACE}
 
 echo "Annotating application namespace for Linkerd injection..."
-kubectl create namespace application --dry-run=client -o yaml | kubectl apply -f -
+
 kubectl annotate namespace application linkerd.io/inject=enabled
 
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml

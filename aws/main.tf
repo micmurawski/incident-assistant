@@ -40,6 +40,9 @@ module "eks" {
         }
       })
     }
+    aws-ebs-csi-driver = {
+      most_recent = true
+    }
   }
 
   eks_managed_node_groups = {
@@ -48,8 +51,8 @@ module "eks" {
       ami_type       = "AL2023_ARM_64_STANDARD"
       instance_types = ["t4g.medium", "t4g.small"]
       min_size       = 1
-      max_size       = 3
-      desired_size   = 2
+      max_size       = 1
+      desired_size   = 1
 
       labels = {
         role = "application"
@@ -62,7 +65,7 @@ module "eks" {
       ami_type       = "AL2023_ARM_64_STANDARD"
       instance_types = ["t4g.medium"]
       min_size       = 1
-      max_size       = 2
+      max_size       = 1
       desired_size   = 1
 
       labels = {
