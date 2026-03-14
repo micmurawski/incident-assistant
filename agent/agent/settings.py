@@ -24,7 +24,7 @@ DEFAULT_SETTINGS = {
     },
     "persistence": {
         "driver": "sqlite",
-        "url": "agent.db"
+        "url": "./agent.db"
     },
     "api": {
         "provider": "ollama",

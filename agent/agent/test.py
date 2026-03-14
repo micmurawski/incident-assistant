@@ -6,6 +6,7 @@ import os
 import uuid
 from typing import Any, Literal, TypeVar
 
+from framework import AsyncFlow
 from openinference.instrumentation import using_attributes
 from openinference.instrumentation.anthropic import AnthropicInstrumentor
 from openinference.instrumentation.google_genai import GoogleGenAIInstrumentor
@@ -25,7 +26,6 @@ from agent.tooling.kubectl import KubectlTools
 from agent.tooling.metrics import MetricsTools
 from agent.tooling.planning import PlanningTools
 from agent.tracing import trace_flow
-from framework import AsyncFlow
 
 T = TypeVar('T')
 

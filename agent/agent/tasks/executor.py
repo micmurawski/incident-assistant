@@ -12,7 +12,9 @@ TODO_LIST_PROMPT = """
 Here is the todo list:
 {todos_str}
 
-Please provide feedback on the todo list.
+Please work on the todo list. And report back when you are done. 
+Only last message will be considered as the final answer.
+If you will be ask to improve result, you should correct your previous answer.
 """
 
 
@@ -41,7 +43,7 @@ class TaskExecutor:
         assigner_agent: LLMAgent = AgentRegistry.get_instance().get(assigner)
         shared = {"task": current_task, "messages": current_task.conversation}
 
-        for _ in range(parent_task.consecutive_mistakes_limit):
+        for _ in range(current_task.consecutive_mistakes_limit):
             await assignee_agent.call(shared=shared)
             current_task.status = TaskStatus.AWAITING_FEEDBACK
             current_task.conversation = shared["messages"]
@@ -71,16 +73,21 @@ class TaskExecutor:
                 None
             )
             if feedback_tool_use is None:
-                parent_task.consecutive_mistakes_count += 1
+                current_task.consecutive_mistakes_count += 1
+                current_task.save()
                 continue
             if feedback_tool_use["input"].get("approve"):
                 current_task.attempt_complete()
+                current_task.save()
                 return ToolResult(result=current_task.conversation[-1]["content"], error=None)
             elif feedback_tool_use["input"].get("discard"):
                 current_task.status = TaskStatus.DISCARDED
+                current_task.save()
                 return ToolResult(result="Task is not longer relevant and was discarded", error=None)
             else:
-                parent_task.consecutive_mistakes_count += 1
-                parent_task.status = TaskStatus.AWAITING_INPUT
+                current_task.consecutive_mistakes_count += 1
+                current_task.status = TaskStatus.AWAITING_INPUT
                 shared["messages"].append({"role": "user", "content": feedback_tool_use["input"].get("feedback")})
+                current_task.save()
+        
         return ToolResult(result=None, error="Assigned task execution exhausted all completion attempts. Please try again with a different approach.")

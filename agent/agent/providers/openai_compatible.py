@@ -120,9 +120,9 @@ class OpenAICompatibleHandler(ApiHandler):
         except Exception as e:
             raise handle_open_ai_error(e, "ollama") from e
 
-    async def count_tokens(self, content: list[MessageParam]) -> int:
+    async def count_tokens(self, content: list[MessageParam], tools: list[dict] | None = None) -> int:
         # run count_tokens in async worker
-        return await asyncio.to_thread(count_tokens, content)
+        return await asyncio.to_thread(count_tokens, content, tools)
 
 
 async def main():

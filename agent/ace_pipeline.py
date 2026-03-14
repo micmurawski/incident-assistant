@@ -5,10 +5,11 @@ from datetime import datetime
 from platform import node
 from typing import Annotated, Literal, TypedDict
 
+from framework import AsyncFlow
+
 from agent.llm import LLMAgent
 from agent.tasks.tasks import Task
 from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
-from framework import AsyncFlow
 
 PossibleActions = Literal["ADD", "UPDATE", "DELETE", "NONE"]
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

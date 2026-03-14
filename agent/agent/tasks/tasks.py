@@ -24,7 +24,6 @@ class Task:
     assigner: str | None = None
 
     conversation: list[ApiMessage] = field(default_factory=list)
-    last_message_ts: int | None = None
 
     consecutive_mistakes_count: int = field(default=0)
     consecutive_mistakes_limit: int = field(default=3)
@@ -141,6 +140,21 @@ class Task:
             queue.extend((child, level + 1) for child in task.children)
 
         return deepest
+    
+    def save(self, key: tuple[str, str] | None = None):
+        from agent.persistence.model import TaskModel
+        TaskModel.create(
+            root_id=key[0] if key else self.root.id,
+            id=self.id,
+            conversation_content=json.dumps(self.conversation),
+            status=self.status.value,
+            todo_list=json.dumps(self.todo_list),
+            children=[child.id for child in self.children],
+            parent=self.parent.id if self.parent else None,
+            root=self.root.id if self.root else None,
+        )
+        for child in self.children:
+            child.save(key=key or (self.root.id, self.id))
 
     def get_conversation_with_swapped_roles(self) -> list[dict]:
         return swap_roles_in_conversation(

@@ -4,7 +4,26 @@ locals {
     "project"     = "robotshop"
     "environment" = "dev"
   }
+  ebs_csi_role_name = "${var.cluster_name}-ebs-csi-role"
+  ebs_csi_role_arn  = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.ebs_csi_role_name}"
 }
+
+
+module "ebs_csi_irsa_role" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.0"
+
+  role_name             = local.ebs_csi_role_name
+  attach_ebs_csi_policy = true
+
+  oidc_providers = {
+    ex = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
+    }
+  }
+}
+
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 21.0"
@@ -41,7 +60,8 @@ module "eks" {
       })
     }
     aws-ebs-csi-driver = {
-      most_recent = true
+      most_recent              = true
+      service_account_role_arn = local.ebs_csi_role_arn
     }
   }
 
@@ -49,7 +69,7 @@ module "eks" {
     # Node Group for your 8 Microservices
     apps = {
       ami_type       = "AL2023_ARM_64_STANDARD"
-      instance_types = ["t4g.medium", "t4g.small"]
+      instance_types = ["t4g.medium"]
       min_size       = 1
       max_size       = 1
       desired_size   = 1
@@ -58,6 +78,10 @@ module "eks" {
         role = "application"
       }
       associate_public_ip_address = true
+
+      iam_role_additional_policies = {
+        AmazonEBSCSIDriverPolicy = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+      }
     }
 
     # Dedicated Node Group for Observability (Prometheus/Loki/Grafana)
@@ -81,6 +105,10 @@ module "eks" {
         }
       }
       associate_public_ip_address = true
+
+      iam_role_additional_policies = {
+        AmazonEBSCSIDriverPolicy = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+      }
     }
   }
   access_entries = {

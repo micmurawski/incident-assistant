@@ -11,17 +11,22 @@ class PersistenceSettings(TypedDict, total=False):
 
 
 DEFAULT_PERSISTENCE_SETTINGS: PersistenceSettings = {
-    "database_driver": "sqlite",
-    "database_url": "./agent.db",
+    "driver": "sqlite",
+    "url": "./agent.db",
 }
 
 
-def init_db(settings: PersistenceSettings = DEFAULT_PERSISTENCE_SETTINGS) -> SqliteDatabase:
-    database = SqliteDatabase(settings["url"])
-    from agent.persistence.model import (Agent, Conversation, Message, Session,
-                                         Task)
-    models = [Session, Task, Message, Agent, Conversation]
+def init_db() -> SqliteDatabase:
+    from agent.settings import SettingsManager
+    settings = SettingsManager.get_instance()
+    database_settings = settings.get("persistence") or DEFAULT_PERSISTENCE_SETTINGS
+    database = SqliteDatabase(database_settings["url"])
+    from agent.persistence.model import ConversationModel, TaskModel
+    models = [ConversationModel, TaskModel]
     for model in models:
         model.bind(database)
     database.connect()
-    database.create_tables(models)
+
+
+if __name__ == "__main__":
+    init_db()
