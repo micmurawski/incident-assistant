@@ -22,7 +22,7 @@ from agent.settings import SettingsManager
 from agent.tasks.tasks import Task
 from agent.tooling import CodebaseReadTools, CodebaseWriteTools
 from agent.tooling.cli import CliTools
-from agent.tooling.kubectl import KubectlTools
+from agent.tooling.kubectl import KubectlReadTools
 from agent.tooling.metrics import MetricsTools
 from agent.tooling.planning import PlanningTools
 from agent.tracing import trace_flow
@@ -39,7 +39,7 @@ tracer_provider = register(project_name="agent-tracing")
 provider: Literal["anthropic", "openai", "google", "ollama", "minimax"] = "minimax"
 tracer = trace.get_tracer(__name__)
 
-api_keys = json.load(open("api_keys.json"))
+api_keys = json.load(open("api_key.json"))
 
 AGENT_ENV = {
     "AWS_ACCESS_KEY_ID": api_keys["incident-assistant"]["access_key_id"],
@@ -48,7 +48,7 @@ AGENT_ENV = {
 }
 
 GRAFANA_URL = api_keys["grafana_url"]
-GRAFANA_API_KEY = api_keys["grafana_api_key"]
+GRAFANA_API_KEY = api_keys["grafana_api_token"]
 
 settings = SettingsManager.get_instance()
 settings.set("api.provider", provider)
@@ -61,7 +61,14 @@ if provider in ["anthropic", "minimax"]:
         API_KEY = api_keys["anthropic_api_key"]
     settings.set("api.api_key", API_KEY)
     AnthropicInstrumentor().instrument(tracer_provider=tracer_provider)
-elif provider == "openai":
+elif provider in ["openai", "groq"]:
+    if provider == "groq":
+        API_KEY = api_keys["groq_api_key"]
+        settings.set("api.api_key", API_KEY)
+        settings.set("api.base_url", "https://api.groq.com/openai/v1")
+    else:
+        API_KEY = api_keys["openai_api_key"]
+        settings.set("api.api_key", API_KEY)
     OpenAIInstrumentor().instrument(tracer_provider=tracer_provider)
 elif provider == "google":
     API_KEY = api_keys["gemini_api_key"]
@@ -88,6 +95,9 @@ class Agent(LLMAgent):
         self.cwd = cwd
         self.api_handler: ApiHandler = build_api_handler(**api_settings)
         self.name = name
+        
+        if shared_context is None:
+            shared_context = shared_context or {}
 
         @trace_flow(f"agent-{name}-flow")
         class _TracedFlow(AsyncFlow):
@@ -112,18 +122,18 @@ async def main():
             cwd = "/Users/micmur/GITHUB/o8s/services/robot-shop"
             update_todo_tools = PlanningTools.select({"update_todo"})
 
-            manager_tools = PlanningTools
-            devops_tools = CliTools | CodebaseReadTools | KubectlTools | update_todo_tools
-            metrics_tools = MetricsTools | CliTools | update_todo_tools
+            manager_tools = PlanningTools | MetricsTools
+            devops_tools = CliTools | CodebaseReadTools | KubectlReadTools | update_todo_tools
+            #metrics_tools = MetricsTools | CliTools | update_todo_tools
             coder_tools = CodebaseWriteTools | CodebaseReadTools | update_todo_tools
 
             agent_manager = Agent(
                 name="agent_manager",
                 system_prompt="You are a manager of agents. "
                 "You are responsible for assigning tasks to agents and ensuring they are completed."
-                "You have the following agents available: devops, metrics, coder"
+                "You have the following agents available: devops, coder"
                 "devops: is able to manage kubernetes cluster running apps"
-                "metrics: is able to collect metrics from the kubernetes cluster"
+                # "metrics: is able to collect metrics from the kubernetes cluster"
                 "coder: is able to code the application",
                 cwd=cwd,
                 tools=manager_tools,
@@ -140,14 +150,14 @@ async def main():
                 env=AGENT_ENV,
             ).register()
 
-            Agent(
-                name="metrics",
-                system_prompt="You are a metrics helper. You know the codebase and the metrics."
-                "You are responsible for helping with the metrics.",
-                cwd=cwd,
-                tools=metrics_tools,
-                env=AGENT_ENV,
-            ).register()
+            #Agent(
+            #    name="metrics",
+            #    system_prompt="You are a metrics helper. You know the codebase and the metrics."
+            #    "You are responsible for helping with the metrics.",
+            #    cwd=cwd,
+            #    tools=metrics_tools,
+            #    env=AGENT_ENV,
+            #).register()
 
             Agent(
                 name="coder",
@@ -165,7 +175,7 @@ async def main():
                 conversation=[
                     {
                         "role": "user",
-                        "content": "Can you ask your team to check if we are using java in the codebase?"
+                        "content": "Can you check if our application is running correctly?"
                     }
                 ],
             )
@@ -176,6 +186,7 @@ async def main():
                 "messages": goal.conversation,
                 "task": goal,
                 "grafana_client": GrafanaClient(url=GRAFANA_URL, api_key=GRAFANA_API_KEY),
+                "env": AGENT_ENV,
             }
 
             print(agent_manager.get_flow_graph())

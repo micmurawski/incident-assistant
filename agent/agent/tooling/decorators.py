@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from inspect import Parameter
 from typing import (Annotated, Any, Callable, Coroutine, GenericAlias, Literal,
                     Optional, TypedDict, TypeVar, Union, _AnnotatedAlias,
-                    _TypedDictMeta)
+                    _TypedDictMeta, get_args, get_origin)
 
 from framework import AsyncNode
 from framework.generic_messages import select_tools_use
@@ -202,16 +202,38 @@ def process_param(
         if description:
             result["description"] = description
         return process_param(param.__origin__, result, additional_properties, required)
+    elif (origin := get_origin(param)) is not None and origin in CLASS_TO_TYPE:
+        # Handle generic containers (list[X], List[X], dict[K,V], etc.) via get_origin/get_args
+        # so we support both types.GenericAlias (list[int]) and typing._GenericAlias (List[Literal[...]])
+        args = get_args(param)
+        _type = CLASS_TO_TYPE[origin]
+        result["type"] = _type
+        if _type == "array":
+            # Array types expect a single item type (e.g. List[Literal[...]], list[str])
+            if args:
+                items, _, __ = process_param(args[0])
+                result["items"] = items
+            else:
+                result["items"] = {"type": "string"}
+        elif _type == "object":
+            if len(args) >= 2:
+                value_schema, _, __ = process_param(args[1])
+                result["additionalProperties"] = value_schema
+            else:
+                result["additionalProperties"] = True
+        return result, required, additional_properties
     elif isinstance(param, GenericAlias):
-        # Handle generic containers (e.g. list[int], dict[str, X])
+        # Fallback for GenericAlias not matched by get_origin (e.g. same as above for older runtimes)
         _type = CLASS_TO_TYPE.get(param.__origin__)
         if not _type:
             raise Exception(f"Unsupported GenericAlias {param}")
         result["type"] = _type
         if _type == "array":
-            # Array types expect a single item type
-            items, _, __ = process_param(param.__args__[0])
-            result["items"] = items
+            if param.__args__:
+                items, _, __ = process_param(param.__args__[0])
+                result["items"] = items
+            else:
+                result["items"] = {"type": "string"}
         elif _type == "object":
             if len(param.__args__) >= 2:
                 value_schema, _, __ = process_param(param.__args__[1])

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import TypeVar
 from uuid import uuid4
 
-from agent.persistence.model import Task as TaskModel
+from agent.persistence.model import TaskModel
 from agent.tasks.formatting import parse_markdown_checklist
 from agent.tasks.types import TaskStatus, TodoItem, ToolUsage
 from agent.types import ApiMessage
@@ -50,29 +50,6 @@ class Task:
     def __post_init__(self):
         if self.root is None:
             self.root = self
-
-    def persist(self):
-        root = self.root or self
-        session_id = root.id
-
-        # dfs and persist all tasks
-        def dfs(task: Task):
-            print(f"Persisting task {task.id}")
-            TaskModel.create_or_update(
-                session=session_id,
-                id=task.id,
-                children=[child.id for child in task.children],
-                status=task.status.value,
-                todo_list=json.dumps(task.todo_list),
-                parent=task.parent.id if task.parent else None,
-                root=task.root.id if task.root else None,
-                assignee=task.assignee,
-                assigner=task.assigner,
-            )
-            for child in task.children:
-                dfs(child)
-
-        dfs(root)
 
     def create_child_task(self, **kwargs) -> "Task":
         todo_list = kwargs.pop("todo_list", None)
@@ -142,7 +119,6 @@ class Task:
         return deepest
     
     def save(self, key: tuple[str, str] | None = None):
-        from agent.persistence.model import TaskModel
         TaskModel.create(
             root_id=key[0] if key else self.root.id,
             id=self.id,

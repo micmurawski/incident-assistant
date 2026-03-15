@@ -173,6 +173,13 @@ class GrafanaClient:
         )
         r.raise_for_status()
         data = r.json()
+        #import json
+        #print(data["results"]["A"]["status"])
+        #print(json.dumps(data["results"]["A"]["frames"][0]["schema"], indent=4))
+        #print("keys: ", data["results"]["A"]["frames"][0]['data']['values'][2][0])
+        #with open("data.json", "w") as f:
+        #    json.dump(data, f, indent=4)
+        #print(json.dumps(data, indent=4))
         return self._extract_loki_results(data)
 
     def _extract_loki_results(self, data: dict) -> list[dict[str, Any]]:
@@ -185,8 +192,8 @@ class GrafanaClient:
                 values = frame.get("data", {}).get("values", [])
                 if len(values) < 2:
                     continue
-                times_raw = values[0]
-                lines_raw = values[1]
+                times_raw = values[1]
+                lines_raw = values[2]
                 labels = {}
                 if schema_fields and isinstance(schema_fields[0], dict):
                     labels = schema_fields[0].get("labels") or {}

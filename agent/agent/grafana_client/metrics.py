@@ -14,8 +14,9 @@ def _get_rate_selector(namespace: str, apps: list[str] | None, direction: str = 
     sel = f'job="{LINKERD_JOB}", namespace="{namespace}", direction="{direction}"'
     if apps:
         # Match deployment or app label
-        app_re = "|".join(apps)
-        sel += f', deployment=~"{app_re}"'
+        app_re = "|".join([f'{app}.*' for app in apps])
+        sel += f', pod=~"{app_re}"'
+    print(sel)
     return sel
 
 
@@ -26,25 +27,44 @@ def get_latency_percentiles(
     window: str = "5m",
 ) -> dict[str, dict[str, float]]:
     """
-    Get p50, p95, p99 latency (ms) per app/deployment.
+    Get p50, p95, p99 latency (ms) per app (by pod, then aggregated by app).
 
     Returns:
-        { "deployment_name": {"p50": 10.5, "p95": 50.2, "p99": 120.0}, ... }
+        { "app_name": {"p50": 10.5, "p95": 50.2, "p99": 120.0}, ... }
     """
     sel = _get_rate_selector(namespace, apps)
-    base = f'sum(rate(response_latency_ms_bucket{{{sel}}}[{window}])) by (le, deployment)'
+    # Use pod so StatefulSets (e.g. redis) are included; Deployments have pod too
+    base = f'sum(rate(response_latency_ms_bucket{{{sel}}}[{window}])) by (le, pod)'
 
-    result: dict[str, dict[str, float]] = {}
+    # Collect (app, percentile) -> list of values for averaging across pods
+    app_percentile_values: dict[str, dict[str, list[float]]] = {}
+    app_list = apps or []
 
     for q, p in [("0.50", "p50"), ("0.95", "p95"), ("0.99", "p99")]:
         expr = f"histogram_quantile({q}, {base})"
         frames = client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
         for frame in frames:
-            for dep, val in _extract_series_by_deployment(frame):
-                if dep not in result:
-                    result[dep] = {}
-                result[dep][p] = float(val) if val is not None else 0.0
+            for pod_name, val in _extract_series_by_pod(frame):
+                if val is None:
+                    continue
+                try:
+                    num = float(val)
+                except (TypeError, ValueError):
+                    continue
+                for app in app_list:
+                    if pod_name == app or pod_name.startswith(app + "-"):
+                        if app not in app_percentile_values:
+                            app_percentile_values[app] = {}
+                        app_percentile_values[app].setdefault(p, []).append(num)
+                        break
 
+    # Average per app per percentile (so one value per app)
+    result: dict[str, dict[str, float]] = {}
+    for app in app_list:
+        result[app] = {}
+        for p in ("p50", "p95", "p99"):
+            vals = (app_percentile_values.get(app) or {}).get(p, [])
+            result[app][p] = sum(vals) / len(vals) if vals else 0.0
     return result
 
 
@@ -55,27 +75,37 @@ def get_http_error_counts(
     window: str = "5m",
 ) -> dict[str, dict[str, float]]:
     """
-    Get 4XX and 5XX response counts per app.
+    Get 4XX and 5XX response counts per app (by pod, then aggregated by app).
 
     Returns:
-        { "deployment_name": {"4xx": 10, "5xx": 2}, ... }
+        { "app_name": {"4xx": 10, "5xx": 2}, ... }
     """
     sel = _get_rate_selector(namespace, apps)
     result: dict[str, dict[str, float]] = {}
+    app_list = apps or []
 
     for status_pattern, key in [("4..", "4xx"), ("5..", "5xx")]:
-        expr = f'sum(increase(response_total{{{sel}, status_code=~"{status_pattern}"}}[{window}])) by (deployment)'
+        expr = f'sum(increase(response_total{{{sel}, status_code=~"{status_pattern}"}}[{window}])) by (pod)'
         frames = client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
         for frame in frames:
-            for dep, val in _extract_series_by_deployment(frame):
-                if dep not in result:
-                    result[dep] = {"4xx": 0.0, "5xx": 0.0}
-                result[dep][key] = float(val) if val is not None else 0.0
+            for pod_name, val in _extract_series_by_pod(frame):
+                if val is None:
+                    continue
+                try:
+                    num = float(val)
+                except (TypeError, ValueError):
+                    continue
+                for app in app_list:
+                    if pod_name == app or pod_name.startswith(app + "-"):
+                        if app not in result:
+                            result[app] = {"4xx": 0.0, "5xx": 0.0}
+                        result[app][key] = result[app].get(key, 0.0) + num
+                        break
 
-    # Ensure all apps have both keys
-    for dep in list(result):
-        result[dep].setdefault("4xx", 0.0)
-        result[dep].setdefault("5xx", 0.0)
+    for app in app_list:
+        result.setdefault(app, {"4xx": 0.0, "5xx": 0.0})
+        result[app].setdefault("4xx", 0.0)
+        result[app].setdefault("5xx", 0.0)
     return result
 
 
@@ -86,18 +116,28 @@ def get_request_rate(
     window: str = "5m",
 ) -> dict[str, float]:
     """
-    Get request rate (req/s) per app.
+    Get request rate (req/s) per app (summed over all pods for each app).
 
     Returns:
-        { "deployment_name": 12.5, ... }
+        { "app_name": 12.5, ... }
     """
     sel = _get_rate_selector(namespace, apps)
-    expr = f'sum(rate(response_total{{{sel}}}[{window}])) by (deployment)'
+    expr = f'sum(rate(response_total{{{sel}}}[{window}])) by (pod)'
+    print(expr)
     frames = client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
-    result: dict[str, float] = {}
+    pod_rates: dict[str, float] = {}
     for frame in frames:
-        for dep, val in _extract_series_by_deployment(frame):
-            result[dep] = float(val) if val is not None else 0.0
+        for pod_name, val in _extract_series_by_pod(frame):
+            pod_rates[pod_name] = float(val) if val is not None else 0.0
+
+    # Aggregate by app: pod "redis-0" -> app "redis", "cart-7b8f9c-xyz" -> "cart"
+    result: dict[str, float] = {}
+    app_list = apps or []
+    for pod_name, rate in pod_rates.items():
+        for app in app_list:
+            if pod_name == app or pod_name.startswith(app + "-"):
+                result[app] = result.get(app, 0.0) + rate
+                break
     return result
 
 
@@ -168,20 +208,34 @@ def get_success_rate(
     window: str = "5m",
 ) -> dict[str, float]:
     """
-    Get success rate (0-1) per app.
+    Get success rate (0-1) per app (by pod, then aggregated by app).
 
     Returns:
-        { "deployment_name": 0.98, ... }
+        { "app_name": 0.98, ... }
     """
     sel = _get_rate_selector(namespace, apps)
-    total = f'sum(rate(response_total{{{sel}}}[{window}])) by (deployment)'
-    success = f'sum(rate(response_total{{{sel}, classification="success"}}[{window}])) by (deployment)'
+    total = f'sum(rate(response_total{{{sel}}}[{window}])) by (pod)'
+    success = f'sum(rate(response_total{{{sel}, classification="success"}}[{window}])) by (pod)'
     expr = f"({success}) / ({total})"
     frames = client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
-    result: dict[str, float] = {}
+    pod_rates: dict[str, float] = {}
     for frame in frames:
-        for dep, val in _extract_series_by_deployment(frame):
-            result[dep] = float(val) if val is not None and val == val else 0.0
+        for pod_name, val in _extract_series_by_pod(frame):
+            if val is not None and val == val:  # skip NaN
+                pod_rates[pod_name] = float(val)
+
+    # Aggregate by app: average success rate across pods
+    app_rates: dict[str, list[float]] = {}
+    app_list = apps or []
+    for pod_name, rate in pod_rates.items():
+        for app in app_list:
+            if pod_name == app or pod_name.startswith(app + "-"):
+                app_rates.setdefault(app, []).append(rate)
+                break
+    result = {
+        app: sum(vals) / len(vals) if (vals := app_rates.get(app)) else 0.0
+        for app in app_list
+    }
     return result
 
 
@@ -192,6 +246,39 @@ def _extract_single_value(frames: list[dict[str, Any]]) -> float | None:
             if val is not None:
                 return val
     return None
+
+
+def _extract_series_by_pod(frame: dict[str, Any]) -> list[tuple[str, float | None]]:
+    """
+    Extract (pod, value) pairs from a Prometheus/Grafana frame.
+    Handles instant query format: value field with labels, values in data.values.
+    """
+    out: list[tuple[str, float | None]] = []
+    schema = frame.get("schema", {})
+    fields = schema.get("fields", [])
+    col_vals = frame.get("data", {}).get("values", [])
+
+    if not fields or not col_vals:
+        return out
+
+    for i, f in enumerate(fields):
+        ftype = str(f.get("type", "")).lower()
+        if "time" in ftype:
+            continue
+        labels = f.get("labels") or {}
+        pod = labels.get("pod", "unknown")
+        if i >= len(col_vals):
+            continue
+        val_list = col_vals[i]
+        if not isinstance(val_list, list):
+            val_list = [val_list]
+        for v in val_list:
+            try:
+                num = float(v) if v is not None else None
+            except (TypeError, ValueError):
+                num = None
+            out.append((pod, num))
+    return out
 
 
 def _extract_series_by_deployment(frame: dict[str, Any]) -> list[tuple[str, float | None]]:

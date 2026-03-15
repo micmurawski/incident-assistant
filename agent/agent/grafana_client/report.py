@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
@@ -24,6 +24,8 @@ def format_status_report(
     memory_usage: dict[str, float],
     error_counts: dict[str, int],
     grouped_errors: dict[str, list[dict[str, Any]]],
+    cpu_limits: Optional[dict[str, float]] = None,
+    memory_limits: Optional[dict[str, float]] = None,
 ) -> str:
     """
     Format a concise MD report of app status for LLM context when an alert fires.
@@ -62,10 +64,17 @@ def format_status_report(
         cpu = cpu_usage.get(app, 0)
         mem_mb = memory_usage.get(app, 0) / (1024 * 1024)
 
+        # Use limits from cluster (kubectl) when provided, else fallback defaults
+        cpu_limit_cores = (cpu_limits.get(app) if cpu_limits else None) or 1.0
+        mem_limit_bytes = (memory_limits.get(app) if memory_limits else None) or (512.0 * 1024 * 1024)
+        mem_limit_mb = mem_limit_bytes / (1024 * 1024)
+        cpu_pct = (cpu / cpu_limit_cores * 100) if cpu_limit_cores > 0 else 0.0
+        mem_pct = (mem_mb / mem_limit_mb * 100) if mem_limit_mb > 0 else 0.0
+
         lines.append("| Metric | Value |")
         lines.append("|--------|-------|")
-        lines.append(f"| CPU (cores) | {cpu:.3f} |")
-        lines.append(f"| Memory (MB) | {mem_mb:.1f} |")
+        lines.append(f"| CPU (cores, % of limit) | {cpu:.3f} ({cpu_pct:.1f}%) |")
+        lines.append(f"| Memory (MB, % of limit) | {mem_mb:.1f} ({mem_pct:.1f}%) |")
         lines.append(f"| Latency p50 (ms) | {lat.get('p50', 0):.1f} |")
         lines.append(f"| Latency p95 (ms) | {lat.get('p95', 0):.1f} |")
         lines.append(f"| Latency p99 (ms) | {lat.get('p99', 0):.1f} |")
@@ -129,6 +138,8 @@ def build_status_report(
     window: str = "5m",
     similarity_threshold: float = 0.5,
     pod_selector: str | None = None,
+    cpu_limits: Optional[dict[str, float]] = None,
+    memory_limits: Optional[dict[str, float]] = None,
 ) -> str:
     """
     Build a concise MD status report for LLM consumption.
@@ -180,4 +191,6 @@ def build_status_report(
         memory_usage=memory_usage,
         error_counts=error_counts,
         grouped_errors=grouped_errors,
+        cpu_limits=cpu_limits,
+        memory_limits=memory_limits,
     )

@@ -206,13 +206,15 @@ class LLMAgent(ABC):
             **self.shared_context,
         }
         if self.tools:
-            res["tools"] = self.tools
+            # summarize_context expects list[dict] (tool definitions for token counting), not the Tools instance
+            res["tools"] = self.tools_definitions
         return res
 
-    async def call(self):
+    async def call(self, shared: dict[str, Any]):
         if self.flow is None:
             raise ValueError("Flow is not bound")
-        return await self.flow.run_async(self.get_shared())
+        shared = {**self.get_shared(), **shared}
+        return await self.flow.run_async(shared)
 
     @node
     async def call_llm(

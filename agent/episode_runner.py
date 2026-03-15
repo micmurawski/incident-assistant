@@ -51,20 +51,13 @@ def step1_create_workspace(source_dir: Path, workspace_dir: Path) -> None:
     if workspace_dir.exists():
         shutil.rmtree(workspace_dir)
     shutil.copytree(source_dir, workspace_dir, symlinks=False)
-    print(f"[1] Created workspace at {workspace_dir}")
-
-
-def step2_remove_git(workspace_dir: Path) -> None:
-    """Remove .git so agents do not see git history."""
     git_dir = workspace_dir / ".git"
     if git_dir.exists():
         shutil.rmtree(git_dir)
-        print("[2] Removed .git from workspace")
-    else:
-        print("[2] No .git in workspace (already clean)")
+    print(f"[1] Created workspace at {workspace_dir}")
 
 
-def step3_select_fault(fault_vault_dir: Path) -> Path | None:
+def step2_select_fault(fault_vault_dir: Path) -> Path | None:
     """Select a random fault from fault-vault (directory containing git.patch + INCIDENT.md)."""
     if not fault_vault_dir.exists():
         print(f"[3] Fault-vault not found: {fault_vault_dir}")
@@ -215,12 +208,8 @@ def run_episode(
     step1_create_workspace(source_dir, workspace_dir)
     out["steps_ok"]["create_workspace"] = True
 
-    # 2. Remove .git
-    step2_remove_git(workspace_dir)
-    out["steps_ok"]["remove_git"] = True
-
-    # 3. Select fault
-    fault_dir = step3_select_fault(fault_vault_dir)
+    # 2. Select fault
+    fault_dir = step2_select_fault(fault_vault_dir)
     if not fault_dir:
         out["steps_ok"]["select_fault"] = False
         return out
