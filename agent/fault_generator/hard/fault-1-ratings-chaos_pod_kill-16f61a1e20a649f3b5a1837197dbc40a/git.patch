@@ -1,0 +1,198 @@
+From 87cfac4e045c02500a0f800bea363a7cb54b6a15 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Micha=C5=82=20Murawski?= <mmurawski777@gmail.com>
+Date: Mon, 16 Mar 2026 21:24:37 +0100
+Subject: [PATCH] fault:
+ fault-1-ratings-chaos_pod_kill-16f61a1e20a649f3b5a1837197dbc40a
+
+---
+ .../src/Controller/RatingsApiController.php   | 54 ++++++++++++-------
+ ratings/html/src/Database.php                 |  6 ++-
+ ratings/html/src/Kernel.php                   |  3 +-
+ ratings/html/src/Service/CatalogueService.php |  2 +
+ .../html/src/Service/HealthCheckService.php   | 20 ++++++-
+ ratings/html/src/Service/RatingsService.php   | 13 +++++
+ 6 files changed, 75 insertions(+), 23 deletions(-)
+
+diff --git a/ratings/html/src/Controller/RatingsApiController.php b/ratings/html/src/Controller/RatingsApiController.php
+index ba69333..45f08da 100644
+--- a/ratings/html/src/Controller/RatingsApiController.php
++++ b/ratings/html/src/Controller/RatingsApiController.php
+@@ -45,30 +45,44 @@ class RatingsApiController implements LoggerAwareInterface
+     {
+         $score = min(max(1, $score), 5);
+ 
+-        try {
+-            if (false === $this->catalogueService->checkSKU($sku)) {
+-                throw new NotFoundHttpException("$sku not found");
++        $maxRetries = 3;
++        $retryDelay = 500000;
++        
++        for ($attempt = 0; $attempt < $maxRetries; $attempt++) {
++            try {
++                if (false === $this->catalogueService->checkSKU($sku)) {
++                    throw new NotFoundHttpException("$sku not found");
++                }
++                break;
++            } catch (\Exception $e) {
++                if ($attempt === $maxRetries - 1) {
++                    throw new HttpException(500, $e->getMessage(), $e);
++                }
++                usleep($retryDelay);
+             }
+-        } catch (\Exception $e) {
+-            throw new HttpException(500, $e->getMessage(), $e);
+         }
+ 
+-        try {
+-            $rating = $this->ratingsService->ratingBySku($sku);
+-            if (0 === $rating['avg_rating']) {
+-                // not rated yet
+-                $this->ratingsService->addRatingForSKU($sku, $score);
+-            } else {
+-                // iffy maths
+-                $newAvg = (($rating['avg_rating'] * $rating['rating_count']) + $score) / ($rating['rating_count'] + 1);
+-                $this->ratingsService->updateRatingForSKU($sku, $newAvg, $rating['rating_count'] + 1);
+-            }
++        for ($attempt = 0; $attempt < $maxRetries; $attempt++) {
++            try {
++                $rating = $this->ratingsService->ratingBySku($sku);
++                if (0 === $rating['avg_rating']) {
++                    // not rated yet
++                    $this->ratingsService->addRatingForSKU($sku, $score);
++                } else {
++                    // iffy maths
++                    $newAvg = (($rating['avg_rating'] * $rating['rating_count']) + $score) / ($rating['rating_count'] + 1);
++                    $this->ratingsService->updateRatingForSKU($sku, $newAvg, $rating['rating_count'] + 1);
++                }
+ 
+-            return new JsonResponse([
+-                'success' => true,
+-            ]);
+-        } catch (\Exception $e) {
+-            throw new HttpException(500, 'Unable to update rating', $e);
++                return new JsonResponse([
++                    'success' => true,
++                ]);
++            } catch (\Exception $e) {
++                if ($attempt === $maxRetries - 1) {
++                    throw new HttpException(500, 'Unable to update rating', $e);
++                }
++                usleep($retryDelay);
++            }
+         }
+     }
+ 
+diff --git a/ratings/html/src/Database.php b/ratings/html/src/Database.php
+index dc7bfe0..6352312 100644
+--- a/ratings/html/src/Database.php
++++ b/ratings/html/src/Database.php
+@@ -41,10 +41,14 @@ class Database implements LoggerAwareInterface
+             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+             PDO::ATTR_EMULATE_PREPARES => false,
++            PDO::MYSQL_ATTR_CONNECT_TIMEOUT => 30,
++            PDO::ATTR_TIMEOUT => 30,
+         ];
+ 
+         try {
+-            return new PDO($this->dsn, $this->user, $this->password, $opt);
++            $connection = new PDO($this->dsn, $this->user, $this->password, $opt);
++            $connection->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
++            return $connection;
+         } catch (PDOException $e) {
+             $msg = $e->getMessage();
+             $this->logger->error("Database error $msg");
+diff --git a/ratings/html/src/Kernel.php b/ratings/html/src/Kernel.php
+index bedcbb3..f8077ef 100644
+--- a/ratings/html/src/Kernel.php
++++ b/ratings/html/src/Kernel.php
+@@ -104,7 +104,8 @@ class Kernel extends BaseKernel implements EventSubscriberInterface
+             ->setAutowired(true);
+ 
+         $c->register('database.connection', \PDO::class)
+-            ->setFactory([new Reference(Database::class), 'getConnection']);
++            ->setFactory([new Reference(Database::class), 'getConnection'])
++            ->setLazy(false);
+ 
+         $c->setAlias(\PDO::class, 'database.connection');
+ 
+diff --git a/ratings/html/src/Service/CatalogueService.php b/ratings/html/src/Service/CatalogueService.php
+index 6d8f98d..bec6a2b 100644
+--- a/ratings/html/src/Service/CatalogueService.php
++++ b/ratings/html/src/Service/CatalogueService.php
+@@ -28,6 +28,8 @@ class CatalogueService implements LoggerAwareInterface
+ 
+         $opt = [
+             CURLOPT_RETURNTRANSFER => true,
++            CURLOPT_CONNECTTIMEOUT => 15,
++            CURLOPT_TIMEOUT => 25,
+         ];
+         $curl = curl_init($url);
+         curl_setopt_array($curl, $opt);
+diff --git a/ratings/html/src/Service/HealthCheckService.php b/ratings/html/src/Service/HealthCheckService.php
+index 551e8d0..1f9e1c4 100644
+--- a/ratings/html/src/Service/HealthCheckService.php
++++ b/ratings/html/src/Service/HealthCheckService.php
+@@ -17,13 +17,31 @@ class HealthCheckService implements LoggerAwareInterface
+      */
+     private $pdo;
+ 
++    /**
++     * @var array
++     */
++    private $checkHistory = [];
++
+     public function __construct(PDO $pdo)
+     {
+         $this->pdo = $pdo;
++        $this->initializeHealthCheckData();
++    }
++
++    private function initializeHealthCheckData(): void
++    {
++        $this->checkHistory = array_fill(0, 5, true);
+     }
+ 
+     public function checkConnectivity(): bool
+     {
+-        return $this->pdo->prepare('SELECT 1 + 1 FROM DUAL;')->execute();
++        $result = $this->pdo->prepare('SELECT 1 + 1 FROM DUAL;')->execute();
++        
++        $this->checkHistory[] = $result;
++        if (count($this->checkHistory) > 10) {
++            array_shift($this->checkHistory);
++        }
++        
++        return $result;
+     }
+ }
+diff --git a/ratings/html/src/Service/RatingsService.php b/ratings/html/src/Service/RatingsService.php
+index 6e04991..88c4be0 100644
+--- a/ratings/html/src/Service/RatingsService.php
++++ b/ratings/html/src/Service/RatingsService.php
+@@ -21,9 +21,22 @@ class RatingsService implements LoggerAwareInterface
+      */
+     private $connection;
+ 
++    /**
++     * @var array
++     */
++    private $connectionPool = [];
++
+     public function __construct(PDO $connection)
+     {
+         $this->connection = $connection;
++        $this->initializeConnectionPool();
++    }
++
++    private function initializeConnectionPool(): void
++    {
++        for ($i = 0; $i < 3; $i++) {
++            $this->connectionPool[] = $this->connection;
++        }
+     }
+ 
+     public function ratingBySku(string $sku): array
+-- 
+2.51.0
+

@@ -1,4 +1,0 @@
-# Incident: Cart Service Unavailability
-
-## Description
-Users are reporting that they are unable to add items to their shopping carts, view existing cart contents, or proceed with checkout processes involving the cart service. The cart functionality appears to be completely unavailable, leading to a degraded user experience and potential loss of sales. Monitoring systems indicate that the cart service pods are experiencing frequent restarts or are not transitioning to a ready state, impacting the overall availability and responsiveness of the service. Key metrics such as request success rate, latency, and error rates for cart-related operations are severely affected.

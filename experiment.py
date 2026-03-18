@@ -1,29 +1,36 @@
+
+
 import asyncio
+from agent.grafana_client.client import GrafanaClient
 import json
-import os
-
-import yaml
-
-from agent.tooling.chaos_meshr import ChaosTools
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FAULT_VAULT_PATH = os.path.join(BASE_DIR, "agent", "fault-vault", "scenarios.yaml")
-
-with open(FAULT_VAULT_PATH, "r") as f:
-    data = yaml.safe_load(f)
-
-scenario = data["scenarios"][0]
+from datetime import datetime, timezone
 
 
-def get_chaos_tool(scenario: dict):
-    return next((tool for tool in ChaosTools.tools if tool.name == scenario["chaos_method"]), None)
+API_KEY = json.load(open("api_key.json"))
+GRAFANA_URL = API_KEY["grafana_url"]
+GRAFANA_API_KEY = API_KEY["grafana_api_token"]
 
+grafana_client = GrafanaClient(url=GRAFANA_URL, api_key=GRAFANA_API_KEY)
 
 async def main():
-    print("playing scenario: ", scenario["id"])
-    print()
-    result = await get_chaos_tool(scenario)(**scenario["chaos_params"])
-    print(result)
-
+    time_window = "50m"
+    from_time = f"now-{time_window}"
+    to_time = "now"
+    query = '{namespace="application", app="mysql"}'
+    logs = await grafana_client.query_loki(query, from_time, to_time)
+    print(logs)
+    entries = []
+    for log in logs:
+        msg = log.get("message", None)
+        time_utc = datetime.fromtimestamp(log.get("timestamp", 0), tz=timezone.utc).isoformat()
+        entries.append(
+            {
+                "datetime": time_utc,
+                "message": msg,
+                "labels": log.get("labels", {}),
+                "fields": log.get("fields", {}),
+            }
+        )
+        print(entries[-1])
 if __name__ == "__main__":
     asyncio.run(main())

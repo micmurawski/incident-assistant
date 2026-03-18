@@ -35,7 +35,7 @@ def _jaccard_similarity(a: set[str], b: set[str]) -> float:
     return inter / union if union else 0.0
 
 
-def count_error_logs(
+async def count_error_logs(
     client: GrafanaClient,
     namespace: str,
     app: str,
@@ -60,11 +60,11 @@ def count_error_logs(
     if pod_selector:
         labels += f", pod={pod_selector}"
     expr = f'{{{labels}}} |~ "(?i)error"'
-    logs = client.query_loki(expr, from_time=from_time, to_time=to_time, limit=5000)
+    logs = await client.query_loki(expr, from_time=from_time, to_time=to_time, limit=5000)
     return len(logs)
 
 
-def fetch_error_logs(
+async def fetch_error_logs(
     client: GrafanaClient,
     namespace: str,
     app: str,
@@ -83,7 +83,7 @@ def fetch_error_logs(
     if pod_selector:
         labels += f", pod={pod_selector}"
     expr = f'{{{labels}}} |~ "(?i)error"'
-    return client.query_loki(expr, from_time=from_time, to_time=to_time, limit=limit)
+    return await client.query_loki(expr, from_time=from_time, to_time=to_time, limit=limit)
 
 
 def group_by_similarity(
@@ -150,7 +150,7 @@ def group_by_similarity(
     return result
 
 
-def get_error_counts_by_app(
+async def get_error_counts_by_app(
     client: GrafanaClient,
     namespace: str,
     apps: list[str],
@@ -161,13 +161,13 @@ def get_error_counts_by_app(
     """Count error logs per app in namespace."""
     counts: dict[str, int] = {}
     for app in apps:
-        counts[app] = count_error_logs(
+        counts[app] = await count_error_logs(
             client, namespace, app, from_time, to_time, pod_selector
         )
     return counts
 
 
-def get_grouped_errors_by_app(
+async def get_grouped_errors_by_app(
     client: GrafanaClient,
     namespace: str,
     apps: list[str],
@@ -184,7 +184,7 @@ def get_grouped_errors_by_app(
     """
     result: dict[str, list[dict[str, Any]]] = {}
     for app in apps:
-        logs = fetch_error_logs(
+        logs = await fetch_error_logs(
             client, namespace, app, from_time, to_time, 5000, pod_selector
         )
         result[app] = group_by_similarity(logs, threshold=similarity_threshold)

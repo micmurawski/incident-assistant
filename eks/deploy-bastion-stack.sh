@@ -90,6 +90,7 @@ kubectl describe secrets account-cluster-manager-zqqat -n ${NAMESPACE}
 echo "Annotating application namespace for Linkerd injection..."
 
 kubectl annotate namespace application linkerd.io/inject=enabled
+#kubectl annotate namespace application config.linkerd.io/skip-inbound-ports=9090
+#kubectl annotate namespace application config.linkerd.io/skip-inbound-ports=9090
 
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-

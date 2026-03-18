@@ -88,7 +88,19 @@ class GeminiHandler(ApiHandler):
         if base_url:
             client_kwargs["http_options"] = {"api_endpoint": base_url}
 
-        self.client = genai.Client(**client_kwargs, **kwargs)
+        http_options = types.HttpOptions(
+            # timeout=int(GEMINI_VERIFICATION_TIMEOUT_SECONDS * 1000),
+            retry_options=types.HttpRetryOptions(
+                attempts=3,
+                initial_delay=1.0,
+                max_delay=5.0,
+                exp_base=2.0,
+                jitter=0.3,
+                http_status_codes=[408, 429, 500, 502, 503, 504]
+            )
+        )
+
+        self.client = genai.Client(**client_kwargs, **kwargs, http_options=http_options)
         # Gemini 3+ requires thought_signature on function call parts when round-tripping history.
         # Capture from any part during stream; inject when converting messages (Roo-Code pattern).
         self._last_thought_signature: Optional[bytes] = None

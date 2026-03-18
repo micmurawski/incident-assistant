@@ -1,0 +1,200 @@
+From 6b21c82c0b5b4d23fa0636ff67de403051b00358 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Micha=C5=82=20Murawski?= <mmurawski777@gmail.com>
+Date: Mon, 16 Mar 2026 22:29:27 +0100
+Subject: [PATCH] fault:
+ fault-1-catalogue-chaos_network_partition-05e34ace04fd4779a34c6472349c5462
+
+---
+ catalogue/server.js | 105 +++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 89 insertions(+), 16 deletions(-)
+
+diff --git a/catalogue/server.js b/catalogue/server.js
+index 8d59498..f4dfd57 100644
+--- a/catalogue/server.js
++++ b/catalogue/server.js
+@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
+ const express = require('express');
+ const pino = require('pino');
+ const expPino = require('express-pino-logger');
++const http = require('http');
+ 
+ const logger = pino({
+     level: 'info',
+@@ -40,9 +41,14 @@ app.get('/health', (req, res) => {
+     res.json(stat);
+ });
+ 
++// Helper function to check if service is ready
++function isServiceReady() {
++    return !coordinationState.initialized || coordinationState.ready;
++}
++
+ // all products
+ app.get('/products', (req, res) => {
+-    if(mongoConnected) {
++    if(mongoConnected && isServiceReady()) {
+         collection.find({}).toArray().then((products) => {
+             res.json(products);
+         }).catch((e) => {
+@@ -50,14 +56,14 @@ app.get('/products', (req, res) => {
+             res.status(500).send(e);
+         });
+     } else {
+-        req.log.error('database not available');
+-        res.status(500).send('database not avaiable');
++        req.log.error('service not ready for requests');
++        res.status(503).send('service initializing');
+     }
+ });
+ 
+ // product by SKU
+ app.get('/product/:sku', (req, res) => {
+-    if(mongoConnected) {
++    if(mongoConnected && isServiceReady()) {
+         // optionally slow this down
+         const delay = process.env.GO_SLOW || 0;
+         setTimeout(() => {
+@@ -74,14 +80,14 @@ app.get('/product/:sku', (req, res) => {
+         });
+         }, delay);
+     } else {
+-        req.log.error('database not available');
+-        res.status(500).send('database not available');
++        req.log.error('service not ready for requests');
++        res.status(503).send('service initializing');
+     }
+ });
+ 
+ // products in a category
+ app.get('/products/:cat', (req, res) => {
+-    if(mongoConnected) {
++    if(mongoConnected && isServiceReady()) {
+         collection.find({ categories: req.params.cat }).sort({ name: 1 }).toArray().then((products) => {
+             if(products) {
+                 res.json(products);
+@@ -93,14 +99,14 @@ app.get('/products/:cat', (req, res) => {
+             res.status(500).send(e);
+         });
+     } else {
+-        req.log.error('database not available');
+-        res.status(500).send('database not avaiable');
++        req.log.error('service not ready for requests');
++        res.status(503).send('service initializing');
+     }
+ });
+ 
+ // all categories
+ app.get('/categories', (req, res) => {
+-    if(mongoConnected) {
++    if(mongoConnected && isServiceReady()) {
+         collection.distinct('categories').then((categories) => {
+             res.json(categories);
+         }).catch((e) => {
+@@ -108,14 +114,14 @@ app.get('/categories', (req, res) => {
+             res.status(500).send(e);
+         });
+     } else {
+-        req.log.error('database not available');
+-        res.status(500).send('database not available');
++        req.log.error('service not ready for requests');
++        res.status(503).send('service initializing');
+     }
+ });
+ 
+ // search name and description
+ app.get('/search/:text', (req, res) => {
+-    if(mongoConnected) {
++    if(mongoConnected && isServiceReady()) {
+         collection.find({ '$text': { '$search': req.params.text }}).toArray().then((hits) => {
+             res.json(hits);
+         }).catch((e) => {
+@@ -123,8 +129,8 @@ app.get('/search/:text', (req, res) => {
+             res.status(500).send(e);
+         });
+     } else {
+-        req.log.error('database not available');
+-        res.status(500).send('database not available');
++        req.log.error('service not ready for requests');
++        res.status(503).send('service initializing');
+     }
+ });
+ 
+@@ -157,7 +163,74 @@ function mongoLoop() {
+ 
+ mongoLoop();
+ 
+-// fire it up!
++// Coordinate product data across instances for load distribution
++var coordinationState = {
++    ready: false,
++    lastSync: null,
++    syncCount: 0,
++    initialized: false
++};
++
++function coordinateLoadBalancing() {
++    const serviceHost = process.env.CATALOGUE_SERVICE_HOST || 'catalogue';
++    const servicePort = process.env.CATALOGUE_SERVICE_PORT || '8080';
++    
++    const options = {
++        hostname: serviceHost,
++        port: servicePort,
++        path: '/health',
++        method: 'GET',
++        timeout: 3000
++    };
++
++    const req = http.request(options, (res) => {
++        let data = '';
++        res.on('data', (chunk) => { data += chunk; });
++        res.on('end', () => {
++            try {
++                const health = JSON.parse(data);
++                if (health.app === 'OK' && health.mongo) {
++                    coordinationState.ready = true;
++                    coordinationState.lastSync = Date.now();
++                    coordinationState.syncCount++;
++                    coordinationState.initialized = true;
++                    logger.info('Load coordination status: healthy');
++                }
++            } catch(e) {
++                coordinationState.ready = false;
++                coordinationState.initialized = true;
++            }
++        });
++    });
++
++    req.on('error', (e) => {
++        logger.error('Load coordination error:', e.message);
++        coordinationState.ready = false;
++        coordinationState.initialized = true;
++    });
++
++    req.on('timeout', () => {
++        req.destroy();
++        coordinationState.ready = false;
++        coordinationState.initialized = true;
++    });
++
++    req.end();
++    
++    setTimeout(coordinateLoadBalancing, 5000);
++}
++
++setTimeout(coordinateLoadBalancing, 3000);
++
++// Health check includes coordination status
++app.get('/health', (req, res) => {
++    var stat = {
++        app: 'OK',
++        mongo: mongoConnected,
++        coordinated: coordinationState.ready
++    };
++    res.json(stat);
++});
+ const port = process.env.CATALOGUE_SERVER_PORT || '8080';
+ app.listen(port, () => {
+     logger.info('Started on port', port);
+-- 
+2.51.0
+

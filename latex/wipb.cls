@@ -26,7 +26,8 @@
 \RequirePackage{amssymb}
 \RequirePackage{indentfirst}
 \RequirePackage{t1enc}
-\RequirePackage{times}
+\RequirePackage{lmodern}
+% \RequirePackage{times}
 \RequirePackage[a4paper, top=2.5cm, bottom=2.5cm, left=3.5cm, right=2cm]{geometry}
 \RequirePackage{setspace}
 \RequirePackage{MnSymbol}

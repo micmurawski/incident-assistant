@@ -3,6 +3,7 @@ from typing import Any, Optional
 import yaml
 
 from agent.grafana_client.client import GrafanaClient
+from agent.grafana_client.kubectl import get_pod_resource_limits
 from agent.grafana_client.logs import (get_error_counts_by_app,
                                        get_grouped_errors_by_app)
 from agent.grafana_client.metrics import (WINDOWS, get_cpu_usage,
@@ -65,8 +66,8 @@ def format_status_report(
         mem_mb = memory_usage.get(app, 0) / (1024 * 1024)
 
         # Use limits from cluster (kubectl) when provided, else fallback defaults
-        cpu_limit_cores = (cpu_limits.get(app) if cpu_limits else None) or 1.0
-        mem_limit_bytes = (memory_limits.get(app) if memory_limits else None) or (512.0 * 1024 * 1024)
+        cpu_limit_cores = cpu_limits[app]
+        mem_limit_bytes = memory_limits[app]
         mem_limit_mb = mem_limit_bytes / (1024 * 1024)
         cpu_pct = (cpu / cpu_limit_cores * 100) if cpu_limit_cores > 0 else 0.0
         mem_pct = (mem_mb / mem_limit_mb * 100) if mem_limit_mb > 0 else 0.0
@@ -131,15 +132,15 @@ def _truncate(s: str, max_len: int) -> str:
     return s[: max_len - 3] + "..."
 
 
-def build_status_report(
+async def build_status_report(
     client: GrafanaClient,
     namespace: str,
     apps: list[str],
     window: str = "5m",
     similarity_threshold: float = 0.5,
     pod_selector: str | None = None,
-    cpu_limits: Optional[dict[str, float]] = None,
-    memory_limits: Optional[dict[str, float]] = None,
+    env: Optional[dict[str, str]] = None,
+    cwd: Optional[str] = None,
 ) -> str:
     """
     Build a concise MD status report for LLM consumption.
@@ -158,27 +159,27 @@ def build_status_report(
     Returns:
         Markdown string
     """
+    cpu_limits, memory_limits = get_pod_resource_limits(namespace=namespace, apps=apps, env=env, cwd=cwd)
     if window not in WINDOWS:
         window = "5m"
 
     from_time = f"now-{window}"
     to_time = "now"
 
-    latency = get_latency_percentiles(client, namespace, apps, window)
-    http_errors = get_http_error_counts(client, namespace, apps, window)
-    request_rate = get_request_rate(client, namespace, apps, window)
-    success_rate = get_success_rate(client, namespace, apps, window)
-    cpu_usage = get_cpu_usage(client, namespace, apps, window, pod_selector)
-    memory_usage = get_memory_usage(client, namespace, apps, pod_selector)
-    error_counts = get_error_counts_by_app(
+    latency = await get_latency_percentiles(client, namespace, apps, window)
+    http_errors = await get_http_error_counts(client, namespace, apps, window)
+    request_rate = await get_request_rate(client, namespace, apps, window)
+    success_rate = await get_success_rate(client, namespace, apps, window)
+    cpu_usage = await get_cpu_usage(client, namespace, apps, window, pod_selector)
+    memory_usage = await get_memory_usage(client, namespace, apps, pod_selector)
+    error_counts = await get_error_counts_by_app(
         client, namespace, apps, from_time, to_time, pod_selector=pod_selector
     )
-    grouped_errors = get_grouped_errors_by_app(
+    grouped_errors = await get_grouped_errors_by_app(
         client, namespace, apps, from_time, to_time,
         similarity_threshold=similarity_threshold,
         pod_selector=pod_selector,
     )
-
     return format_status_report(
         namespace=namespace,
         apps=apps,
@@ -194,3 +195,124 @@ def build_status_report(
         cpu_limits=cpu_limits,
         memory_limits=memory_limits,
     )
+
+
+async def build_status_report_dict(
+    client: GrafanaClient,
+    namespace: str,
+    apps: list[str],
+    window: str = "5m",
+    pod_selector: str | None = None,
+    env: Optional[dict[str, str]] = None,
+    cwd: Optional[str] = None,
+) -> dict:
+    """
+    Build a dictionary status report for LLM consumption.
+    """
+    cpu_limits, memory_limits = get_pod_resource_limits(namespace=namespace, apps=apps, env=env, cwd=cwd)
+    if window not in WINDOWS:
+        window = "5m"
+
+    from_time = f"now-{window}"
+    to_time = "now"
+    latency = await get_latency_percentiles(client, namespace, apps, window)
+    http_errors = await get_http_error_counts(client, namespace, apps, window)
+    request_rate = await get_request_rate(client, namespace, apps, window)
+    success_rate = await get_success_rate(client, namespace, apps, window)
+    cpu_usage = await get_cpu_usage(client, namespace, apps, window, pod_selector)
+    memory_usage = await get_memory_usage(client, namespace, apps, pod_selector)
+    error_counts = await get_error_counts_by_app(
+        client, namespace, apps, from_time, to_time, pod_selector=pod_selector
+    )
+    grouped_errors = await get_grouped_errors_by_app(
+        client, namespace, apps, from_time, to_time,
+        similarity_threshold=0.5,
+        pod_selector=pod_selector,
+    )
+
+    services: dict[str, dict[str, Any]] = {}
+    for app in apps:
+        lat = latency.get(app, {})
+        err = http_errors.get(app, {})
+        rate = request_rate.get(app, 0.0)
+        succ = success_rate.get(app, 0.0)
+        cpu = cpu_usage.get(app, 0.0)
+        mem_bytes = memory_usage.get(app, 0.0)
+        mem_mb = mem_bytes / (1024 * 1024) if mem_bytes else 0.0
+
+        cpu_limit_cores = cpu_limits.get(app, 0.0) if cpu_limits else 0.0
+        mem_limit_bytes = memory_limits.get(app, 0.0) if memory_limits else 0.0
+        mem_limit_mb = mem_limit_bytes / (1024 * 1024) if mem_limit_bytes else 0.0
+
+        cpu_pct = (cpu / cpu_limit_cores * 100.0) if cpu_limit_cores > 0 else 0.0
+        mem_pct = (mem_mb / mem_limit_mb * 100.0) if mem_limit_mb > 0 else 0.0
+
+        groups = grouped_errors.get(app, []) or []
+        error_samples = [
+            {
+                "count": int(g.get("count", 1)),
+                "truncated_message": _truncate(str(g.get("message", "")), 120),
+            }
+            for g in groups[:10]
+        ]
+
+        services[app] = {
+            "latency_p50_ms": int(lat.get("p50", 0.0)),
+            "latency_p95_ms": int(lat.get("p95", 0.0)),
+            "latency_p99_ms": int(lat.get("p99", 0.0)),
+            "cpu_cores": float("{:.3f}".format(cpu)),
+            "cpu_cores_percent_of_limit": int(cpu_pct),
+            "memory_mb": int(mem_mb),
+            "memory_percent_of_limit": int(mem_pct),
+            "request_rate_rps": int(rate),
+            "success_rate": succ,
+            "http_4xx": int(err.get("4xx", 0)),
+            "http_5xx": int(err.get("5xx", 0)),
+            "error_log_count": int(error_counts.get(app, 0)),
+            "error_logs_samples": error_samples,
+        }
+
+    report = {
+        "namespace": namespace,
+        "window": window,
+        "services": services,
+    }
+
+    return report
+
+
+async def build_status_report_yaml(
+    client: GrafanaClient,
+    namespace: str,
+    apps: list[str],
+    window: str = "5m",
+    pod_selector: str | None = None,
+    env: Optional[dict[str, str]] = None,
+    cwd: Optional[str] = None,
+) -> str:
+    """
+    Build a YAML status report for LLM consumption.
+
+    The structure is:
+
+    ```yaml
+    namespace: <namespace>
+    window: <window>
+    services:
+      <service-name>:
+        latency_p50_ms: <float>
+        latency_p95_ms: <float>
+        latency_p99_ms: <float>
+        cpu_cores: <float>
+        cpu_cores_percent_of_limit: <float>
+        memory_mb: <float>
+        memory_percent_of_limit: <float>
+        request_rate_rps: <float>
+        success_rate: <float>  # 0-1
+        http_4xx: <float>
+        http_5xx: <float>
+        error_log_count: <int>
+    ```
+    """
+    data = await build_status_report_dict(client, namespace, apps, window, pod_selector, env, cwd)
+    return yaml.dump(data, sort_keys=False)

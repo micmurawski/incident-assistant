@@ -27,15 +27,15 @@ SA_RESPONSE=$(curl -s -X POST -H "Content-Type: application/json" \
   -d '{"name": "my-automation-sa", "role": "Admin"}' \
   $GRAFANA_URL/api/serviceaccounts \
   -u "$ADMIN_USER:$ADMIN_PASS")
-
+echo $SA_RESPONSE
 SA_ID=$(echo $SA_RESPONSE | jq -r .id)
-
+echo $SA_ID
 echo "Generating Token..."
 TOKEN_RESPONSE=$(curl -s -X POST -H "Content-Type: application/json" \
   -d '{"name": "my-automation-token"}' \
   $GRAFANA_URL/api/serviceaccounts/$SA_ID/tokens \
   -u "$ADMIN_USER:$ADMIN_PASS")
-
+echo $TOKEN_RESPONSE
 TOKEN=$(echo $TOKEN_RESPONSE | jq -r .key)
 
 #echo "Saving Token to Kubernetes Secret..."

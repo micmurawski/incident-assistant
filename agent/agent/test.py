@@ -4,9 +4,8 @@ import asyncio
 import json
 import os
 import uuid
-from typing import Any, Literal, TypeVar
+from typing import Literal, TypeVar
 
-from framework import AsyncFlow
 from openinference.instrumentation import using_attributes
 from openinference.instrumentation.anthropic import AnthropicInstrumentor
 from openinference.instrumentation.google_genai import GoogleGenAIInstrumentor
@@ -16,8 +15,6 @@ from phoenix.otel import register
 
 from agent.grafana_client.client import GrafanaClient
 from agent.llm import LLMAgent
-from agent.providers import build_api_handler
-from agent.providers.base import ApiHandler
 from agent.settings import SettingsManager
 from agent.tasks.tasks import Task
 from agent.tooling import CodebaseReadTools, CodebaseWriteTools
@@ -25,7 +22,6 @@ from agent.tooling.cli import CliTools
 from agent.tooling.kubectl import KubectlReadTools
 from agent.tooling.metrics import MetricsTools
 from agent.tooling.planning import PlanningTools
-from agent.tracing import trace_flow
 
 T = TypeVar('T')
 
@@ -79,41 +75,7 @@ else:
 
 
 class Agent(LLMAgent):
-    def __init__(
-        self,
-        name: str,
-        system_prompt: str,
-        api_settings: dict[str, Any] | None = None,
-        cwd: str | None = None,
-        tools: Any | None = None,
-        shared_context: dict[str, Any] | None = None,
-        env: dict[str, str] | None = None,
-    ):
-        settings = SettingsManager.get_instance()
-        api_settings = api_settings or settings.get("api")
-        self.system_prompt = system_prompt
-        self.cwd = cwd
-        self.api_handler: ApiHandler = build_api_handler(**api_settings)
-        self.name = name
-        
-        if shared_context is None:
-            shared_context = shared_context or {}
-
-        @trace_flow(f"agent-{name}-flow")
-        class _TracedFlow(AsyncFlow):
-            def __init__(self, start):
-                super().__init__(start=start)
-        self.flow = _TracedFlow(start=self.call_llm)
-
-        self.shared_context = {**shared_context, "cwd": cwd, "env": env}
-        # create re-act agent with summarization
-        self.bind_tools(tools, self.get_shared())
-        self.call_llm - "tools" >> tools
-        tools >> self.summarize_context
-        self.summarize_context >> self.call_llm
-
-        # from framework.decorators import end
-        # self.call_llm - "default" >> end
+    pass
 
 
 async def main():
@@ -124,7 +86,7 @@ async def main():
 
             manager_tools = PlanningTools | MetricsTools
             devops_tools = CliTools | CodebaseReadTools | KubectlReadTools | update_todo_tools
-            #metrics_tools = MetricsTools | CliTools | update_todo_tools
+            # metrics_tools = MetricsTools | CliTools | update_todo_tools
             coder_tools = CodebaseWriteTools | CodebaseReadTools | update_todo_tools
 
             agent_manager = Agent(
@@ -137,7 +99,7 @@ async def main():
                 "coder: is able to code the application",
                 cwd=cwd,
                 tools=manager_tools,
-                shared_context={"available_agents": "devops,metrics,coder"},
+                shared_context={"available_agents": "devops,coder"},
                 env=AGENT_ENV,
             )
             agent_manager.register()
@@ -150,14 +112,14 @@ async def main():
                 env=AGENT_ENV,
             ).register()
 
-            #Agent(
+            # Agent(
             #    name="metrics",
             #    system_prompt="You are a metrics helper. You know the codebase and the metrics."
             #    "You are responsible for helping with the metrics.",
             #    cwd=cwd,
             #    tools=metrics_tools,
             #    env=AGENT_ENV,
-            #).register()
+            # ).register()
 
             Agent(
                 name="coder",

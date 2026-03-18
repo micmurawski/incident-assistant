@@ -45,8 +45,6 @@ def _shared_to_attribute(shared: Any) -> Optional[str]:
 
 
 PHOENIX_ENDPOINT = os.getenv("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006")
-GRAPH_TRACER_PROVIDER = register(project_name="graph-executions")
-GRAPH_TRACER = GRAPH_TRACER_PROVIDER.get_tracer("pocketflow-graph", "1.0")
 
 
 class GraphTracer:
@@ -58,8 +56,8 @@ class GraphTracer:
     """
 
     def __init__(self):
-        self._tracer = GRAPH_TRACER
-        self._provider = GRAPH_TRACER_PROVIDER
+        self._provider = register(project_name="graph-executions")
+        self._tracer = self._provider.get_tracer("pocketflow-graph", "1.0")
         self._root_span = None
         self._root_token = None
         self._spans: Dict[str, Any] = {}
@@ -79,7 +77,7 @@ class GraphTracer:
 
     def start_trace(self, flow_name: str, shared: Dict[str, Any]) -> Optional[str]:
         """Start root span for this flow run. Session id taken from shared."""
-        self._root_span = GRAPH_TRACER.start_span(flow_name)
+        self._root_span = self._tracer.start_span(flow_name)
         ctx = set_span_in_context(self._root_span)
         self._root_token = attach(ctx)
         self._root_span.set_attribute("type", "graph-execution")
@@ -143,6 +141,6 @@ class GraphTracer:
 
     def flush(self) -> None:
         try:
-            GRAPH_TRACER_PROVIDER.force_flush()
+            self._provider.force_flush()
         except Exception as e:
             logger.error(f"[GraphTracer] flush failed: {e}")

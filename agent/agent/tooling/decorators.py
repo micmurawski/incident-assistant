@@ -3,17 +3,16 @@ import inspect
 import json
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from inspect import Parameter
 from typing import (Annotated, Any, Callable, Coroutine, GenericAlias, Literal,
                     Optional, TypedDict, TypeVar, Union, _AnnotatedAlias,
                     _TypedDictMeta, get_args, get_origin)
 
+from agent.types import AnthropicMessage
 from framework import AsyncNode
 from framework.generic_messages import select_tools_use
 from framework.utils import __reduce_shared as reduce_shared
-
-from agent.types import AnthropicMessage
 
 # Mapping from Python types to OpenAPI schema types
 CLASS_TO_TYPE = {
@@ -36,11 +35,28 @@ COMPLEX_TYPES = {dict, list, set, tuple}
 NoneType = type(None)  # Used for checking Optional types
 ToolFormat = Literal["openai", "ollama", "anthropic", "gemini"]
 
+MAX_OUTPUT_LENGTH = 8000
+MAX_ERROR_LENGTH = 2000
+
 
 @dataclass
 class ToolResult:
     result: Any
-    error: Optional[str] = field(default=lambda: None)
+    error: Optional[str] = None
+    max_result_length: int = MAX_OUTPUT_LENGTH
+    max_error_length: int = MAX_ERROR_LENGTH
+
+    def __post_init__(self):
+        # trim
+        if isinstance(self.result, str) and len(self.result) > self.max_result_length:
+            total_length = len(self.result)
+            head = self.result[: self.max_result_length // 2]
+            tail = self.result[-self.max_result_length // 2:]
+            self.result = f"{head}\n...[trimmed {total_length - self.max_result_length} characters, use different tool ranges to get more data]...\n{tail}"
+        if self.error and len(self.error) > self.max_error_length:
+            total_length = len(self.error)
+            head_len = int(self.max_error_length * 0.8)
+            self.error = self.error[:head_len] + f"\n...[trimmed {total_length - head_len} characters of stderr, use different tool ranges to get more data]..."
 
     @property
     def is_success(self) -> bool:
@@ -403,6 +419,12 @@ class Tools(AsyncNode):
     tools: list[BaseTool]
     debug_mode: bool = False
 
+    def pick_tool_by_name(self, name: str) -> BaseTool:
+        tool = next((t for t in self.tools if t.name == name), None)
+        if tool is None:
+            raise Exception(f"Tool {name} not found")
+        return tool
+
     def set_debug_mode(self, debug_mode: bool = True) -> None:
         self.debug_mode = debug_mode
 
@@ -547,7 +569,6 @@ class Tools(AsyncNode):
         remaining_to_replace = to_replace.copy()
         for k in to_replace:
             v = format_kwargs.get(k, None)
-            print(f"Replacing {k} with {v}")
             if v is None:
                 continue
             txt = txt.replace(f"{{{k}}}", v)

@@ -442,10 +442,19 @@ spec:
     return await _run_kubectl(["apply", "-f", "-"], stdin=spec.strip(), timeout=30)
 
 
+@tool(tags=["chaos", "cleanup"])
+async def chaos_delete_all_experiments() -> ToolResult:
+    """
+    Delete all Chaos Mesh experiments in the cluster. Use to clean up after testing.
+    """
+    resources = "podchaos,networkchaos,stresschaos,iochaos,httpchaos"
+    return await _run_kubectl(["delete", resources, "--all", "-A"])
+
 ChaosTools = Tools(
     tools=[
         chaos_list_experiments,
         chaos_delete_experiment,
+        chaos_delete_all_experiments,
         chaos_pod_kill,
         chaos_pod_failure,
         chaos_network_delay,

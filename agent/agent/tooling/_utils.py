@@ -1,9 +1,8 @@
 import asyncio
+import os
 from typing import Optional
 
 from agent.tooling.decorators import ToolResult
-
-MAX_OUTPUT_LENGTH = 8000
 
 
 async def run_cli_command(
@@ -13,6 +12,9 @@ async def run_cli_command(
     env: Optional[dict[str, str]] = None,
     cwd: Optional[str] = None,
 ) -> ToolResult:
+    if cwd is None or (isinstance(cwd, str) and cwd.strip() == ""):
+        cwd = os.getcwd()
+    env = {**os.environ.copy(), **(env or {})}
     try:
         if stdin is not None:
             process = await asyncio.create_subprocess_exec(
@@ -41,17 +43,7 @@ async def run_cli_command(
         stderr_decoded = stderr.decode("utf-8")
         error_msg = stderr_decoded if process.returncode != 0 else None
 
-        total_length = len(stdout_decoded)
-        output = stdout_decoded
-        if total_length > MAX_OUTPUT_LENGTH:
-            head = stdout_decoded[: MAX_OUTPUT_LENGTH // 2]
-            tail = stdout_decoded[-MAX_OUTPUT_LENGTH // 2:]
-            output = f"{head}\n...[trimmed {total_length - MAX_OUTPUT_LENGTH} characters]...\n{tail}"
-
-        if error_msg and len(error_msg) > 2000:
-            error_msg = error_msg[:1600] + f"\n...[trimmed {len(error_msg) - 1600} characters of stderr]..."
-
-        return ToolResult(result=output, error=error_msg)
+        return ToolResult(result=stdout_decoded, error=error_msg)
     except asyncio.TimeoutError:
         return ToolResult(result=None, error=f"kubectl command timed out after {timeout}s: {' '.join(cmd)}")
     except Exception as e:

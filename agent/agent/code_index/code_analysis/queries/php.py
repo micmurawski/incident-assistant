@@ -88,11 +88,6 @@ QUERY = """
     (variable_name
       (name) @name.definition.readonly_property))) @definition.readonly_property
 
-; Constructor property promotion (PHP 8.0+)
-(property_promotion_parameter
-  name: (variable_name
-    (name) @name.definition.promoted_property)) @definition.promoted_property
-
 ;--------------------------
 ; 5. OTHER LANGUAGE CONSTRUCTS
 ;--------------------------

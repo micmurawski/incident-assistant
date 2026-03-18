@@ -118,7 +118,7 @@ class FileOpsManager:
     async def list_code_definitions_names_descriptions(self, path: str) -> FileOpsResult:
         full_path = self._resolve_within_cwd(path)
         try:
-            content = await parse_source_code_definitions(full_path)
+            content = parse_source_code_definitions(full_path)
         except FileNotFoundError as e:
             return FileOpsResult(path=path, content=None, error=str(e))
         return FileOpsResult(path=path, content=content)
@@ -272,11 +272,28 @@ class FileOpsManager:
 
             target_lines = lines[start: end + 1]
             segment = "\n".join(target_lines)
-            modified_segment = re.sub(search_pattern, replace, segment, flags=flags)
+            # Use a function for the replacement so the string is treated
+            # literally. This avoids `re.PatternError` on sequences like
+            # `\E` that are valid in source code (e.g. `\Exception`) but
+            # interpreted as escape codes in a regex replacement template.
+            modified_segment = re.sub(
+                search_pattern,
+                lambda _m: replace,
+                segment,
+                flags=flags,
+            )
             modified_lines = modified_segment.split("\n")
             new_content = "\n".join([*before_lines, *modified_lines, *after_lines])
         else:
-            new_content = re.sub(search_pattern, replace, original_content, flags=flags)
+            # Same reasoning as above: always treat the replacement as a
+            # literal string to safely handle backslashes and other
+            # characters that have special meaning in regex templates.
+            new_content = re.sub(
+                search_pattern,
+                lambda _m: replace,
+                original_content,
+                flags=flags,
+            )
         with open(full_path, "w") as file:
             file.write(new_content)
 

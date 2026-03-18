@@ -1,8 +1,9 @@
+import asyncio
 import time
 from dataclasses import dataclass
 from typing import Any
 
-import requests
+import httpx
 
 
 @dataclass
@@ -20,7 +21,7 @@ class GrafanaClient:
     Authorizes with API key and queries Prometheus/Loki datasources.
     """
 
-    def __init__(self, url: str, api_key: str):
+    def __init__(self, url: str, api_key: str, *, timeout_s: float = 60.0):
         """
         Args:
             url: Grafana base URL (e.g. http://host/)
@@ -28,30 +29,80 @@ class GrafanaClient:
         """
         self.url = url.rstrip("/")
         self.api_key = api_key
-        self._session = requests.Session()
-        self._session.headers.update(
-            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        # Async HTTP client for Grafana API.
+        self._client = httpx.AsyncClient(
+            base_url=self.url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=httpx.Timeout(timeout_s),
         )
-        self._datasources: dict[str, str] | None = None
+        self._datasources: dict[str, Datasource] | None = None
+        self._datasources_lock = asyncio.Lock()
 
-    def get_datasources(self) -> list[Datasource]:
+    async def aclose(self) -> None:
+        """Close underlying HTTP session."""
+        await self._client.aclose()
+
+    async def _request_with_retry(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict | None = None,
+        params: dict | None = None,
+        timeout: float | None = None,
+    ) -> httpx.Response:
+        """Execute HTTP request with exponential backoff retry."""
+        max_retries = 3
+        backoff = 1.0
+
+        for attempt in range(max_retries):
+            try:
+                r = await self._client.request(
+                    method, path, json=json, params=params, timeout=timeout
+                )
+                r.raise_for_status()
+                return r
+            except (httpx.HTTPStatusError, httpx.RequestError) as e:
+                # Only retry on 5xx or network errors
+                is_server_error = (
+                    isinstance(e, httpx.HTTPStatusError)
+                    and e.response.status_code >= 500
+                )
+                is_network_error = isinstance(e, httpx.RequestError)
+
+                if (is_server_error or is_network_error) and attempt < max_retries - 1:
+                    await asyncio.sleep(backoff)
+                    backoff *= 2
+                    continue
+                raise
+        raise RuntimeError("Retry loop exhausted")
+
+    async def get_datasources(self) -> list[Datasource]:
         """Fetch all configured datasources."""
-        r = self._session.get(f"{self.url}/api/datasources", timeout=30)
-        r.raise_for_status()
+        r = await self._request_with_retry("GET", "/api/datasources", timeout=30)
         return [
             Datasource(uid=ds["uid"], type=ds["type"], name=ds.get("name", ""))
             for ds in r.json()
         ]
 
-    def _ensure_datasource_uid(self, ds_type: str) -> str:
-        """Get UID for Prometheus or Loki, caching after first fetch."""
+    async def _ensure_datasource(self, ds_type: str) -> Datasource:
+        """Get datasource object for a given type, caching after first fetch."""
         if self._datasources is None:
-            sources = self.get_datasources()
-            self._datasources = {ds.type: ds.uid for ds in sources}
-        uid = self._datasources.get(ds_type)
-        if not uid:
+            async with self._datasources_lock:
+                if self._datasources is None:
+                    sources = await self.get_datasources()
+                    self._datasources = {ds.type: ds for ds in sources}
+        ds = self._datasources.get(ds_type)
+        if not ds:
             raise ValueError(f"No {ds_type} datasource found in Grafana")
-        return uid
+        return ds
+
+    async def _ensure_datasource_uid(self, ds_type: str) -> str:
+        """Get UID for Prometheus or Loki, caching after first fetch."""
+        return (await self._ensure_datasource(ds_type)).uid
 
     def _parse_time(self, t: str) -> int:
         """Convert 'now', 'now-5m', 'now-1h' to ms epoch."""
@@ -71,7 +122,7 @@ class GrafanaClient:
             return now_ms - sec * 1000
         return int(t)
 
-    def query_prometheus(
+    async def query_prometheus(
         self,
         expr: str,
         from_time: str = "now-1h",
@@ -90,7 +141,7 @@ class GrafanaClient:
         Returns:
             Parsed frames from Grafana response
         """
-        uid = self._ensure_datasource_uid("prometheus")
+        uid = await self._ensure_datasource_uid("prometheus")
         from_ms = self._parse_time(from_time)
         to_ms = self._parse_time(to_time)
 
@@ -108,13 +159,13 @@ class GrafanaClient:
             "to": str(to_ms),
         }
 
-        r = self._session.post(
-            f"{self.url}/api/ds/query",
+        r = await self._request_with_retry(
+            "POST",
+            "/api/ds/query",
             params={"ds_type": "prometheus"},
             json=payload,
             timeout=60,
         )
-        r.raise_for_status()
         data = r.json()
         return self._extract_prometheus_results(data)
 
@@ -126,7 +177,7 @@ class GrafanaClient:
                 results.append(frame)
         return results
 
-    def query_loki(
+    async def query_loki(
         self,
         expr: str,
         from_time: str = "now-1h",
@@ -145,7 +196,7 @@ class GrafanaClient:
         Returns:
             List of log entries: [{"timestamp": str, "message": str, "labels": dict}, ...]
         """
-        uid = self._ensure_datasource_uid("loki")
+        uid = await self._ensure_datasource_uid("loki")
         from_ms = self._parse_time(from_time)
         to_ms = self._parse_time(to_time)
 
@@ -165,21 +216,14 @@ class GrafanaClient:
             "to": str(to_ms),
         }
 
-        r = self._session.post(
-            f"{self.url}/api/ds/query",
+        r = await self._request_with_retry(
+            "POST",
+            "/api/ds/query",
             params={"ds_type": "loki"},
             json=payload,
             timeout=120,
         )
-        r.raise_for_status()
         data = r.json()
-        #import json
-        #print(data["results"]["A"]["status"])
-        #print(json.dumps(data["results"]["A"]["frames"][0]["schema"], indent=4))
-        #print("keys: ", data["results"]["A"]["frames"][0]['data']['values'][2][0])
-        #with open("data.json", "w") as f:
-        #    json.dump(data, f, indent=4)
-        #print(json.dumps(data, indent=4))
         return self._extract_loki_results(data)
 
     def _extract_loki_results(self, data: dict) -> list[dict[str, Any]]:
@@ -190,24 +234,170 @@ class GrafanaClient:
                 schema = frame.get("schema", {})
                 schema_fields = schema.get("fields", [])
                 values = frame.get("data", {}).get("values", [])
-                if len(values) < 2:
+                # Expect at least: fields, Time (ms), Line. Some responses also include tsNs and id.
+                if len(values) < 3:
                     continue
-                times_raw = values[1]
+                fields = values[0]
+                times_ms = values[1]
                 lines_raw = values[2]
+
+                # Prefer the high‑precision tsNs column when available
+                ts_ns_values = None
+                if len(values) >= 4:
+                    ts_ns_values = values[3]
+
                 labels = {}
                 if schema_fields and isinstance(schema_fields[0], dict):
                     labels = schema_fields[0].get("labels") or {}
                     if labels and not isinstance(labels, dict):
                         labels = {}
-                for ts_val, line_val in zip(times_raw, lines_raw):
-                    ts_ns = int(ts_val) if isinstance(ts_val, (int, float)) else 0
-                    if ts_ns > 1e15:
-                        ts_ns = int(ts_ns / 1000)  # ms to ns if needed
+                for idx, (fields_val, line_val) in enumerate(zip(fields, lines_raw)):
+                    fields_val.pop("filename", None)
+                    if line_val is None or line_val == "":
+                        continue
+
+                    # Determine timestamp in seconds since epoch.
+                    ts_ns = None
+                    if ts_ns_values is not None and idx < len(ts_ns_values):
+                        # tsNs is a string representing nanoseconds since epoch
+                        ts_raw = ts_ns_values[idx]
+                        try:
+                            ts_ns = int(ts_raw)
+                        except (TypeError, ValueError):
+                            ts_ns = None
+
+                    if ts_ns is None:
+                        # Fallback to Time column (milliseconds since epoch)
+                        if idx < len(times_ms):
+                            ts_raw = times_ms[idx]
+                            try:
+                                ts_ms = int(ts_raw)
+                                ts_ns = ts_ms * 1_000_000
+                            except (TypeError, ValueError):
+                                ts_ns = 0
+                        else:
+                            ts_ns = 0
+
+                    if line_val is None or line_val == "":
+                        continue
                     logs.append(
                         {
                             "timestamp": ts_ns / 1e9,
                             "message": str(line_val) if line_val else "",
                             "labels": dict(labels),
+                            "fields": dict(fields_val),
                         }
                     )
         return logs
+
+    async def list_prometheus_metrics(
+        self,
+        match: str | None = None,
+        from_time: str = "now-1h",
+        to_time: str = "now",
+    ) -> list[str]:
+        """
+        List available Prometheus metric names via Grafana's CallResource API.
+        Optionally filter using a Prometheus match[] selector.
+        """
+        ds = await self._ensure_datasource("prometheus")
+        from_s = self._parse_time(from_time) // 1000
+        to_s = self._parse_time(to_time) // 1000
+
+        params: dict[str, Any] = {
+            "start": str(from_s),
+            "end": str(to_s),
+        }
+        if match:
+            params["match[]"] = match
+
+        r = await self._request_with_retry(
+            "GET",
+            f"/api/datasources/uid/{ds.uid}/resources/api/v1/label/__name__/values",
+            params=params,
+            timeout=60,
+        )
+        payload = r.json()
+        values = payload.get("data", []) or []
+        return [str(v) for v in values if v is not None]
+
+    async def get_prometheus_metric_metadata(
+        self, metric_name: str
+    ) -> list[dict[str, Any]]:
+        """
+        Get metadata (type, help, unit) for a specific Prometheus metric via Grafana's CallResource API.
+        """
+        ds = await self._ensure_datasource("prometheus")
+        params = {"metric": metric_name}
+
+        r = await self._request_with_retry(
+            "GET",
+            f"/api/datasources/uid/{ds.uid}/resources/api/v1/metadata",
+            params=params,
+        )
+        payload = r.json()
+        return payload.get("data", {}).get(metric_name, [])
+
+    async def list_prometheus_label_names(
+        self,
+        match: str | None = None,
+        from_time: str = "now-1h",
+        to_time: str = "now",
+    ) -> list[str]:
+        """
+        List all label names available for a given metric or selector via Grafana's CallResource API.
+        This helps identify what "input parameters" (labels) a metric accepts.
+        Example: match='http_requests_total'
+        """
+        ds = await self._ensure_datasource("prometheus")
+        from_s = self._parse_time(from_time) // 1000
+        to_s = self._parse_time(to_time) // 1000
+
+        params: dict[str, Any] = {
+            "start": str(from_s),
+            "end": str(to_s),
+        }
+        if match:
+            params["match[]"] = match
+
+        r = await self._request_with_retry(
+            "GET",
+            f"/api/datasources/uid/{ds.uid}/resources/api/v1/labels",
+            params=params,
+            timeout=60,
+        )
+        payload = r.json()
+        values = payload.get("data", []) or []
+        return [str(v) for v in values if v is not None]
+
+    async def list_prometheus_label_values(
+        self,
+        label_name: str,
+        match: str | None = None,
+        from_time: str = "now-1h",
+        to_time: str = "now",
+    ) -> list[str]:
+        """
+        List available values for a specific Prometheus label via Grafana's CallResource API.
+        Example: label_name='method', match='http_requests_total'
+        """
+        ds = await self._ensure_datasource("prometheus")
+        from_s = self._parse_time(from_time) // 1000
+        to_s = self._parse_time(to_time) // 1000
+
+        params: dict[str, Any] = {
+            "start": str(from_s),
+            "end": str(to_s),
+        }
+        if match:
+            params["match[]"] = match
+
+        r = await self._request_with_retry(
+            "GET",
+            f"/api/datasources/uid/{ds.uid}/resources/api/v1/label/{label_name}/values",
+            params=params,
+            timeout=60,
+        )
+        payload = r.json()
+        values = payload.get("data", []) or []
+        return [str(v) for v in values if v is not None]

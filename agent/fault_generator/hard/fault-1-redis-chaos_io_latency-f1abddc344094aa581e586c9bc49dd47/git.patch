@@ -1,0 +1,83 @@
+From 1fa6fa9eda8873cd6871adee80d43dbb8f8534fb Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Micha=C5=82=20Murawski?= <mmurawski777@gmail.com>
+Date: Mon, 16 Mar 2026 21:51:32 +0100
+Subject: [PATCH] fault:
+ fault-1-redis-chaos_io_latency-f1abddc344094aa581e586c9bc49dd47
+
+---
+ cart/server.js |  7 ++++++-
+ user/server.js | 26 +++++++++++++++++++++++---
+ 2 files changed, 29 insertions(+), 4 deletions(-)
+
+diff --git a/cart/server.js b/cart/server.js
+index f2e2a1a..5b63eb5 100644
+--- a/cart/server.js
++++ b/cart/server.js
+@@ -357,7 +357,12 @@ function saveCart(id, cart) {
+             if(err) {
+                 reject(err);
+             } else {
+-                resolve(data);
++                redisClient.get(id, (err, confirmData) => {
++                    if(err) {
++                        logger.warn('confirm read failed', err);
++                    }
++                    resolve(data);
++                });
+             }
+         });
+     });
+diff --git a/user/server.js b/user/server.js
+index f7b488e..34961a8 100644
+--- a/user/server.js
++++ b/user/server.js
+@@ -49,8 +49,10 @@ app.get('/uniqueid', (req, res) => {
+     // get number from Redis
+     redisClient.incr('anonymous-counter', (err, r) => {
+         if(!err) {
+-            res.json({
+-                uuid: 'anonymous-' + r
++            redisClient.get('anonymous-counter', (err, current) => {
++                res.json({
++                    uuid: 'anonymous-' + r
++                });
+             });
+         } else {
+             req.log.error('ERROR', err);
+@@ -234,7 +236,19 @@ app.get('/history/:id', (req, res) => {
+ 
+ // connect to Redis
+ var redisClient = redis.createClient({
+-    host: process.env.REDIS_HOST || 'redis'
++    host: process.env.REDIS_HOST || 'redis',
++    retry_strategy: function(options) {
++        if(options.error && options.error.code === 'ECONNREFUSED') {
++            return new Error('Redis connection refused');
++        }
++        if(options.total_retry_time > 1000 * 60 * 60) {
++            return new Error('Retry time exhausted');
++        }
++        if(options.attempt > 10) {
++            return undefined;
++        }
++        return Math.min(options.attempt * 100, 3000);
++    }
+ });
+ 
+ redisClient.on('error', (e) => {
+@@ -242,6 +256,12 @@ redisClient.on('error', (e) => {
+ });
+ redisClient.on('ready', (r) => {
+     logger.info('Redis READY', r);
++    // warm up cache for counters
++    redisClient.get('anonymous-counter', (err, data) => {
++        if(!err && data) {
++            logger.info('counter initialized', data);
++        }
++    });
+ });
+ 
+ // set up Mongo
+-- 
+2.51.0
+

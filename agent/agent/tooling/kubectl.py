@@ -1,8 +1,6 @@
 import asyncio
-import json
-import re
 import shlex
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 from agent.tooling._utils import run_cli_command
 from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
@@ -12,90 +10,16 @@ def _run_kubectl(args: list[str], cwd: str, timeout: int = 30, env: Optional[dic
     return run_cli_command(["kubectl"] + args, None, timeout=timeout, cwd=cwd, env=env)
 
 
-def _parse_cpu_quantity(s: str) -> float:
-    """Parse Kubernetes CPU quantity to cores (e.g. '500m' -> 0.5, '1' -> 1.0)."""
-    if not s or not isinstance(s, str):
-        return 0.0
-    s = s.strip()
-    if s.endswith("m"):
-        return int(s[:-1]) / 1000.0
-    return float(s)
+K8sResourceTypes = Literal["nodes", "pods", "namespaces", "services", "endpoints", "ingresses",
+                           "networkpolicies", "configmaps", "secrets", "pvcs", "certificates", "virtualservices"]
 
 
-def _parse_memory_quantity(s: str) -> float:
-    """Parse Kubernetes memory quantity to bytes (e.g. '256Mi' -> 256*1024*1024)."""
-    if not s or not isinstance(s, str):
-        return 0.0
-    s = s.strip()
-    m = re.match(r"^(\d+)(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)?$", s, re.I)
-    if not m:
-        return float(s) if s.isdigit() else 0.0
-    num = int(m.group(1))
-    unit = (m.group(2) or "").upper()
-    if unit == "E" or unit == "EI":
-        return num * (1000**6)
-    if unit == "P" or unit == "PI":
-        return num * (1000**5)
-    if unit == "T" or unit == "TI":
-        return num * (1000**4)
-    if unit == "G" or unit == "GI":
-        return num * (1024**3)
-    if unit == "M" or unit == "MI":
-        return num * (1024**2)
-    if unit == "K" or unit == "KI":
-        return num * 1024
-    return float(num)
-
-
-async def get_pod_resource_limits(
-    namespace: str,
-    apps: list[str],
-    cwd: str,
-    env: Optional[dict[str, str]] = None,
-) -> tuple[dict[str, float], dict[str, float]]:
-    """
-    Fetch CPU and memory limits per app from the cluster via kubectl get pods -o json.
-    Returns (cpu_limits_cores, memory_limits_bytes) keyed by app name.
-    """
-    cpu_limits: dict[str, float] = {}
-    memory_limits: dict[str, float] = {}
-    tr = await _run_kubectl(
-        ["get", "pods", "-n", namespace, "-o", "json"],
-        cwd,
-        timeout=15,
-        env=env,
-    )
-    if tr.error or tr.result is None:
-        return cpu_limits, memory_limits
-    try:
-        data = json.loads(tr.result)
-    except json.JSONDecodeError:
-        return cpu_limits, memory_limits
-    items = data.get("items") or []
-    for pod in items:
-        meta = pod.get("metadata") or {}
-        pod_name = meta.get("name") or ""
-        app_key: Optional[str] = None
-        for app in apps:
-            if pod_name == app or pod_name.startswith(app + "-"):
-                app_key = app
-                break
-        if app_key is None:
-            continue
-        spec = pod.get("spec") or {}
-        for cont in spec.get("containers") or []:
-            res = cont.get("resources") or {}
-            limits = res.get("limits") or {}
-            if "cpu" in limits:
-                cpu_limits[app_key] = cpu_limits.get(app_key, 0.0) + _parse_cpu_quantity(str(limits["cpu"]))
-            if "memory" in limits:
-                memory_limits[app_key] = memory_limits.get(app_key, 0.0) + _parse_memory_quantity(str(limits["memory"]))
-    return cpu_limits, memory_limits
-
+APP_NAMESPACE = "application"
 
 # ---------------------------------------------------------------------------
 # Cluster & Node health
 # ---------------------------------------------------------------------------
+
 
 @tool(tags=["kubectl", "cluster"])
 async def kubectl_cluster_info(
@@ -126,15 +50,25 @@ async def kubectl_get_nodes(
 
 
 @tool(tags=["kubectl", "cluster"])
-async def kubectl_top_nodes(
+async def kubectl_top(
     cwd: Hidden[str],
+    resource_type: Annotated[Literal["nodes", "pods"], "The resource type to get the top for"],
     env: Hidden[Optional[dict[str, str]]] = None,
+    sort_by: Annotated[Optional[str], "'cpu' or 'memory' to sort results"] = None,
+    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
 ) -> ToolResult:
     """
     Show CPU and memory usage for every node (requires metrics-server).
     Use to identify resource-constrained or overloaded nodes.
     """
-    return await _run_kubectl(["top", "nodes"], env=env, cwd=cwd)
+    args = ["top", resource_type]
+    if sort_by:
+        args += ["--sort-by", sort_by]
+    if namespace:
+        args += ["-n", namespace]
+    else:
+        args.append("-A")
+    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -218,27 +152,6 @@ async def kubectl_get_pod_logs(
     if since:
         args += [f"--since={since}"]
     return await _run_kubectl(args, timeout=60, env=env, cwd=cwd)
-
-
-@tool(tags=["kubectl", "pods"])
-async def kubectl_top_pods(
-    cwd: Hidden[str],
-    env: Hidden[Optional[dict[str, str]]] = None,
-    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
-    sort_by: Annotated[Optional[str], "'cpu' or 'memory' to sort results"] = None,
-) -> ToolResult:
-    """
-    Show CPU and memory usage per pod (requires metrics-server).
-    Use to find resource-hungry pods or detect memory leaks.
-    """
-    args = ["top", "pods"]
-    if namespace:
-        args += ["-n", namespace]
-    else:
-        args.append("--all-namespaces")
-    if sort_by:
-        args += ["--sort-by", sort_by]
-    return await _run_kubectl(args, env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "pods"])
@@ -648,16 +561,23 @@ async def kubectl_api_resources(
 
 
 @tool(tags=["kubectl"])
-async def kubectl_get_resource(
+async def kubectl_get_resources(
     cwd: Hidden[str],
-    resource_type: Annotated[str, "Any valid resource type, e.g. 'certificates', 'virtualservices', 'prometheusrules'"],
+    resource_type: Annotated[K8sResourceTypes, "Any valid resource type, e.g. 'certificates', 'virtualservices', 'prometheusrules'"],
     namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
     label_selector: Annotated[Optional[str], "Label selector filter"] = None,
+    field_selector: Annotated[Optional[str],
+                              "Field selector filter, e.g. 'status.phase=Failed' or 'status.phase!=Running'"] = None,
+    sort_by: Annotated[Optional[str],
+                       "JSONPath to sort by, e.g. '.status.startTime' or '.metadata.creationTimestamp'"] = None,
+    additional_args: Annotated[str, "Additional arguments to pass to the kubectl command"] = None,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
-    Generic tool to list any Kubernetes resource type (including CRDs).
+    Generic tool to list any Kubernetes resource type.
     Use this as a fallback when no specialized tool exists for the resource type you need.
+    Examples:
+      - kubectl_get_resources("pod", "application", "app=web", "-c web")
     """
     args = ["get", resource_type, "-o", "wide"]
     if namespace:
@@ -666,6 +586,48 @@ async def kubectl_get_resource(
         args.append("--all-namespaces")
     if label_selector:
         args += ["-l", label_selector]
+    if field_selector:
+        args += ["--field-selector", field_selector]
+    if sort_by:
+        args += ["--sort-by", sort_by]
+    if additional_args:
+        args += shlex.split(additional_args.strip())
+    return await _run_kubectl(args, env=env, cwd=cwd)
+
+
+@tool(tags=["kubectl"])
+async def kubectl_get_resource(
+    cwd: Hidden[str],
+    resource_type: Annotated[K8sResourceTypes, "Any valid resource type, e.g. 'certificates', 'virtualservices', 'prometheusrules'"],
+    resource_name: Annotated[str, "Name of the resource"],
+    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
+    label_selector: Annotated[Optional[str], "Label selector filter"] = None,
+    field_selector: Annotated[Optional[str],
+                              "Field selector filter, e.g. 'status.phase=Failed' or 'status.phase!=Running'"] = None,
+    sort_by: Annotated[Optional[str],
+                       "JSONPath to sort by, e.g. '.status.startTime' or '.metadata.creationTimestamp'"] = None,
+    additional_args: Annotated[str, "Additional arguments to pass to the kubectl command"] = None,
+    env: Hidden[Optional[dict[str, str]]] = None,
+) -> ToolResult:
+    """
+    Generic tool to get a specific Kubernetes resource type (including CRDs).
+    Use this as a fallback when no specialized tool exists for the resource type you need.
+    Examples:
+      - kubectl_get_resource("pod", "my-pod", "application", "app=web", "-c web")
+    """
+    args = ["get", resource_type, resource_name, "-o", "wide"]
+    if namespace:
+        args += ["-n", namespace]
+    else:
+        args.append("--all-namespaces")
+    if label_selector:
+        args += ["-l", label_selector]
+    if field_selector:
+        args += ["--field-selector", field_selector]
+    if sort_by:
+        args += ["--sort-by", sort_by]
+    if additional_args:
+        args += shlex.split(additional_args.strip())
     return await _run_kubectl(args, env=env, cwd=cwd)
 
 
@@ -676,41 +638,38 @@ async def kubectl_get_resource(
 KubectlReadTools = Tools(tools=[
     # Cluster & Nodes
     kubectl_cluster_info,
-    kubectl_get_nodes,
-    kubectl_top_nodes,
+    kubectl_get_nodes,  # replaced by kubectl_get_resource
+    # kubectl_top_nodes,
     # Namespaces
-    kubectl_get_namespaces,
+    # kubectl_get_namespaces, # replaced by kubectl_get_resource
     # Pods
-    kubectl_get_pods,
+    kubectl_get_pods,  # replaced by kubectl_get_resource
     kubectl_get_pod_logs,
-    kubectl_top_pods,
+    # kubectl_top_pods,
     kubectl_get_pod_containers,
     # Events
     kubectl_get_events,
     # Workloads
-    kubectl_get_deployments,
-    kubectl_get_statefulsets,
-    kubectl_get_daemonsets,
-    kubectl_get_jobs,
     kubectl_rollout_status,
     kubectl_rollout_history,
     # Networking
-    kubectl_get_services,
-    kubectl_get_endpoints,
-    kubectl_get_ingresses,
-    kubectl_get_network_policies,
+    # kubectl_get_services, # replaced by kubectl_get_resource
+    # kubectl_get_endpoints, # replaced by kubectl_get_resource
+    # kubectl_get_ingresses, # replaced by kubectl_get_resource
+    # kubectl_get_network_policies, # replaced by kubectl_get_resource
     # Describe & Inspect
     kubectl_describe,
     kubectl_get_yaml,
     # Config & Storage
-    kubectl_get_configmap,
-    kubectl_get_pvcs,
+    # kubectl_get_configmap,
+    # kubectl_get_pvcs,
     # Security
-    kubectl_auth_can_i,
+    # kubectl_auth_can_i,
     # Autoscaling
-    kubectl_get_hpa,
+    # kubectl_get_hpa, # replaced by kubectl_get_resource
     # Generic
     kubectl_api_resources,
+    kubectl_get_resources,
     kubectl_get_resource,
 ])
 
@@ -1167,20 +1126,20 @@ KubectlWriteTools = Tools(tools=[
     kubectl_label,
     kubectl_annotate,
     # Node maintenance
-    kubectl_cordon,
-    kubectl_uncordon,
-    kubectl_drain,
+    # kubectl_cordon,
+    # kubectl_uncordon,
+    # kubectl_drain,
     # Resource lifecycle
     kubectl_apply,
     kubectl_patch,
     kubectl_delete_resource,
     # Namespace
-    kubectl_create_namespace,
+    # kubectl_create_namespace,
     # ConfigMap & Secrets
-    kubectl_create_configmap,
-    kubectl_create_secret,
+    # kubectl_create_configmap,
+    # kubectl_create_secret,
     # Networking
-    kubectl_port_forward,
+    # kubectl_port_forward,
 ])
 
 

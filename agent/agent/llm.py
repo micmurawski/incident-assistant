@@ -4,14 +4,16 @@ from abc import ABC
 from typing import Any, AsyncIterator, List, Optional, TypeVar
 from uuid import uuid4
 
+from agent.context_ops import SummarizeResponse, summarize_conversation
+from agent.providers import build_api_handler
+from agent.providers.base import ApiHandler
+from agent.settings import SettingsManager
+from agent.tracing import trace_flow
+from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
+                         StreamChunk)
 from framework import AsyncFlow
 from framework.decorators import node
 from framework.viz import build_mermaid, to_png
-
-from agent.context_ops import SummarizeResponse, summarize_conversation
-from agent.providers.base import ApiHandler
-from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
-                         StreamChunk)
 
 T = TypeVar('T')
 
@@ -197,6 +199,41 @@ class LLMAgent(ABC):
     cwd: str | None = None
     shared_context: dict[str, Any] | None = None
 
+    def __init__(
+        self,
+        name: str,
+        system_prompt: str,
+        api_settings: dict[str, Any] | None = None,
+        tools: Any | None = None,
+        shared_context: dict[str, Any] | None = None,
+        disable_tracing: bool = False,
+    ):
+        # construct the agent
+        settings = SettingsManager.get_instance()
+        api_settings = api_settings or settings.get("api")
+        self.system_prompt = system_prompt
+        self.api_handler: ApiHandler = build_api_handler(**api_settings)
+        self.name = name
+
+        if shared_context is None:
+            shared_context = shared_context or {}
+
+        if not disable_tracing:
+            @trace_flow(f"agent-{name}-flow")
+            class _TracedFlow(AsyncFlow):
+                def __init__(self, start):
+                    super().__init__(start=start)
+            self.flow = _TracedFlow(start=self.call_llm)
+        else:
+            self.flow = AsyncFlow(start=self.call_llm)
+
+        self.shared_context = shared_context
+        # create re-act agent with summarization
+        self.bind_tools(tools, self.get_shared())
+        self.call_llm - "tools" >> tools
+        tools >> self.summarize_context
+        self.summarize_context >> self.call_llm
+
     def __repr__(self):
         return f"LLMAgent(name={self.name})"
 
@@ -213,7 +250,8 @@ class LLMAgent(ABC):
     async def call(self, shared: dict[str, Any]):
         if self.flow is None:
             raise ValueError("Flow is not bound")
-        shared = {**self.get_shared(), **shared}
+        # override shared with self.get_shared()
+        shared = {**shared, **self.get_shared()}
         return await self.flow.run_async(shared)
 
     @node
@@ -248,6 +286,8 @@ class LLMAgent(ABC):
     ) -> List[AnthropicMessage]:
         total_tokens = await self.api_handler.count_tokens(messages, tools)
         model_info = self.api_handler.get_model()
+        print(f"\033[92mtotal_tokens: {total_tokens}\033[0m")
+        print(f"\033[92mPercentage of max tokens: {total_tokens / model_info['max_tokens'] * 100}%\033[0m")
         if model_info["max_tokens"] <= total_tokens:
             result: SummarizeResponse = await summarize_conversation(
                 messages=messages,

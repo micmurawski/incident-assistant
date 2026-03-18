@@ -16,11 +16,10 @@ def _get_rate_selector(namespace: str, apps: list[str] | None, direction: str = 
         # Match deployment or app label
         app_re = "|".join([f'{app}.*' for app in apps])
         sel += f', pod=~"{app_re}"'
-    print(sel)
     return sel
 
 
-def get_latency_percentiles(
+async def get_latency_percentiles(
     client: GrafanaClient,
     namespace: str,
     apps: list[str] | None = None,
@@ -42,7 +41,7 @@ def get_latency_percentiles(
 
     for q, p in [("0.50", "p50"), ("0.95", "p95"), ("0.99", "p99")]:
         expr = f"histogram_quantile({q}, {base})"
-        frames = client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
+        frames = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
         for frame in frames:
             for pod_name, val in _extract_series_by_pod(frame):
                 if val is None:
@@ -68,7 +67,7 @@ def get_latency_percentiles(
     return result
 
 
-def get_http_error_counts(
+async def get_http_error_counts(
     client: GrafanaClient,
     namespace: str,
     apps: list[str] | None = None,
@@ -86,7 +85,7 @@ def get_http_error_counts(
 
     for status_pattern, key in [("4..", "4xx"), ("5..", "5xx")]:
         expr = f'sum(increase(response_total{{{sel}, status_code=~"{status_pattern}"}}[{window}])) by (pod)'
-        frames = client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
+        frames = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
         for frame in frames:
             for pod_name, val in _extract_series_by_pod(frame):
                 if val is None:
@@ -109,7 +108,7 @@ def get_http_error_counts(
     return result
 
 
-def get_request_rate(
+async def get_request_rate(
     client: GrafanaClient,
     namespace: str,
     apps: list[str] | None = None,
@@ -123,8 +122,7 @@ def get_request_rate(
     """
     sel = _get_rate_selector(namespace, apps)
     expr = f'sum(rate(response_total{{{sel}}}[{window}])) by (pod)'
-    print(expr)
-    frames = client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
+    frames = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
     pod_rates: dict[str, float] = {}
     for frame in frames:
         for pod_name, val in _extract_series_by_pod(frame):
@@ -141,7 +139,7 @@ def get_request_rate(
     return result
 
 
-def get_cpu_usage(
+async def get_cpu_usage(
     client: GrafanaClient,
     namespace: str,
     apps: list[str],
@@ -161,13 +159,13 @@ def get_cpu_usage(
             f'sum(rate(container_cpu_usage_seconds_total{{namespace="{namespace}", '
             f'container!="", container!="POD", pod={pod_filter}}}[{window}]))'
         )
-        frames = client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
+        frames = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
         val = _extract_single_value(frames)
         result[app] = float(val) if val is not None else 0.0
     return result
 
 
-def get_memory_usage(
+async def get_memory_usage(
     client: GrafanaClient,
     namespace: str,
     apps: list[str],
@@ -187,7 +185,7 @@ def get_memory_usage(
             f'sum(container_memory_working_set_bytes{{namespace="{namespace}", '
             f'container!="", container!="POD", pod={pod_filter}}})'
         )
-        frames = client.query_prometheus(expr, from_time="now-5m", to_time="now")
+        frames = await client.query_prometheus(expr, from_time="now-5m", to_time="now")
         val = _extract_single_value(frames)
         if val is None:
             # Fallback to container_memory_usage_bytes if working_set not available
@@ -195,13 +193,13 @@ def get_memory_usage(
                 f'sum(container_memory_usage_bytes{{namespace="{namespace}", '
                 f'container!="", container!="POD", pod={pod_filter}}})'
             )
-            frames = client.query_prometheus(expr, from_time="now-5m", to_time="now")
+            frames = await client.query_prometheus(expr, from_time="now-5m", to_time="now")
             val = _extract_single_value(frames)
         result[app] = float(val) if val is not None else 0.0
     return result
 
 
-def get_success_rate(
+async def get_success_rate(
     client: GrafanaClient,
     namespace: str,
     apps: list[str] | None = None,
@@ -217,7 +215,7 @@ def get_success_rate(
     total = f'sum(rate(response_total{{{sel}}}[{window}])) by (pod)'
     success = f'sum(rate(response_total{{{sel}, classification="success"}}[{window}])) by (pod)'
     expr = f"({success}) / ({total})"
-    frames = client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
+    frames = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
     pod_rates: dict[str, float] = {}
     for frame in frames:
         for pod_name, val in _extract_series_by_pod(frame):

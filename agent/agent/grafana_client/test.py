@@ -12,7 +12,10 @@ client = GrafanaClient(url=data["grafana_url"], api_key=data["grafana_api_token"
 
 
 async def main():
-    res = build_status_report(client, namespace="application", apps=["cart", "redis"], window="90m")
+
+    res = await build_status_report(
+        client, namespace="application", apps=["mysql", "shipping"], window="90m"
+    )
     print(res)
     #result = fetch_error_logs(client, namespace="application", app="payment", from_time="now-30m", to_time="now")
     #for log in result:

@@ -1,0 +1,147 @@
+From cbae47cc6788c8e5136b3fdf2f4bfae1526a511a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Micha=C5=82=20Murawski?= <mmurawski777@gmail.com>
+Date: Mon, 16 Mar 2026 21:40:42 +0100
+Subject: [PATCH] fault:
+ fault-1-shipping-chaos_http_abort-9b567d3c33d0440bb9febe315331ecf8
+
+---
+ .../robotshop/shipping/CartHelper.java        | 68 +++++++++++++------
+ .../instana/robotshop/shipping/JpaConfig.java | 13 ++++
+ .../shipping/RetryableDataSource.java         |  4 +-
+ 3 files changed, 63 insertions(+), 22 deletions(-)
+
+diff --git a/shipping/src/main/java/com/instana/robotshop/shipping/CartHelper.java b/shipping/src/main/java/com/instana/robotshop/shipping/CartHelper.java
+index 05e8d03..c06b286 100644
+--- a/shipping/src/main/java/com/instana/robotshop/shipping/CartHelper.java
++++ b/shipping/src/main/java/com/instana/robotshop/shipping/CartHelper.java
+@@ -27,30 +27,58 @@ public class CartHelper {
+         logger.info("add shipping to cart {}", id);
+         StringBuilder buffer = new StringBuilder();
+ 
+-        try (CloseableHttpClient httpClient = HttpClients.custom()
+-                .setDefaultRequestConfig(org.apache.hc.client5.http.config.RequestConfig.custom()
+-                    .setConnectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+-                    .build())
+-                .build()) {
+-            
+-            HttpPost postRequest = new HttpPost(baseUrl + id);
+-            StringEntity payload = new StringEntity(data, org.apache.hc.core5.http.ContentType.APPLICATION_JSON);
+-            postRequest.setEntity(payload);
+-            
+-            try (CloseableHttpResponse res = httpClient.execute(postRequest)) {
+-                if (res.getCode() == 200) {
+-                    try (BufferedReader in = new BufferedReader(new InputStreamReader(res.getEntity().getContent()))) {
+-                        String line;
+-                        while ((line = in.readLine()) != null) {
+-                            buffer.append(line);
++        org.apache.hc.client5.http.config.RequestConfig requestConfig = 
++            org.apache.hc.client5.http.config.RequestConfig.custom()
++                .setConnectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
++                .setConnectionRequestTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
++                .setResponseTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
++                .build();
++
++        int attempts = 0;
++        int maxAttempts = 5;
++        
++        while (attempts < maxAttempts) {
++            attempts++;
++            try (CloseableHttpClient httpClient = HttpClients.custom()
++                    .setDefaultRequestConfig(requestConfig)
++                    .setRetryHandler((request, exception, executionContext) -> {
++                        logger.warn("Retrying request after exception: {}", exception.getMessage());
++                        return true;
++                    })
++                    .setMaxTotal(50)
++                    .build()) {
++                
++                HttpPost postRequest = new HttpPost(baseUrl + id);
++                StringEntity payload = new StringEntity(data, org.apache.hc.core5.http.ContentType.APPLICATION_JSON);
++                postRequest.setEntity(payload);
++                
++                try (CloseableHttpResponse res = httpClient.execute(postRequest)) {
++                    if (res.getCode() == 200) {
++                        try (BufferedReader in = new BufferedReader(new InputStreamReader(res.getEntity().getContent()))) {
++                            String line;
++                            while ((line = in.readLine()) != null) {
++                                buffer.append(line);
++                            }
+                         }
++                        return buffer.toString();
++                    } else {
++                        logger.warn("Failed with code {} on attempt {}", res.getCode(), attempts);
++                    }
++                }
++                
++                if (attempts < maxAttempts) {
++                    Thread.sleep(attempts * 1000);
++                }
++            } catch(Exception e) {
++                logger.warn("http client exception on attempt {}: {}", attempts, e.getMessage());
++                if (attempts < maxAttempts) {
++                    try {
++                        Thread.sleep(attempts * 1000);
++                    } catch (InterruptedException ie) {
++                        Thread.currentThread().interrupt();
+                     }
+-                } else {
+-                    logger.warn("Failed with code {}", res.getCode());
+                 }
+             }
+-        } catch(Exception e) {
+-            logger.warn("http client exception", e);
+         }
+ 
+         return buffer.toString();
+diff --git a/shipping/src/main/java/com/instana/robotshop/shipping/JpaConfig.java b/shipping/src/main/java/com/instana/robotshop/shipping/JpaConfig.java
+index 7b321fc..5a8b34f 100644
+--- a/shipping/src/main/java/com/instana/robotshop/shipping/JpaConfig.java
++++ b/shipping/src/main/java/com/instana/robotshop/shipping/JpaConfig.java
+@@ -7,6 +7,8 @@ import org.slf4j.LoggerFactory;
+ import org.springframework.boot.jdbc.DataSourceBuilder;
+ import org.springframework.context.annotation.Bean;
+ import org.springframework.context.annotation.Configuration;
++import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
++import java.util.concurrent.Executor;
+ 
+ @Configuration
+ public class JpaConfig {
+@@ -30,4 +32,15 @@ public class JpaConfig {
+ 
+         return builder.build();
+     }
++    
++    @Bean(name = "taskExecutor")
++    public Executor taskExecutor() {
++        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
++        executor.setCorePoolSize(50);
++        executor.setMaxPoolSize(100);
++        executor.setQueueCapacity(200);
++        executor.setThreadNamePrefix("shipping-");
++        executor.initialize();
++        return executor;
++    }
+ }
+diff --git a/shipping/src/main/java/com/instana/robotshop/shipping/RetryableDataSource.java b/shipping/src/main/java/com/instana/robotshop/shipping/RetryableDataSource.java
+index 7dcfd06..1ad1127 100644
+--- a/shipping/src/main/java/com/instana/robotshop/shipping/RetryableDataSource.java
++++ b/shipping/src/main/java/com/instana/robotshop/shipping/RetryableDataSource.java
+@@ -16,13 +16,13 @@ class RetryableDataSource extends AbstractDataSource {
+     }
+ 
+     @Override
+-    @Retryable(maxAttempts = 10, backoff = @Backoff(multiplier = 2.3, maxDelay = 30000))
++    @Retryable(maxAttempts = 10, backoff = @Backoff(multiplier = 3.5, maxDelay = 60000))
+     public Connection getConnection() throws SQLException {
+         return delegate.getConnection();
+     }
+ 
+     @Override
+-    @Retryable(maxAttempts = 10, backoff = @Backoff(multiplier = 2.3, maxDelay = 30000))
++    @Retryable(maxAttempts = 10, backoff = @Backoff(multiplier = 3.5, maxDelay = 60000))
+     public Connection getConnection(String username, String password) throws SQLException {
+         return delegate.getConnection(username, password);
+     }
+-- 
+2.51.0
+

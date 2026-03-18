@@ -1,0 +1,153 @@
+From 071b5e1ae8b8d6458ec0844f73cd92db3777179b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Micha=C5=82=20Murawski?= <mmurawski777@gmail.com>
+Date: Mon, 16 Mar 2026 21:08:23 +0100
+Subject: [PATCH] fault:
+ fault-1-user-chaos_network_delay-76ba0d09f79c45899211394288e21418
+
+---
+ user/server.js | 101 +++++++++++++++++++++++++++++++++++++++----------
+ 1 file changed, 80 insertions(+), 21 deletions(-)
+
+diff --git a/user/server.js b/user/server.js
+index f7b488e..f375360 100644
+--- a/user/server.js
++++ b/user/server.js
+@@ -49,8 +49,20 @@ app.get('/uniqueid', (req, res) => {
+     // get number from Redis
+     redisClient.incr('anonymous-counter', (err, r) => {
+         if(!err) {
+-            res.json({
+-                uuid: 'anonymous-' + r
++            var uuid = 'anonymous-' + r;
++            // store session metadata for analytics
++            redisClient.setex('session:' + uuid, 3600, JSON.stringify({
++                created: Date.now(),
++                ip: req.ip
++            }), (err2, r2) => {
++                // update usage stats
++                redisClient.hincrby('stats', 'unique-sessions', 1, (err3, r3) => {
++                    redisClient.get('anonymous-counter', (err4, r4) => {
++                        res.json({
++                            uuid: uuid
++                        });
++                    });
++                });
+             });
+         } else {
+             req.log.error('ERROR', err);
+@@ -99,13 +111,28 @@ app.post('/login', (req, res) => {
+         req.log.warn('credentails not complete');
+         res.status(400).send('name or passowrd not supplied');
+     } else if(mongoConnected) {
++        // lookup user
+         usersCollection.findOne({
+             name: req.body.name,
+         }).then((user) => {
+             req.log.info('user', user);
+             if(user) {
+                 if(user.password == req.body.password) {
+-                    res.json(user);
++                    // record login activity
++                    usersCollection.updateOne(
++                        { name: req.body.name },
++                        { $inc: { loginCount: 1 }, $set: { lastLogin: new Date() } }
++                    ).then(() => {
++                        // check for suspicious activity
++                        usersCollection.countDocuments({}).then((totalUsers) => {
++                            redisClient.setex('login:' + req.body.name, 300, Date.now().toString(), (err, r) => {
++                                res.json(user);
++                            });
++                        });
++                    }).catch((e) => {
++                        req.log.error(e);
++                        res.json(user);
++                    });
+                 } else {
+                     res.status(404).send('incorrect password');
+                 }
+@@ -135,17 +162,29 @@ app.post('/register', (req, res) => {
+                 req.log.warn('user already exists');
+                 res.status(400).send('name already exists');
+             } else {
+-                // create new user
+-                usersCollection.insertOne({
+-                    name: req.body.name,
+-                    password: req.body.password,
+-                    email: req.body.email
+-                }).then((r) => {
+-                    req.log.info('inserted', r.result);
+-                    res.send('OK');
+-                }).catch((e) => {
+-                    req.log.error('ERROR', e);
+-                    res.status(500).send(e);
++                // get user count for analytics
++                usersCollection.countDocuments({}).then((count) => {
++                    // create new user
++                    usersCollection.insertOne({
++                        name: req.body.name,
++                        password: req.body.password,
++                        email: req.body.email,
++                        createdAt: new Date()
++                    }).then((r) => {
++                        req.log.info('inserted', r.result);
++                        // update registration stats
++                        redisClient.incr('registration-count', (err, r2) => {
++                            redisClient.setex('user:' + req.body.name, 3600, JSON.stringify({
++                                email: req.body.email,
++                                registered: true
++                            }), (err3, r3) => {
++                                res.send('OK');
++                            });
++                        });
++                    }).catch((e) => {
++                        req.log.error('ERROR', e);
++                        res.status(500).send(e);
++                    });
+                 });
+             }
+         }).catch((e) => {
+@@ -214,14 +253,34 @@ app.post('/order/:id', (req, res) => {
+ 
+ app.get('/history/:id', (req, res) => {
+     if(mongoConnected) {
+-        ordersCollection.findOne({
+-            name: req.params.id
+-        }).then((history) => {
+-            if(history) {
+-                res.json(history);
+-            } else {
+-                res.status(404).send('history not found');
++        // check user exists first
++        usersCollection.findOne({ name: req.params.id }).then((user) => {
++            if (!user) {
++                res.status(404).send('user not found');
++                return;
+             }
++            // get orders
++            ordersCollection.findOne({
++                name: req.params.id
++            }).then((history) => {
++                if(history) {
++                    // track history access
++                    usersCollection.updateOne(
++                        { name: req.params.id },
++                        { $inc: { historyViews: 1 } }
++                    ).catch((e) => {
++                        req.log.error(e);
++                    });
++                    redisClient.setex('history:' + req.params.id, 60, Date.now().toString(), (err, r) => {
++                        res.json(history);
++                    });
++                } else {
++                    res.status(404).send('history not found');
++                }
++            }).catch((e) => {
++                req.log.error(e);
++                res.status(500).send(e);
++            });
+         }).catch((e) => {
+             req.log.error(e);
+             res.status(500).send(e);
+-- 
+2.51.0
+
