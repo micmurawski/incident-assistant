@@ -97,20 +97,24 @@ if __name__ == "__main__":
     import uuid
     from opentelemetry import trace
     from openinference.instrumentation import using_attributes
-    from openinference.instrumentation.anthropic import AnthropicInstrumentor
+    from openinference.instrumentation.openai import OpenAIInstrumentor
     from agent.tasks.tasks import Task
 
     from agent.settings import SettingsManager
+    from agent.persistence.settings import init_db
     from phoenix.otel import register
     import os
 
-    provider = "minimax"
+    init_db()
+
+    provider = "gemini"
     tracer = trace.get_tracer(__name__)
     settings = SettingsManager.get_instance()
     settings.set("api.provider", provider)
-    settings.set("api.api_key", os.environ["MINIMAX_API_KEY"])
+    settings.set("api.api_key", os.environ["GEMINI_API_KEY"])
+    settings.set("api.model_id", "gemini-2.5-flash:thinking")
     tracer_provider = register(project_name="sre-agent-testing-tracing")
-    AnthropicInstrumentor().instrument(tracer_provider=tracer_provider)
+    OpenAIInstrumentor().instrument(tracer_provider=tracer_provider)
 
     async def main():
         SESSION_ID = str(uuid.uuid4())
@@ -124,7 +128,7 @@ if __name__ == "__main__":
                     conversation=[
                         {
                             "role": "user",
-                            "content": "Ask metrics agent about his real name",
+                            "content": "Ask metrics agent about his real name. Just file task for him to answer this simple question.",
                             #"content": "Can you ask metrics_agent to make a report about the application, and app node state?"
                         }
                     ]

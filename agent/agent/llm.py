@@ -252,9 +252,12 @@ class LLMAgent(ABC):
     async def call(self, shared: dict[str, Any]):
         if self.flow is None:
             raise ValueError("Flow is not bound")
-        # override shared with self.get_shared()
-        shared = {**shared, **self.get_shared()}
-        return await self.flow.run_async(shared)
+        # Flow runs on a merged dict; node post() updates that dict only, so we must copy
+        # results back into the caller's `shared` (same dict the executor holds).
+        merged = {**shared, **self.get_shared()}
+        result = await self.flow.run_async(merged)
+        shared.update(merged)
+        return result
 
     @node
     async def call_llm(
@@ -273,7 +276,9 @@ class LLMAgent(ABC):
 
         async for _ in iter:
             pass
-
+        
+        print("NEW MESSAGES")
+        print(iter.get_response())
         data = {"messages": messages + iter.get_response()}
         if iter.usage_summary:
             data["_last_usage"] = iter.usage_summary

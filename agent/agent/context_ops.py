@@ -280,20 +280,49 @@ async def summarize_conversation(
     # Always preserve the first message (which may contain slash command content)
     first_message = messages[0]
 
-    # Get messages to summarize, excluding the first message and last N messages
-    messages_to_summarize = get_messages_since_last_summary(
-        messages[1:-N_MESSAGES_TO_KEEP] if len(messages) > N_MESSAGES_TO_KEEP else []
-    )
+    # Find a stable boundary for keep_messages to avoid splitting tool-use/result pairs.
+    # We want to keep at least N_MESSAGES_TO_KEEP, but we may need to keep more
+    # to ensure the first kept message isn't a tool_result or doesn't immediately
+    # follow a tool_use without its results.
+    split_index = len(messages) - N_MESSAGES_TO_KEEP
+    
+    def is_tool_result(msg: AnthropicMessage) -> bool:
+        content = msg.get("content")
+        if isinstance(content, list):
+            return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
+        return False
+
+    def has_tool_use(msg: AnthropicMessage) -> bool:
+        content = msg.get("content")
+        if isinstance(content, list):
+            return any(isinstance(block, dict) and block.get("type") == "tool_use" for block in content)
+        return False
+
+    # Backtrack to find a stable starting point for keep_messages
+    while split_index > 1:
+        # If the current split starts with a tool result, we MUST include the previous message (the tool use)
+        if is_tool_result(messages[split_index]):
+            split_index -= 1
+            continue
+        # If the previous message has a tool use, we should keep it together with its results
+        if has_tool_use(messages[split_index - 1]):
+            split_index -= 1
+            continue
+        break
+
+    keep_messages = messages[split_index:]
+    messages_to_summarize_raw = messages[1:split_index]
+
+    # Get messages to summarize, excluding the first message and the kept messages
+    messages_to_summarize = get_messages_since_last_summary(messages_to_summarize_raw)
 
     if len(messages_to_summarize) <= 1:
         error = (
             "Not enough messages to condense"
-            if len(messages) <= N_MESSAGES_TO_KEEP + 1
+            if len(messages) <= (len(messages) - split_index) + 1
             else "Conversation was condensed recently"
         )
         return SummarizeResponse(messages=messages, cost=0.0, summary="", error=error)
-
-    keep_messages = messages[-N_MESSAGES_TO_KEEP:]
 
     # Check if there's a recent summary in the messages we're keeping
     recent_summary_exists = any(msg.get("isSummary", False) for msg in keep_messages)
@@ -307,9 +336,37 @@ async def summarize_conversation(
         "content": "Summarize the conversation so far, as described in the prompt instructions.",
     }
 
-    request_messages = messages_to_summarize + [final_request_message]
+    # Prepare messages for summarization: flatten all content to text and merge consecutive roles
+    # to avoid tool calling validation errors and ensure alternating roles for the summarizer LLM.
+    sanitized_messages = []
+    for msg in messages_to_summarize + [final_request_message]:
+        role = msg["role"]
+        content = msg["content"]
 
-    request_messages = [{"role": msg["role"], "content": msg["content"]} for msg in request_messages]
+        # Flatten content to string
+        text_content = ""
+        if isinstance(content, str):
+            text_content = content
+        elif isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                elif isinstance(block, dict):
+                    if block.get("type") == "text":
+                        parts.append(block.get("text", ""))
+                    elif block.get("type") == "tool_use":
+                        parts.append(f"[Tool Use: {block.get('name')}, input: {block.get('input')}]")
+                    elif block.get("type") == "tool_result":
+                        parts.append(f"[Tool Result: {block.get('content')}]")
+            text_content = "\n".join(parts)
+
+        if sanitized_messages and sanitized_messages[-1]["role"] == role:
+            sanitized_messages[-1]["content"] += "\n\n" + text_content
+        else:
+            sanitized_messages.append({"role": role, "content": text_content})
+
+    request_messages = sanitized_messages
 
     # Use custom prompt if provided and non-empty, otherwise use the default SUMMARY_PROMPT
     prompt_to_use = (
@@ -355,7 +412,7 @@ async def summarize_conversation(
         return SummarizeResponse(messages=messages, cost=cost, summary="", error=error)
 
     summary_message: AnthropicMessage = AnthropicMessage(
-        role="assistant", content=summary, ts=keep_messages[0]["ts"], isSummary=True
+        role="assistant", content=summary, ts=keep_messages[0].get("ts"), isSummary=True
     )
 
     # Reconstruct messages: [first message, summary, last N messages]

@@ -59,7 +59,6 @@ ANTHROPIC_MODELS = {
 GEMINI_DEFAULT_MODEL_ID = "gemini-2.5-flash"
 
 GEMINI_MODELS = {
-    
     "gemini-2.5-flash:thinking": {
         "max_tokens": 65_535,
         "context_window": 1_048_576,
@@ -171,7 +170,8 @@ OPENAI_DEFAULT_MODEL_INFO = {
 
 MINIMAX_MODELS = {
     "MiniMax-M2.5": {
-        "max_tokens": 16_384,
+        "max_tokens": 8192,
+        #"max_tokens": 16_384,
         "context_window": 204_800,
         "supports_images": False,
         "supports_prompt_cache": True,

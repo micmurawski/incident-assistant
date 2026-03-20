@@ -119,15 +119,20 @@ class Task:
         return deepest
     
     def save(self, key: tuple[str, str] | None = None):
+        conv = json.dumps(self.conversation)
         TaskModel.create(
             root_id=key[0] if key else self.root.id,
             id=self.id,
-            conversation_content=json.dumps(self.conversation),
+            conversation_content=conv,
             status=self.status.value,
             todo_list=json.dumps(self.todo_list),
-            children=[child.id for child in self.children],
-            parent=self.parent.id if self.parent else None,
-            root=self.root.id if self.root else None,
+            children=json.dumps([child.id for child in self.children]),
+            parent=self.parent.id if self.parent else "",
+            root=self.root.id if self.root else "",
+            assignee=self.assignee or "",
+            assigner=self.assigner or "",
+            conversation=conv,
+            last_message_ts=0,
         )
         for child in self.children:
             child.save(key=key or (self.root.id, self.id))

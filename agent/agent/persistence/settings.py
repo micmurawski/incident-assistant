@@ -26,6 +26,8 @@ def init_db() -> SqliteDatabase:
     for model in models:
         model.bind(database)
     database.connect()
+    database.create_tables(models, safe=True)
+    return database
 
 
 if __name__ == "__main__":
