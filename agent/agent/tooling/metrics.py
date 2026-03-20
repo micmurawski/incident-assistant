@@ -1,14 +1,14 @@
-from datetime import datetime, timezone
 from typing import Annotated, List, Literal, Optional
 
 import yaml
 
 from agent.grafana_client.client import GrafanaClient
-from agent.grafana_client.report import build_status_report_yaml
+from agent.grafana_client.parsers import prase_to_table
+from agent.grafana_client.report import (build_status_report)
 from agent.tooling.cli import bash
 from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
 
-TimeWindow = Literal["5m", "15m", "30m"]
+TimeWindow = Literal["1m", "5m", "15m", "30m"]
 
 
 APPS = [
@@ -64,7 +64,7 @@ async def get_app_summary(
     cwd: Hidden[Optional[str]] = None,
 ) -> ToolResult:
     """Get a summary of the application's metric and logs."""
-    report = await build_status_report_yaml(
+    report = await build_status_report(
         grafana_client, NAMESPACE, apps, window, env=env, cwd=cwd
     )
     return ToolResult(result=report, error=None)
@@ -86,19 +86,23 @@ async def query_loki(
     from_time = f"now-{time_window}"
     to_time = "now"
     logs = await grafana_client.query_loki(query, from_time, to_time)
-    entries = []
-    for log in logs:
-        # parse timestamp to datetime utc
-        time_utc = datetime.fromtimestamp(log.get("timestamp", 0), tz=timezone.utc).isoformat()
-        entries.append(
-            {
-                "datetime": time_utc,
-                "message": log.get("message", ""),
-                "labels": log.get("labels", {}),
-                "fields": log.get("fields", {}),
-            }
-        )
-    return ToolResult(result=yaml.dump(entries), error=None)
+    result = prase_to_table(logs, exclude_fields=["tsNs", "id"])
+    return ToolResult(result=result, error=None)
+    # result = yaml.dump(result)
+    # logs = extract_loki_results(logs)
+    # entries = []
+    # for log in logs:
+    #    # parse timestamp to datetime utc
+    #    time_utc = datetime.fromtimestamp(log.get("timestamp", 0), tz=timezone.utc).isoformat()
+    #    entries.append(
+    #        {
+    #            "datetime": time_utc,
+    #            "message": log.get("message", ""),
+    #            "labels": log.get("labels", {}),
+    #            "fields": log.get("fields", {}),
+    #        }
+    #    )
+    # return ToolResult(result=yaml.dump(entries), error=None)
 
 
 @tool(tags=["metrics"])
@@ -115,7 +119,7 @@ async def query_prometheus(
     from_time = f"now-{time_window}"
     to_time = "now"
     result = await grafana_client.query_prometheus(query, from_time, to_time, instant=not range_query)
-    return ToolResult(result=yaml.dump(result), error=None)
+    return ToolResult(result=prase_to_table(result), error=None)
 
 
 @tool(tags=["metrics"])
@@ -230,6 +234,17 @@ if __name__ == "__main__":
     async def main():
         grafana_client = GrafanaClient(url=GRAFANA_URL, api_key=GRAFANA_API_KEY)
         
+        
+        print("Testing get_app_summary...")
+        result = await get_app_summary(grafana_client=grafana_client)
+        print(result.result)
+        exit()
+        
+        print("Testing query_loki...")
+        # For demo purposes - parameters may need to be replaced with real ones that make sense for your environment.
+        result = await query_loki(grafana_client=grafana_client, query='{app="shipping"}', time_window="1m")
+        print(result.result)
+
         print("Testing get_resource_routes...")
         result = await get_resource_routes(resource_type="deployment", resource_id="cart")
         print(result.result)
@@ -237,14 +252,14 @@ if __name__ == "__main__":
         print("Testing get_edges_summary...")
         result = await get_edges_summary(resource="deployments")
         print(result.result)
-        
+
         print("Testing range_query_prometheus...")
         result = await query_prometheus(grafana_client=grafana_client, query='sum(rate(up[5m]))', time_window="60m")
         print(result.result)
 
         # Test all metric tooling functions
         print("Testing get_metric_metadata...")
-        result = await get_metric_metadata(grafana_client=grafana_client, metric_name="up")
+        result = await get_metric_metadata(grafana_client=grafana_client, metric_name="request_total")
         print(result.result)
 
         print("Testing list_metric_label_values...")
@@ -259,15 +274,5 @@ if __name__ == "__main__":
         result = await list_metrics(grafana_client=grafana_client)
         print(result.result)
 
-
-
-        print("Testing get_app_summary...")
-        result = await get_app_summary(grafana_client=grafana_client)
-        print(result.result)
-
-        print("Testing query_loki...")
-        # For demo purposes - parameters may need to be replaced with real ones that make sense for your environment.
-        result = await query_loki(grafana_client=grafana_client, query='{app="cart"}')
-        print(result.result)
 
     asyncio.run(main())

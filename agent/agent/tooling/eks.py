@@ -63,3 +63,12 @@ EksTools = Tools(tools=[
     get_node_group_status,
     get_cluster_info,
 ])
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    async def main():
+        result = await get_cluster_info()
+        print(result.result)
+    asyncio.run(main())

@@ -167,15 +167,7 @@ class GrafanaClient:
             timeout=60,
         )
         data = r.json()
-        return self._extract_prometheus_results(data)
-
-    def _extract_prometheus_results(self, data: dict) -> list[dict[str, Any]]:
-        """Extract result frames from Grafana query response."""
-        results = []
-        for ref_id, resp in data.get("results", {}).items():
-            for frame in resp.get("frames", []):
-                results.append(frame)
-        return results
+        return data
 
     async def query_loki(
         self,
@@ -224,71 +216,7 @@ class GrafanaClient:
             timeout=120,
         )
         data = r.json()
-        return self._extract_loki_results(data)
-
-    def _extract_loki_results(self, data: dict) -> list[dict[str, Any]]:
-        """Extract log entries from Grafana Loki query response."""
-        logs = []
-        for _ref_id, resp in data.get("results", {}).items():
-            for frame in resp.get("frames", []):
-                schema = frame.get("schema", {})
-                schema_fields = schema.get("fields", [])
-                values = frame.get("data", {}).get("values", [])
-                # Expect at least: fields, Time (ms), Line. Some responses also include tsNs and id.
-                if len(values) < 3:
-                    continue
-                fields = values[0]
-                times_ms = values[1]
-                lines_raw = values[2]
-
-                # Prefer the high‑precision tsNs column when available
-                ts_ns_values = None
-                if len(values) >= 4:
-                    ts_ns_values = values[3]
-
-                labels = {}
-                if schema_fields and isinstance(schema_fields[0], dict):
-                    labels = schema_fields[0].get("labels") or {}
-                    if labels and not isinstance(labels, dict):
-                        labels = {}
-                for idx, (fields_val, line_val) in enumerate(zip(fields, lines_raw)):
-                    fields_val.pop("filename", None)
-                    if line_val is None or line_val == "":
-                        continue
-
-                    # Determine timestamp in seconds since epoch.
-                    ts_ns = None
-                    if ts_ns_values is not None and idx < len(ts_ns_values):
-                        # tsNs is a string representing nanoseconds since epoch
-                        ts_raw = ts_ns_values[idx]
-                        try:
-                            ts_ns = int(ts_raw)
-                        except (TypeError, ValueError):
-                            ts_ns = None
-
-                    if ts_ns is None:
-                        # Fallback to Time column (milliseconds since epoch)
-                        if idx < len(times_ms):
-                            ts_raw = times_ms[idx]
-                            try:
-                                ts_ms = int(ts_raw)
-                                ts_ns = ts_ms * 1_000_000
-                            except (TypeError, ValueError):
-                                ts_ns = 0
-                        else:
-                            ts_ns = 0
-
-                    if line_val is None or line_val == "":
-                        continue
-                    logs.append(
-                        {
-                            "timestamp": ts_ns / 1e9,
-                            "message": str(line_val) if line_val else "",
-                            "labels": dict(labels),
-                            "fields": dict(fields_val),
-                        }
-                    )
-        return logs
+        return data
 
     async def list_prometheus_metrics(
         self,

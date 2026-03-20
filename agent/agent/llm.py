@@ -4,6 +4,10 @@ from abc import ABC
 from typing import Any, AsyncIterator, List, Optional, TypeVar
 from uuid import uuid4
 
+from framework import AsyncFlow
+from framework.decorators import node, end
+from framework.viz import build_mermaid, to_png
+
 from agent.context_ops import SummarizeResponse, summarize_conversation
 from agent.providers import build_api_handler
 from agent.providers.base import ApiHandler
@@ -11,9 +15,6 @@ from agent.settings import SettingsManager
 from agent.tracing import trace_flow
 from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
                          StreamChunk)
-from framework import AsyncFlow
-from framework.decorators import node
-from framework.viz import build_mermaid, to_png
 
 T = TypeVar('T')
 
@@ -231,6 +232,7 @@ class LLMAgent(ABC):
         # create re-act agent with summarization
         self.bind_tools(tools, self.get_shared())
         self.call_llm - "tools" >> tools
+        self.call_llm - "default" >> end
         tools >> self.summarize_context
         self.summarize_context >> self.call_llm
 
@@ -308,7 +310,7 @@ class LLMAgent(ABC):
             format=self.api_handler.provider,
             format_kwargs=self.tools_arguments
         )
-
+        
     def update_tools_definitions(self, tools: Any = None, tool_format_arguments: dict[str, Any] = None):
         if tool_format_arguments is not None:
             self.tools_arguments.update(tool_format_arguments)

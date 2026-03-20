@@ -9,10 +9,11 @@ from typing import (Annotated, Any, Callable, Coroutine, GenericAlias, Literal,
                     Optional, TypedDict, TypeVar, Union, _AnnotatedAlias,
                     _TypedDictMeta, get_args, get_origin)
 
-from agent.types import AnthropicMessage
 from framework import AsyncNode
 from framework.generic_messages import select_tools_use
 from framework.utils import __reduce_shared as reduce_shared
+
+from agent.types import AnthropicMessage
 
 # Mapping from Python types to OpenAPI schema types
 CLASS_TO_TYPE = {
@@ -45,9 +46,13 @@ class ToolResult:
     error: Optional[str] = None
     max_result_length: int = MAX_OUTPUT_LENGTH
     max_error_length: int = MAX_ERROR_LENGTH
+    trim_result: bool = True
 
     def __post_init__(self):
-        # trim
+        if self.trim_result:
+            self._trim_result()
+
+    def _trim_result(self) -> None:
         if isinstance(self.result, str) and len(self.result) > self.max_result_length:
             total_length = len(self.result)
             head = self.result[: self.max_result_length // 2]
@@ -56,7 +61,8 @@ class ToolResult:
         if self.error and len(self.error) > self.max_error_length:
             total_length = len(self.error)
             head_len = int(self.max_error_length * 0.8)
-            self.error = self.error[:head_len] + f"\n...[trimmed {total_length - head_len} characters of stderr, use different tool ranges to get more data]..."
+            self.error = self.error[:head_len] + \
+                f"\n...[trimmed {total_length - head_len} characters of stderr, use different tool ranges to get more data]..."
 
     @property
     def is_success(self) -> bool:
@@ -504,6 +510,13 @@ class Tools(AsyncNode):
 
     def select(self, tags: set[str]) -> "Tools":
         return Tools(tools=[t for t in self.tools if tags.issubset(t.tags)])
+
+    def pop(self, name: str) -> BaseTool:
+        tool = next((t for t in self.tools if t.name == name), None)
+        if tool is None:
+            raise Exception(f"Tool {name} not found")
+        self.tools.remove(tool)
+        return tool
 
     @staticmethod
     def _strip_unsupported_schema_fields(schema: dict) -> dict:

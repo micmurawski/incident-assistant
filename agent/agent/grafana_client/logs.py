@@ -2,6 +2,7 @@ import re
 from typing import Any
 
 from agent.grafana_client.client import GrafanaClient
+from agent.grafana_client.parsers import extract_loki_results
 
 
 def _normalize_for_similarity(text: str) -> str:
@@ -60,7 +61,7 @@ async def count_error_logs(
     if pod_selector:
         labels += f", pod={pod_selector}"
     expr = f'{{{labels}}} |~ "(?i)error"'
-    logs = await client.query_loki(expr, from_time=from_time, to_time=to_time, limit=5000)
+    logs = extract_loki_results(await client.query_loki(expr, from_time=from_time, to_time=to_time, limit=5000))
     return len(logs)
 
 
@@ -83,7 +84,7 @@ async def fetch_error_logs(
     if pod_selector:
         labels += f", pod={pod_selector}"
     expr = f'{{{labels}}} |~ "(?i)error"'
-    return await client.query_loki(expr, from_time=from_time, to_time=to_time, limit=limit)
+    return extract_loki_results(await client.query_loki(expr, from_time=from_time, to_time=to_time, limit=limit))
 
 
 def group_by_similarity(

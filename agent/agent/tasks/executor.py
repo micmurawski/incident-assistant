@@ -1,8 +1,12 @@
 
+import os
+
 from agent.llm import AgentRegistry, ChunkProxyIterator, LLMAgent
 from agent.tasks.tasks import Task
 from agent.tasks.types import TaskStatus
 from agent.tooling.decorators import ToolResult, Tools
+
+MAX_TASK_DEPTH = int(os.environ.get("MAX_TASK_DEPTH", 2))
 
 FEEDBACK_SYSTEM_PROMPT = """
 You are a feedback assistant. You are given a task and a feedback. You need to provide feedback on the task.
@@ -27,7 +31,12 @@ class TaskExecutor:
         message: str,
         todos_str: str,
         feedback_tools: Tools | None = None,
-    ) -> ToolResult:
+        depth: int = 0,
+    ) -> ToolResult:        
+        if depth >= MAX_TASK_DEPTH:
+            raise Exception("Task depth limit reached. You cannot assign tasks to anymore.")
+        
+
         messages = [
             {
                 "role": "user",
@@ -41,8 +50,18 @@ class TaskExecutor:
         )
         assignee_agent: LLMAgent = AgentRegistry.get_instance().get(assignee)
         assigner_agent: LLMAgent = AgentRegistry.get_instance().get(assigner)
-        shared = {"task": current_task, "messages": current_task.conversation}
-
+        
+        if depth - 1 == MAX_TASK_DEPTH:
+            from copy import deepcopy
+            assignee_agent = deepcopy(assignee_agent)
+            tools = deepcopy(assignee_agent.tools)
+            tools.pop("assign_task")
+            tools.pop("update_todo")
+            tools.pop("provide_feedback")
+            assignee_agent.update_tools_definitions(tools=tools)
+            
+        shared = {"task": current_task, "messages": current_task.conversation, "depth": depth + 1}
+                
         for _ in range(current_task.consecutive_mistakes_limit):
             await assignee_agent.call(shared=shared)
             current_task.status = TaskStatus.AWAITING_FEEDBACK
@@ -89,5 +108,5 @@ class TaskExecutor:
                 current_task.status = TaskStatus.AWAITING_INPUT
                 shared["messages"].append({"role": "user", "content": feedback_tool_use["input"].get("feedback")})
                 current_task.save()
-        
+
         return ToolResult(result=None, error="Assigned task execution exhausted all completion attempts. Please try again with a different approach.")

@@ -53,11 +53,20 @@ def format_status_report(
         "",
     ]
 
-    for app in apps:
-        lines.append(f"## {app}")
-        lines.append("")
+    metric_rows: list[tuple[str, list[str]]] = [
+        ("CPU (cores, % of limit)", []),
+        ("Memory (MB, % of limit)", []),
+        ("Latency p50 (ms)", []),
+        ("Latency p95 (ms)", []),
+        ("Latency p99 (ms)", []),
+        ("Request rate (req/s)", []),
+        ("Success rate", []),
+        ("4XX count", []),
+        ("5XX count", []),
+        ("Error log count", []),
+    ]
 
-        # Metrics
+    for app in apps:
         lat = latency.get(app, {})
         err = http_errors.get(app, {})
         rate = request_rate.get(app, 0)
@@ -65,38 +74,38 @@ def format_status_report(
         cpu = cpu_usage.get(app, 0)
         mem_mb = memory_usage.get(app, 0) / (1024 * 1024)
 
-        # Use limits from cluster (kubectl) when provided, else fallback defaults
-        cpu_limit_cores = cpu_limits[app]
-        mem_limit_bytes = memory_limits[app]
-        mem_limit_mb = mem_limit_bytes / (1024 * 1024)
+        cpu_limit_cores = cpu_limits.get(app, 0.0) if cpu_limits else 0.0
+        mem_limit_bytes = memory_limits.get(app, 0.0) if memory_limits else 0.0
+        mem_limit_mb = mem_limit_bytes / (1024 * 1024) if mem_limit_bytes else 0.0
         cpu_pct = (cpu / cpu_limit_cores * 100) if cpu_limit_cores > 0 else 0.0
         mem_pct = (mem_mb / mem_limit_mb * 100) if mem_limit_mb > 0 else 0.0
 
-        lines.append("| Metric | Value |")
-        lines.append("|--------|-------|")
-        lines.append(f"| CPU (cores, % of limit) | {cpu:.3f} ({cpu_pct:.1f}%) |")
-        lines.append(f"| Memory (MB, % of limit) | {mem_mb:.1f} ({mem_pct:.1f}%) |")
-        lines.append(f"| Latency p50 (ms) | {lat.get('p50', 0):.1f} |")
-        lines.append(f"| Latency p95 (ms) | {lat.get('p95', 0):.1f} |")
-        lines.append(f"| Latency p99 (ms) | {lat.get('p99', 0):.1f} |")
-        lines.append(f"| Request rate (req/s) | {rate:.2f} |")
-        lines.append(f"| Success rate | {succ:.2%} |")
-        lines.append(f"| 4XX count | {err.get('4xx', 0):.0f} |")
-        lines.append(f"| 5XX count | {err.get('5xx', 0):.0f} |")
-        lines.append(f"| Error log count | {error_counts.get(app, 0)} |")
-        lines.append("")
+        metric_rows[0][1].append(f"{cpu:.3f} ({cpu_pct:.1f}%)")
+        metric_rows[1][1].append(f"{mem_mb:.1f} ({mem_pct:.1f}%)")
+        metric_rows[2][1].append(f"{lat.get('p50', 0):.1f}")
+        metric_rows[3][1].append(f"{lat.get('p95', 0):.1f}")
+        metric_rows[4][1].append(f"{lat.get('p99', 0):.1f}")
+        metric_rows[5][1].append(f"{rate:.2f}")
+        metric_rows[6][1].append(f"{succ:.2%}")
+        metric_rows[7][1].append(f"{err.get('4xx', 0):.0f}")
+        metric_rows[8][1].append(f"{err.get('5xx', 0):.0f}")
+        metric_rows[9][1].append(f"{error_counts.get(app, 0)}")
 
-        # Grouped error samples
+    lines.extend(_build_fixed_width_table(apps, metric_rows))
+
+    lines.append("")
+
+    # Keep grouped errors split by app for readability.
+    for app in apps:
         groups = grouped_errors.get(app, [])
+        lines.append(f"## {app} Error Samples")
+        lines.append("")
         if groups:
-            lines.append("**Error log samples (grouped by similarity):**")
-            lines.append("")
-            for i, g in enumerate(groups[:10], 1):  # max 10 groups
+            for g in groups[:10]:  # max 10 groups
                 lines.append(f"- [{g.get('count', 1)}x] `{_truncate(g.get('message', ''), 120)}`")
-            lines.append("")
         else:
-            lines.append("**Error logs:** none")
-            lines.append("")
+            lines.append("- none")
+        lines.append("")
 
     return "\n".join(lines)
 
@@ -130,6 +139,56 @@ def _truncate(s: str, max_len: int) -> str:
     if len(s) <= max_len:
         return s
     return s[: max_len - 3] + "..."
+
+
+def _build_fixed_width_table(
+    apps: list[str],
+    metric_rows: list[tuple[str, list[str]]],
+) -> list[str]:
+    """
+    Build an ASCII table with fixed column widths for terminal readability.
+    """
+    if not apps:
+        return ["(no apps)"]
+
+    metric_col_width = max(
+        len("Metric"),
+        *(len(metric_name) for metric_name, _ in metric_rows),
+    )
+    service_col_width = len("Service")
+    for app in apps:
+        service_col_width = max(service_col_width, len(app))
+    for _, values in metric_rows:
+        for value in values:
+            service_col_width = max(service_col_width, len(value))
+
+    # Keep table reasonably compact in terminals while preserving alignment.
+    service_col_width = min(service_col_width, 36)
+
+    def fmt_cell(value: str, width: int) -> str:
+        return f" {_truncate(value, width):<{width}} "
+
+    sep = "+" + "-" * (metric_col_width + 2)
+    for _ in apps:
+        sep += "+" + "-" * (service_col_width + 2)
+    sep += "+"
+
+    lines = [sep]
+    header = "|" + fmt_cell("Metric", metric_col_width)
+    for app in apps:
+        header += "|" + fmt_cell(app, service_col_width)
+    header += "|"
+    lines.append(header)
+    lines.append(sep)
+
+    for metric_name, values in metric_rows:
+        row = "|" + fmt_cell(metric_name, metric_col_width)
+        for value in values:
+            row += "|" + fmt_cell(value, service_col_width)
+        row += "|"
+        lines.append(row)
+    lines.append(sep)
+    return lines
 
 
 async def build_status_report(

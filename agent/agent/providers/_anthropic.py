@@ -210,11 +210,15 @@ class AnthropicHandler(ApiHandler):
         extra_headers = {}
         # Create streaming response
         stream: AsyncMessagesWithStreamingResponse[RawMessageStreamEvent]
-        stream = await self.client.messages.create(
-            **request_params,
-            extra_headers=extra_headers if extra_headers else None,
-            **kwargs,
-        )
+        try:
+            stream = await self.client.messages.create(
+                **request_params,
+                extra_headers=extra_headers if extra_headers else None,
+                **kwargs,
+            )
+        except Exception as e:
+            print(f"Anthropic error: {e}", request_params)
+            raise e
 
         # Track token usage
         input_tokens = 0
