@@ -6,17 +6,44 @@ from pathlib import Path
 
 from agent.grafana_client.client import GrafanaClient
 from agent.llm import LLMAgent
+from agent.persistence.settings import init_db
 from agent.tooling.cli import CliTools
 from agent.tooling.codebase_read import CodebaseReadTools
 from agent.tooling.eks import EksTools
-from agent.tooling.kubectl import KubectlReadTools, KubectlWriteTools, kubectl_get_resources
+from agent.tooling.kubectl import (KubectlReadTools, KubectlWriteTools,
+                                   kubectl_get_resources)
 from agent.tooling.metrics import MetricsTools
 from agent.tooling.planning import PlanningTools
+
+init_db()
 
 JUDGE_SYSTEM_PROMPT = """
 You are a judge agent that evaluates the performance of the SRE Agent.
 """
 
+
+SYSTEM_PROMPTS = {
+    "incident_commander": """
+    You are a incident commander.
+    You are responsible for commanding the incident response team.
+    You are allowed to delegate tasks to your deputies, that are experts in their respective domains.
+    Your deputies are:
+    metrics_agent: is responsible for collecting/interpreting metrics from the cluster.
+    devops_agent: is responsible for managing the cluster resources.
+    """,
+    "metrics_agent": """
+    You are a metrics agent. You are responsible for collecting metrics from the kubernetes cluster.
+    You are allowed to delegate tasks/subtasks if assign_task tool is present in the tools list.
+    metrics_agent: is responsible for collecting/interpreting metrics from the cluster.
+    devops_agent: is responsible for managing the cluster resources.
+    """,
+    "devops_agent": """
+    You are a devops agent. You are responsible for managing the kubernetes cluster.
+    You are allowed to delegate tasks/subtasks if assign_task tool is present in the tools list.
+    metrics_agent: is responsible for collecting/interpreting metrics from the cluster.
+    devops_agent: is responsible for managing the cluster resources.
+    """,
+}
 
 def create_sre_agent(
     playbooks: dict[str, str] = None
@@ -47,12 +74,7 @@ def create_sre_agent(
 
     incident_commander = LLMAgent(
         name="incident_commander",
-        system_prompt="You are a incident commander."
-        "You are responsible for commanding the incident response team.\n"
-        "You are allowed to delegate tasks to your deputies, that are experts in their respective domains.\n"
-        "Your deputies are:\n"
-        "metrics_agent: is responsible for collecting/interpreting metrics from the cluster.\n"
-        "devops_agent: is responsible for managing the cluster resources.",
+        system_prompt=SYSTEM_PROMPTS["incident_commander"] + "\n" + playbooks.get("incident_commander", ""),
         tools=incident_commander_tools,
         shared_context={
             **shared_context,
@@ -63,10 +85,7 @@ def create_sre_agent(
 
     metrics_agent = LLMAgent(
         name="metrics_agent",
-        system_prompt="You are a metrics agent. You are responsible for collecting metrics from the kubernetes cluster.\n"
-        "You are allowed to delegate tasks/subtasks if assign_task tool is present in the tools list.\n"
-        "metrics_agent: is responsible for collecting/interpreting metrics from the cluster.\n"
-        "devops_agent: is responsible for managing the cluster resources.",
+        system_prompt=SYSTEM_PROMPTS["metrics_agent"] + "\n" + playbooks.get("metrics_agent", ""),
         tools=metrics_tools,
         shared_context={
             **shared_context,
@@ -77,10 +96,7 @@ def create_sre_agent(
 
     devops_agent = LLMAgent(
         name="devops_agent",
-        system_prompt="You are a devops agent. You are responsible for managing the kubernetes cluster."
-        "You are allowed to delegate tasks/subtasks if assign_task tool is present in the tools list.\n"
-        "metrics_agent: is responsible for collecting/interpreting metrics from the cluster.\n"
-        "devops_agent: is responsible for managing the cluster resources.",
+        system_prompt=SYSTEM_PROMPTS["devops_agent"] + "\n" + playbooks.get("devops_agent", ""),
         tools=devops_tools,
         shared_context={
             **shared_context,
@@ -94,15 +110,16 @@ def create_sre_agent(
 
 if __name__ == "__main__":
     import asyncio
+    import os
     import uuid
-    from opentelemetry import trace
+
     from openinference.instrumentation import using_attributes
     from openinference.instrumentation.anthropic import AnthropicInstrumentor
-    from agent.tasks.tasks import Task
+    from opentelemetry import trace
+    from phoenix.otel import register
 
     from agent.settings import SettingsManager
-    from phoenix.otel import register
-    import os
+    from agent.tasks.tasks import Task
 
     provider = "minimax"
     tracer = trace.get_tracer(__name__)
@@ -116,19 +133,19 @@ if __name__ == "__main__":
         SESSION_ID = str(uuid.uuid4())
         with tracer.start_as_current_span("sre-agent-testing-tracing-" + SESSION_ID):
             with using_attributes(session_id=SESSION_ID):
-                
+
                 goal = Task(
-                id=SESSION_ID,
+                    id=SESSION_ID,
                     assignee="incident_commander",
                     assigner="human",
                     conversation=[
                         {
                             "role": "user",
-                            "content": "Ask metrics agent about his real name",
-                            #"content": "Can you ask metrics_agent to make a report about the application, and app node state?"
+                            "content": "Can you ask metrics_agent to make a report about the application, and app node state?"
                         }
                     ]
                 )
+                goal.save()
                 sre_agent = create_sre_agent()
                 shared = {
                     "task": goal,
@@ -136,5 +153,6 @@ if __name__ == "__main__":
                     "depth": 0
                 }
                 result = await sre_agent.call(shared)
+                goal.save()
                 print(result)
     asyncio.run(main())

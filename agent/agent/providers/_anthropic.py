@@ -237,18 +237,26 @@ class AnthropicHandler(ApiHandler):
             if chunk.type == "message_start":
                 # Extract usage information
                 usage = chunk.message.usage
+                input_token_count = usage.input_tokens or 0
+                output_token_count = usage.output_tokens or 0
+                cache_creation_token_count = (
+                    getattr(usage, "cache_creation_input_tokens", None) or 0
+                )
+                cache_read_token_count = (
+                    getattr(usage, "cache_read_input_tokens", None) or 0
+                )
 
-                input_tokens += usage.input_tokens
-                output_tokens += usage.output_tokens
-                cache_write_tokens += getattr(usage, "cache_creation_input_tokens", 0)
-                cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0)
+                input_tokens += input_token_count
+                output_tokens += output_token_count
+                cache_write_tokens += cache_creation_token_count
+                cache_read_tokens += cache_read_token_count
 
                 yield _plain_chunk(
                     "usage",
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    cache_write_tokens=getattr(usage, "cache_creation_input_tokens", None),
-                    cache_read_tokens=getattr(usage, "cache_read_input_tokens", None),
+                    input_tokens=input_token_count,
+                    output_tokens=output_token_count,
+                    cache_write_tokens=cache_creation_token_count,
+                    cache_read_tokens=cache_read_token_count,
                 )
 
             elif chunk.type == "message_delta":
@@ -368,7 +376,7 @@ class AnthropicHandler(ApiHandler):
         """
         try:
             config = self.get_model()
-
+            
             response = await self.client.messages.count_tokens(
                 model=config["id"],
                 messages=content,
@@ -379,6 +387,8 @@ class AnthropicHandler(ApiHandler):
 
         except Exception as e:
             print(f"Anthropic token counting failed: {e}")
+            print("content: ", content)
+            print("tools: ", tools)
             # Fallback to rough estimation (4 chars ≈ 1 token)
             text = " ".join(
                 block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text"

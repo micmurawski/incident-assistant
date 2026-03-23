@@ -4,7 +4,7 @@ import yaml
 
 from agent.grafana_client.client import GrafanaClient
 from agent.grafana_client.parsers import prase_to_table
-from agent.grafana_client.report import (build_status_report)
+from agent.grafana_client.report import build_status_report
 from agent.tooling.cli import bash
 from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
 

@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, List, Optional, TypeVar
 from uuid import uuid4
 
 from framework import AsyncFlow
-from framework.decorators import node, end
+from framework.decorators import end, node
 from framework.viz import build_mermaid, to_png
 
 from agent.context_ops import SummarizeResponse, summarize_conversation
@@ -92,7 +92,7 @@ class ChunkProxyIterator[T]:
                 function_input = chunk["input"]
                 _input_str = ", ".join([f"{k}={v}" for k, v in function_input.items()])
                 text = f"{function_name}({_input_str})"
-                pr_light_purple(f"calling: {text}", end="", flush=True)
+                pr_light_purple(f"calling: {text}", end="\n", flush=True)
                 self.tool_use.append(chunk)
             case "grounding":
                 sources = chunk.get("sources", [])
@@ -277,8 +277,6 @@ class LLMAgent(ABC):
         async for _ in iter:
             pass
         
-        print("NEW MESSAGES")
-        print(iter.get_response())
         data = {"messages": messages + iter.get_response()}
         if iter.usage_summary:
             data["_last_usage"] = iter.usage_summary
@@ -305,6 +303,7 @@ class LLMAgent(ABC):
             if result.get("error"):
                 pr_red(f"Error summarizing context: {result['error']}", flush=True)
             else:
+                # print(f"\033[92mSummary: {result}\033[0m")
                 return {"messages": result["messages"]}
         return {"messages": messages}, "default"
 

@@ -97,6 +97,7 @@ async def update_todo(
     """
     task: Task
     task.todo_list = parse_markdown_checklist(todos)
+    task.save()
     return ToolResult(result="TODO list updated", error=None)
 
 

@@ -5,7 +5,7 @@ from agent.llm import AgentRegistry, ChunkProxyIterator, LLMAgent
 from agent.tasks.tasks import Task
 from agent.tasks.types import TaskStatus
 from agent.tooling.decorators import ToolResult, Tools
-import json
+
 MAX_TASK_DEPTH = int(os.environ.get("MAX_TASK_DEPTH", 2))
 
 FEEDBACK_SYSTEM_PROMPT = """
@@ -44,6 +44,7 @@ class TaskExecutor:
         ]
         current_task = parent_task.create_child_task(
             assignee=assignee,
+            assigner=assigner,
             conversation=messages,
             todo_list_str=todos_str,
         )
@@ -63,8 +64,8 @@ class TaskExecutor:
 
         for _ in range(current_task.consecutive_mistakes_limit):
             await assignee_agent.call(shared=shared)
-            print("THIS IS RESULT CONVO")
-            print(json.dumps(shared["messages"], indent=4))
+            # print("THIS IS RESULT CONVO")
+            # print(json.dumps(shared["messages"], indent=4))
             current_task.status = TaskStatus.AWAITING_FEEDBACK
             current_task.conversation = shared["messages"]
 
@@ -74,8 +75,8 @@ class TaskExecutor:
             )
 
             # How to elegantly add conversation trajectory fron assingner to feedback agent?
-            print("THIS IS CONVO")
-            print(current_task.get_conversation_with_swapped_roles())
+            # print("THIS IS CONVO")
+            # print(current_task.get_conversation_with_swapped_roles())
 
             feedback_iterator: ChunkProxyIterator = await assigner_agent.create_message(
                 messages=current_task.get_conversation_with_swapped_roles(),

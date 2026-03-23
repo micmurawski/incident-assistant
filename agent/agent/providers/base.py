@@ -31,6 +31,6 @@ class ApiHandler:
         """Returns the model configuration for the API handler."""
         raise NotImplementedError
 
-    async def count_tokens(self, content_blocks: List[Dict[str, Any]]) -> Coroutine[Any, Any, int]:
-        """Counts tokens in the given content blocks."""
+    async def count_tokens(self, messages: List[Dict[str, Any]], tools: List[dict] | None = None) -> Coroutine[Any, Any, int]:
+        """Counts tokens in a list of chat messages."""
         raise NotImplementedError

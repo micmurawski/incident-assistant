@@ -120,20 +120,24 @@ class Task:
     
     def save(self, key: tuple[str, str] | None = None):
         conv = json.dumps(self.conversation)
-        TaskModel.create(
-            root_id=key[0] if key else self.root.id,
-            id=self.id,
-            conversation_content=conv,
-            status=self.status.value,
-            todo_list=json.dumps(self.todo_list),
-            children=json.dumps([child.id for child in self.children]),
-            parent=self.parent.id if self.parent else "",
-            root=self.root.id if self.root else "",
-            assignee=self.assignee or "",
-            assigner=self.assigner or "",
-            conversation=conv,
-            last_message_ts=0,
-        )
+        row = {
+            "root_id": key[0] if key else self.root.id,
+            "id": self.id,
+            "status": self.status.value,
+            "todo_list": json.dumps(self.todo_list),
+            "children": json.dumps([child.id for child in self.children]),
+            "parent": self.parent.id if self.parent else "",
+            "root": self.root.id if self.root else "",
+            "assignee": self.assignee or "",
+            "assigner": self.assigner or "",
+            "tool_usage": json.dumps(self.tool_usage),
+            "conversation": conv,
+            "last_message_ts": 0,
+        }
+        TaskModel.insert(row).on_conflict(
+            conflict_target=[TaskModel.root_id, TaskModel.id],
+            update={**row, "updated_at": datetime.now()},
+        ).execute()
         for child in self.children:
             child.save(key=key or (self.root.id, self.id))
 

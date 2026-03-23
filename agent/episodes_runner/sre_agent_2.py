@@ -9,7 +9,8 @@ from agent.llm import LLMAgent
 from agent.tooling.cli import CliTools
 from agent.tooling.codebase_read import CodebaseReadTools
 from agent.tooling.eks import EksTools
-from agent.tooling.kubectl import KubectlReadTools, KubectlWriteTools, kubectl_get_resources
+from agent.tooling.kubectl import (KubectlReadTools, KubectlWriteTools,
+                                   kubectl_get_resources)
 from agent.tooling.metrics import MetricsTools
 from agent.tooling.planning import PlanningTools
 
@@ -94,16 +95,17 @@ def create_sre_agent(
 
 if __name__ == "__main__":
     import asyncio
+    import os
     import uuid
-    from opentelemetry import trace
+
     from openinference.instrumentation import using_attributes
     from openinference.instrumentation.openai import OpenAIInstrumentor
-    from agent.tasks.tasks import Task
-
-    from agent.settings import SettingsManager
-    from agent.persistence.settings import init_db
+    from opentelemetry import trace
     from phoenix.otel import register
-    import os
+
+    from agent.persistence.settings import init_db
+    from agent.settings import SettingsManager
+    from agent.tasks.tasks import Task
 
     init_db()
 
