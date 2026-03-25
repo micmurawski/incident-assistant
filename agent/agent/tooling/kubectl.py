@@ -1277,8 +1277,6 @@ KubectlTools = KubectlReadTools | KubectlWriteTools
 
 
 if __name__ == "__main__":
-    import asyncio
-
     async def main():
         cwd = "/Users/micmur/GITHUB/o8s"
         print("Testing pods...")

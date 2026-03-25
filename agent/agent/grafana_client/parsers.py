@@ -1,6 +1,121 @@
 import math
+import re
 from datetime import datetime, timezone
 from typing import Any
+
+
+def extract_labels(query: str) -> dict:
+    """
+    Extracts all label keys and values from a Prometheus query like:
+    sum(rate(request_total{service="web",classification="failure"}[5m])) by (dst_service, classification)
+    Returns a dict: {"service": "web", "classification": "failure"}
+    """
+    import re
+    m = re.search(r'{([^}]*)}', query)
+    labels = {}
+    if m:
+        label_str = m.group(1)
+        # Handles possible spaces between elements
+        for part in label_str.split(','):
+            if '=' in part:
+                key, value = part.split('=', 1)
+                labels[key.strip()] = value.strip().strip('"')
+    return labels
+
+
+def _normalize_for_similarity(text: str) -> str:
+    """Normalize log line for comparison: strip IDs, numbers, timestamps."""
+    t = text.strip()
+    # Replace UUIDs, hex hashes, numeric IDs
+    t = re.sub(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", "<UUID>", t)
+    t = re.sub(r"\b[0-9a-fA-F]{16,}\b", "<HEX>", t)
+    t = re.sub(r"\b\d{10,}\b", "<NUM>", t)  # long numbers
+    t = re.sub(r"\b\d+\.\d+\b", "<FLOAT>", t)  # floats
+    t = re.sub(r"\b\d+\b", "<N>", t)  # short integers
+    # ISO timestamps
+    t = re.sub(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?", "<TS>", t)
+    t = re.sub(r"\b[A-Z][a-z]{2} \d{1,2},? \d{4}", "<TS>", t)
+    t = re.sub(r"\s+", " ", t)
+    return t.lower()
+
+
+def _text_to_tokens(text: str) -> set[str]:
+    """Simple tokenization for TF-IDF style similarity."""
+    t = _normalize_for_similarity(text)
+    return set(w for w in re.split(r"\W+", t) if len(w) > 1)
+
+
+def _jaccard_similarity(a: set[str], b: set[str]) -> float:
+    """Jaccard similarity between two token sets."""
+    if not a and not b:
+        return 1.0
+    inter = len(a & b)
+    union = len(a | b)
+    return inter / union if union else 0.0
+
+
+def group_by_similarity(
+    logs: list[dict[str, Any]],
+    threshold: float = 0.5,
+) -> list[dict[str, Any]]:
+    """
+    Group similar error logs and return one representative per group.
+
+    Uses Jaccard similarity on normalized tokens. Logs with similarity >= threshold
+    are grouped together; one representative (first in group) is returned.
+
+    Args:
+        logs: List of {"message": str, ...}
+        threshold: Minimum similarity (0-1) to group two logs
+
+    Returns:
+        List of group representatives: [{"message": str, "count": int, "labels": dict}, ...]
+    """
+    if not logs:
+        return []
+
+    # Build token sets
+    entries = []
+    for log in logs:
+        msg = log.get("message", "")
+        entries.append(
+            {
+                "message": msg,
+                "labels": log.get("labels", {}),
+                "tokens": _text_to_tokens(msg),
+            }
+        )
+
+    # Greedy clustering: merge if any pair in group has sim >= threshold
+    groups: list[list[int]] = []
+    used = [False] * len(entries)
+
+    for i in range(len(entries)):
+        if used[i]:
+            continue
+        group = [i]
+        used[i] = True
+        for j in range(i + 1, len(entries)):
+            if used[j]:
+                continue
+            sim = _jaccard_similarity(entries[i]["tokens"], entries[j]["tokens"])
+            if sim >= threshold:
+                group.append(j)
+                used[j] = True
+        groups.append(group)
+
+    result = []
+    for g in groups:
+        idx = g[0]
+        rep = entries[idx]
+        result.append(
+            {
+                "message": rep["message"],
+                "count": len(g),
+                "labels": rep["labels"],
+            }
+        )
+    return sorted(result, key=lambda x: x["count"], reverse=True)
 
 
 def parse_prom_output(
@@ -26,13 +141,13 @@ def parse_prom_output(
     """
     if exclude_fields is None:
         exclude_fields = []
-    status =  int(data["results"]["A"]["status"])
+    status = int(data["results"]["A"]["status"])
     if status // 100 != 2:
         return {"error": f"Error: {status}"}
     frames = data["results"]["A"]["frames"]
-    
+
     output = {"frames": []}
-    
+
     for frame in frames:
         schema = frame.get("schema", {})
         fields = schema.get("fields", [])
@@ -50,7 +165,7 @@ def parse_prom_output(
                     field["name"] = field.get("name", "")
                 elif field.get("typeInfo", {}).get("frame") == "json.RawMessage":
                     json_indexes.append(i)
-                
+
         frame_obj = {}
 
         # Build fields metadata
@@ -127,11 +242,11 @@ def prase_to_table(data: list, parse_time_to_dt: bool = True, separator: str = "
     if exclude_fields is None:
         exclude_fields = []
     output = ""
-    status =  int(data["results"]["A"]["status"])
+    status = int(data["results"]["A"]["status"])
     if status // 100 != 2:
         output = f"Error: {status}"
     frames = data["results"]["A"]["frames"]
-    
+
     for i, frame in enumerate(frames):
         output += f"FRAME {i+1}:\nFields:\n"
         schema = frame.get("schema", {})
@@ -174,7 +289,6 @@ def prase_to_table(data: list, parse_time_to_dt: bool = True, separator: str = "
         # Build fields metadata
         fields_meta = {}
         output += separator.join(["Name", "Type", "Labels"]) + "\n"
-
 
         for idx in ordered_field_indexes:
             field = fields[idx]

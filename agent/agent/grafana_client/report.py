@@ -134,6 +134,136 @@ def format_status_report_yaml(
     return yaml.dump(report)
 
 
+def format_status_report_from_dict(
+    metrics: dict[str, Any],
+    title: str = "# App Status Report",
+    report_scope: Optional[str] = None,
+) -> str:
+    """
+    Format markdown report from build_status_report_dict-like payload.
+    """
+    namespace = str(metrics.get("namespace", "unknown"))
+    window = str(metrics.get("window", "5m"))
+    services = metrics.get("services", {}) or {}
+    apps = list(services.keys())
+
+    lines = [title, f"**Namespace:** `{namespace}` | **Window:** {window}"]
+    if report_scope:
+        lines.append(f"**Scope:** {report_scope}")
+    lines.append("")
+
+    metric_rows: list[tuple[str, list[str]]] = [
+        ("CPU (cores, % of limit)", []),
+        ("Memory (MB, % of limit)", []),
+        ("Latency p50 (ms)", []),
+        ("Latency p95 (ms)", []),
+        ("Latency p99 (ms)", []),
+        ("Request rate (req/s)", []),
+        ("Success rate", []),
+        ("4XX count", []),
+        ("5XX count", []),
+        ("Error log count", []),
+    ]
+
+    for app in apps:
+        m = services.get(app, {}) or {}
+        metric_rows[0][1].append(
+            f"{float(m.get('cpu_cores', 0.0)):.3f} ({float(m.get('cpu_cores_percent_of_limit', 0.0)):.1f}%)"
+        )
+        metric_rows[1][1].append(
+            f"{float(m.get('memory_mb', 0.0)):.1f} ({float(m.get('memory_percent_of_limit', 0.0)):.1f}%)"
+        )
+        metric_rows[2][1].append(f"{float(m.get('latency_p50_ms', 0.0)):.1f}")
+        metric_rows[3][1].append(f"{float(m.get('latency_p95_ms', 0.0)):.1f}")
+        metric_rows[4][1].append(f"{float(m.get('latency_p99_ms', 0.0)):.1f}")
+        metric_rows[5][1].append(f"{float(m.get('request_rate_rps', 0.0)):.2f}")
+        metric_rows[6][1].append(f"{float(m.get('success_rate', 0.0)):.2%}")
+        metric_rows[7][1].append(f"{float(m.get('http_4xx', 0.0)):.0f}")
+        metric_rows[8][1].append(f"{float(m.get('http_5xx', 0.0)):.0f}")
+        metric_rows[9][1].append(f"{int(m.get('error_log_count', 0))}")
+
+    lines.extend(_build_fixed_width_table(apps, metric_rows))
+    lines.append("")
+
+    for app in apps:
+        groups = (services.get(app, {}) or {}).get("error_logs_samples", []) or []
+        lines.append(f"## {app} Error Samples")
+        lines.append("")
+        if groups:
+            for g in groups[:10]:
+                lines.append(f"- [{g.get('count', 1)}x] `{_truncate(str(g.get('truncated_message', '')), 120)}`")
+        else:
+            lines.append("- none")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def format_diff_status_report(diff_payload: dict[str, Any], cause_of_incident: str) -> str:
+    """
+    Build a focused report for only services present in diff payload.
+
+    This keeps the same style as format_status_report but limits output size and
+    puts healthy (before) and unhealthy (after) views side by side as two tables.
+    """
+    changed_services = list((diff_payload or {}).get("changed_services", []) or [])
+    metrics_before = {
+        "namespace": diff_payload.get("namespace", "unknown"),
+        "window": diff_payload.get("window", "5m"),
+        "services": (diff_payload.get("services_before", {}) or {}),
+    }
+    metrics_after = {
+        "namespace": diff_payload.get("namespace", "unknown"),
+        "window": diff_payload.get("window", "5m"),
+        "services": (diff_payload.get("services_after", {}) or {}),
+    }
+
+    # Backward compatibility with older diff shape:
+    # {"service-a": {...after metrics...}, "service-b": {...}}
+    if not changed_services and "services_after" not in (diff_payload or {}):
+        changed_services = list((diff_payload or {}).keys())
+        metrics_after["services"] = diff_payload or {}
+
+    if not changed_services:
+        namespace = str(metrics_after.get("namespace") or metrics_before.get("namespace") or "unknown")
+        window = str(metrics_after.get("window") or metrics_before.get("window") or "5m")
+        return "\n".join(
+            [
+                "# Focused App Status Report",
+                f"**Namespace:** `{namespace}` | **Window:** {window}",
+                "**Scope:** changed services only",
+                "",
+                "No significant service-level differences detected.",
+            ]
+        )
+
+    before_services = metrics_before.get("services", {}) or {}
+    after_services = metrics_after.get("services", {}) or {}
+
+    focused_before = {
+        "namespace": metrics_before.get("namespace", metrics_after.get("namespace", "unknown")),
+        "window": metrics_before.get("window", metrics_after.get("window", "5m")),
+        "services": {s: before_services.get(s, {}) for s in changed_services},
+    }
+    focused_after = {
+        "namespace": metrics_after.get("namespace", metrics_before.get("namespace", "unknown")),
+        "window": metrics_after.get("window", metrics_before.get("window", "5m")),
+        "services": {s: after_services.get(s, {}) for s in changed_services},
+    }
+
+    before_report = format_status_report_from_dict(
+        focused_before,
+        title=f"# Metrics Before - {cause_of_incident}",
+        report_scope="changed services only",
+    )
+    after_report = format_status_report_from_dict(
+        focused_after,
+        title=f"# Metrics After - {cause_of_incident}",
+        report_scope="changed services only",
+    )
+    return f"{before_report}\n\n---\n\n{after_report}"
+
+
 def _truncate(s: str, max_len: int) -> str:
     s = s.replace("\n", " ").strip()
     if len(s) <= max_len:
@@ -375,3 +505,159 @@ async def build_status_report_yaml(
     """
     data = await build_status_report_dict(client, namespace, apps, window, pod_selector, env, cwd)
     return yaml.dump(data, sort_keys=False)
+
+
+def detect_differences(metrics_before: dict, metrics_after: dict, threshold: float = 10.0) -> dict:
+    """
+    Compare before/after service metrics and return a focused diff payload.
+
+    Returned shape:
+    {
+      "namespace": str,
+      "window": str,
+      "threshold": float,
+      "changed_services": [service...],
+      "services_before": {service: metrics...},
+      "services_after": {service: metrics...}
+    }
+    """
+    services_before_diff: dict[str, Any] = {}
+    services_after_diff: dict[str, Any] = {}
+
+    services_before = metrics_before.get("services", {})
+    services_after = metrics_after.get("services", {})
+
+    for service_name, after_metrics in services_after.items():
+        before_metrics = services_before.get(service_name)
+
+        if not before_metrics:
+            # If the service wasn't present before, it's considered a difference
+            services_before_diff[service_name] = {}
+            services_after_diff[service_name] = after_metrics
+            continue
+
+        has_significant_change = False
+        for key, after_val in after_metrics.items():
+            if key == "error_logs_samples":
+                continue
+
+            before_val = before_metrics.get(key, 0.0)
+
+            # Some metrics need scaling or special handling
+            if key == "success_rate":
+                # success_rate is 0-1, convert to 0-100 for threshold comparison
+                current_diff = abs(after_val - before_val) * 100.0
+            else:
+                # Most other metrics are already in reasonable units (ms, cores%, MB, counts)
+                current_diff = abs(after_val - before_val)
+
+            if current_diff >= threshold:
+                has_significant_change = True
+                break
+
+        if has_significant_change:
+            services_before_diff[service_name] = before_metrics
+            services_after_diff[service_name] = after_metrics
+
+    changed_services = list(services_after_diff.keys())
+    return {
+        "namespace": metrics_after.get("namespace", metrics_before.get("namespace", "unknown")),
+        "window": metrics_after.get("window", metrics_before.get("window", "5m")),
+        "threshold": threshold,
+        "changed_services": changed_services,
+        "services_before": services_before_diff,
+        "services_after": services_after_diff,
+    }
+
+
+if __name__ == "__main__":
+    # Quick local smoke tests with mock data:
+    #   python -m agent.grafana_client.report
+    mock_metrics_before = {
+        "namespace": "robot-shop",
+        "window": "5m",
+        "services": {
+            "cart": {
+                "latency_p50_ms": 20,
+                "latency_p95_ms": 80,
+                "latency_p99_ms": 120,
+                "cpu_cores": 0.120,
+                "cpu_cores_percent_of_limit": 24,
+                "memory_mb": 180,
+                "memory_percent_of_limit": 36,
+                "request_rate_rps": 52,
+                "success_rate": 0.998,
+                "http_4xx": 2,
+                "http_5xx": 0,
+                "error_log_count": 1,
+                "error_logs_samples": [
+                    {"count": 1, "truncated_message": "timeout while reading cache"}
+                ],
+            },
+            "user": {
+                "latency_p50_ms": 35,
+                "latency_p95_ms": 110,
+                "latency_p99_ms": 180,
+                "cpu_cores": 0.180,
+                "cpu_cores_percent_of_limit": 36,
+                "memory_mb": 240,
+                "memory_percent_of_limit": 48,
+                "request_rate_rps": 31,
+                "success_rate": 0.996,
+                "http_4xx": 5,
+                "http_5xx": 1,
+                "error_log_count": 2,
+                "error_logs_samples": [],
+            },
+        },
+    }
+
+    mock_metrics_after = {
+        "namespace": "robot-shop",
+        "window": "5m",
+        "services": {
+            "cart": {
+                "latency_p50_ms": 28,
+                "latency_p95_ms": 92,
+                "latency_p99_ms": 130,
+                "cpu_cores": 0.140,
+                "cpu_cores_percent_of_limit": 28,
+                "memory_mb": 190,
+                "memory_percent_of_limit": 38,
+                "request_rate_rps": 50,
+                "success_rate": 0.992,
+                "http_4xx": 3,
+                "http_5xx": 1,
+                "error_log_count": 4,
+                "error_logs_samples": [
+                    {"count": 2, "truncated_message": "db retry exhausted for cart lookup"}
+                ],
+            },
+            "user": {
+                "latency_p50_ms": 95,
+                "latency_p95_ms": 360,
+                "latency_p99_ms": 700,
+                "cpu_cores": 0.650,
+                "cpu_cores_percent_of_limit": 130,
+                "memory_mb": 510,
+                "memory_percent_of_limit": 102,
+                "request_rate_rps": 18,
+                "success_rate": 0.82,
+                "http_4xx": 9,
+                "http_5xx": 42,
+                "error_log_count": 37,
+                "error_logs_samples": [
+                    {"count": 20, "truncated_message": "sql timeout talking to userdb"},
+                    {"count": 8, "truncated_message": "circuit breaker open for user profile calls"},
+                ],
+            },
+        },
+    }
+
+    mock_diff = detect_differences(mock_metrics_before, mock_metrics_after, threshold=10.0)
+
+    print("\n=== FULL REPORT (MOCK AFTER) ===\n")
+    print(format_status_report_from_dict(mock_metrics_after))
+
+    print("\n=== FOCUSED DIFF REPORT (MOCK BEFORE VS AFTER) ===\n")
+    print(format_diff_status_report(mock_diff))

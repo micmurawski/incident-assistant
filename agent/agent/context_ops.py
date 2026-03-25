@@ -1,3 +1,4 @@
+import json
 from typing import Dict, List, Optional, Required, TypedDict
 
 from agent.providers.base import AnthropicMessage, ApiHandler
@@ -81,6 +82,25 @@ class TruncateResponse(SummarizeResponse):
     """Response from truncation with previous context tokens"""
 
     prev_context_tokens: Required[int]
+
+
+# ANSI 256-color pink for SummarizeResponse debug output
+_SUMMARIZE_DEBUG_PINK = "\033[38;5;213m"
+_SUMMARIZE_DEBUG_RESET = "\033[0m"
+
+
+def _print_summarize_response_debug(resp: SummarizeResponse) -> None:
+    """
+    summary: LLM-produced summary text only (also embedded as assistant message in messages).
+    messages: Full conversation list to use for the next API request — use this for turns.
+    """
+    msg_json = json.dumps(resp["messages"], indent=2, default=str)
+    print(
+        f"{_SUMMARIZE_DEBUG_PINK}[SummarizeResponse]\n"
+        f"  summary (string): {resp['summary']!r}\n"
+        f"  messages (full list for next turn — indented JSON):\n{msg_json}"
+        f"{_SUMMARIZE_DEBUG_RESET}"
+    )
 
 
 async def estimate_token_count(
@@ -438,4 +458,11 @@ async def summarize_conversation(
         error = "Context grew after condensing"
         return SummarizeResponse(messages=messages, cost=cost, summary="", error=error)
 
-    return SummarizeResponse(messages=new_messages, summary=summary, cost=cost, new_context_tokens=new_context_tokens)
+    result: SummarizeResponse = SummarizeResponse(
+        messages=new_messages,
+        summary=summary,
+        cost=cost,
+        new_context_tokens=new_context_tokens,
+    )
+    _print_summarize_response_debug(result)
+    return result

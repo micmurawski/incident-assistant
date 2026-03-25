@@ -58,10 +58,13 @@ async def get_cluster_info(
         env=env,
     )
 
-EksTools = Tools(tools=[
-    scale_node_group,
+EksReadTools = Tools(tools=[
     get_node_group_status,
     get_cluster_info,
+])
+
+EksWriteTools = Tools(tools=[
+    scale_node_group,
 ])
 
 

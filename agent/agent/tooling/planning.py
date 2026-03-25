@@ -108,7 +108,7 @@ async def provide_feedback(
     approve: Annotated[bool, "Whether to approve the task."] = False,
 ) -> ToolResult:
     """
-    Provide feedback on the task.
+    Provide feedback on the task. If you are approving task, do not provide any feedback.
 
     Usage:
     provide_feedback(approve=True)

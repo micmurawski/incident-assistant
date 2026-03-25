@@ -8,8 +8,12 @@ from agent.tooling.decorators import ToolResult, Tools
 
 MAX_TASK_DEPTH = int(os.environ.get("MAX_TASK_DEPTH", 2))
 
-FEEDBACK_SYSTEM_PROMPT = """
-You are a feedback assistant. You are given a task and a feedback. You need to provide feedback on the task.
+FEEDBACK_SYSTEM_PROMPT_TEMPLATE = """
+You need to feedback completion of the task, verify if all tasks objectives are met.
+The task was the following:
+{task_description}
+
+user will report back with the result of the task.
 """
 
 TODO_LIST_PROMPT = """
@@ -77,12 +81,14 @@ class TaskExecutor:
             # How to elegantly add conversation trajectory fron assingner to feedback agent?
             # print("THIS IS CONVO")
             # print(current_task.get_conversation_with_swapped_roles())
+            
+            messages = current_task.get_conversation_with_swapped_roles()
 
             feedback_iterator: ChunkProxyIterator = await assigner_agent.create_message(
-                messages=current_task.get_conversation_with_swapped_roles(),
+                messages=messages[1:],
                 metadata=None,
                 tools=feedback_tools_definitions,
-                system_prompt=FEEDBACK_SYSTEM_PROMPT,
+                system_prompt=FEEDBACK_SYSTEM_PROMPT_TEMPLATE.format(task_description=messages[0]["content"])
             )
 
             async for _ in feedback_iterator:

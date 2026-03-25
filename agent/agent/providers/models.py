@@ -170,8 +170,7 @@ OPENAI_DEFAULT_MODEL_INFO = {
 
 MINIMAX_MODELS = {
     "MiniMax-M2.5": {
-        "max_tokens": 8192,
-        #"max_tokens": 16_384,
+        "max_tokens": 16_384,
         "context_window": 204_800,
         "supports_images": False,
         "supports_prompt_cache": True,

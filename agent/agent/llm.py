@@ -4,10 +4,6 @@ from abc import ABC
 from typing import Any, AsyncIterator, List, Optional, TypeVar
 from uuid import uuid4
 
-from framework import AsyncFlow
-from framework.decorators import end, node
-from framework.viz import build_mermaid, to_png
-
 from agent.context_ops import SummarizeResponse, summarize_conversation
 from agent.providers import build_api_handler
 from agent.providers.base import ApiHandler
@@ -15,6 +11,9 @@ from agent.settings import SettingsManager
 from agent.tracing import trace_flow
 from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
                          StreamChunk)
+from framework import AsyncFlow
+from framework.decorators import end, node
+from framework.viz import build_mermaid, to_png
 
 T = TypeVar('T')
 
@@ -233,7 +232,9 @@ class LLMAgent(ABC):
         self.bind_tools(tools, self.get_shared())
         self.call_llm - "tools" >> tools
         self.call_llm - "default" >> end
-        tools >> self.summarize_context
+        tools >> self.check_context_size
+        self.check_context_size - "summarize" >> self.summarize_context
+        self.check_context_size - "default" >> self.call_llm
         self.summarize_context >> self.call_llm
 
     def __repr__(self):
@@ -276,7 +277,7 @@ class LLMAgent(ABC):
 
         async for _ in iter:
             pass
-        
+
         data = {"messages": messages + iter.get_response()}
         if iter.usage_summary:
             data["_last_usage"] = iter.usage_summary
@@ -284,28 +285,31 @@ class LLMAgent(ABC):
         return data, _next
 
     @node
+    async def check_context_size(self, messages: List[AnthropicMessage], tools: list[dict] | None = None) -> bool:
+        total_tokens = await self.api_handler.count_tokens(messages, tools)
+        max_tokens = self.api_handler.get_model()["max_tokens"]
+        print(f"\033[92mtotal_tokens: {total_tokens}\033[0m")
+        print(f"\033[92mPercentage of max tokens: {total_tokens / max_tokens * 100}%\033[0m")
+        if max_tokens <= total_tokens:
+            return {"total_tokens": total_tokens}, "summarize"
+        return {"total_tokens": total_tokens}, "default"
+
+    @node
     async def summarize_context(
         self,
-        messages: List[AnthropicMessage],
-        tools: list[dict] | None = None,
-    ) -> List[AnthropicMessage]:
-        total_tokens = await self.api_handler.count_tokens(messages, tools)
-        model_info = self.api_handler.get_model()
-        print(f"\033[92mtotal_tokens: {total_tokens}\033[0m")
-        print(f"\033[92mPercentage of max tokens: {total_tokens / model_info['max_tokens'] * 100}%\033[0m")
-        if model_info["max_tokens"] <= total_tokens:
-            result: SummarizeResponse = await summarize_conversation(
-                messages=messages,
-                api_handler=self.api_handler,
-                system_prompt=self.system_prompt,
-                prev_context_tokens=total_tokens,
-            )
-            if result.get("error"):
-                pr_red(f"Error summarizing context: {result['error']}", flush=True)
-            else:
-                # print(f"\033[92mSummary: {result}\033[0m")
-                return {"messages": result["messages"]}
-        return {"messages": messages}, "default"
+        total_tokens: int,
+        messages: List[AnthropicMessage]
+    ) -> tuple[dict[str, Any], str]:
+        result: SummarizeResponse = await summarize_conversation(
+            messages=messages,
+            api_handler=self.api_handler,
+            system_prompt=self.system_prompt,
+            prev_context_tokens=total_tokens,
+        )
+        if result.get("error"):
+            pr_red(f"Error summarizing context: {result['error']}", flush=True)
+            return {"messages": messages}, "default"
+        return {"messages": result["messages"]}, "default"
 
     def bind_tools(self, tools: Any, tool_format_arguments: dict[str, Any] = None):
         self.tools_arguments = tool_format_arguments
@@ -314,7 +318,7 @@ class LLMAgent(ABC):
             format=self.api_handler.provider,
             format_kwargs=self.tools_arguments
         )
-        
+
     def update_tools_definitions(self, tools: Any = None, tool_format_arguments: dict[str, Any] = None):
         if tool_format_arguments is not None:
             self.tools_arguments.update(tool_format_arguments)

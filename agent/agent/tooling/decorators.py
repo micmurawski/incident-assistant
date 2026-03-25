@@ -9,11 +9,10 @@ from typing import (Annotated, Any, Callable, Coroutine, GenericAlias, Literal,
                     Optional, TypedDict, TypeVar, Union, _AnnotatedAlias,
                     _TypedDictMeta, get_args, get_origin)
 
+from agent.types import AnthropicMessage
 from framework import AsyncNode
 from framework.generic_messages import select_tools_use
 from framework.utils import __reduce_shared as reduce_shared
-
-from agent.types import AnthropicMessage
 
 # Mapping from Python types to OpenAPI schema types
 CLASS_TO_TYPE = {
@@ -505,8 +504,10 @@ class Tools(AsyncNode):
 
     def __or__(self, other: "Tools | BaseTool") -> "Tools":
         if isinstance(other, BaseTool):
-            return Tools(tools=self.tools + [other])
-        return Tools(tools=self.tools + other.tools)
+            deduplicated_tools = list(set(self.tools + [other]))
+            return Tools(tools=deduplicated_tools)
+        deduplicated_tools = list(set(self.tools + other.tools))
+        return Tools(tools=deduplicated_tools)
 
     def select(self, tags: set[str]) -> "Tools":
         return Tools(tools=[t for t in self.tools if tags.issubset(t.tags)])

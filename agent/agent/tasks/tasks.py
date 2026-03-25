@@ -1,3 +1,4 @@
+import copy
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -142,8 +143,11 @@ class Task:
             child.save(key=key or (self.root.id, self.id))
 
     def get_conversation_with_swapped_roles(self) -> list[dict]:
+        # Deep copy so get_conversation_text_messages never mutates stored conversation
+        # (shallow list copy would share message dicts; stripping text-only would remove
+        # tool_use blocks and leave orphan tool_results → Anthropic 400 invalid params).
         return swap_roles_in_conversation(
-            get_conversation_text_messages(self.conversation.copy())
+            get_conversation_text_messages(copy.deepcopy(self.conversation))
         )
 
 
@@ -170,19 +174,19 @@ def swap_roles_in_conversation(conversation: list[dict]) -> list[dict]:
 
 
 def get_conversation_text_messages(conversation: list[dict]) -> list[dict]:
+    """Return a text-only view of user/assistant messages for feedback. Does not mutate input."""
     selected_messages = []
     for msg in filter(lambda msg: msg.get("role") in ("user", "assistant"), conversation):
         content = msg.get("content")
         if isinstance(content, str):
-            selected_messages.append(msg)
+            selected_messages.append(dict(msg))
         elif isinstance(content, list):
             selected_content = []
             for item in content:
                 if item.get("type") == "text":
                     selected_content.append(item)
             if selected_content:
-                msg["content"] = selected_content
-                selected_messages.append(msg)
+                selected_messages.append({**msg, "content": selected_content})
     return selected_messages
 
 
