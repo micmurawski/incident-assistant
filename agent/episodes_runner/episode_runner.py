@@ -1,22 +1,3 @@
-#!/usr/bin/env python3
-"""
-Episode runner: executes a single fault-injection episode end-to-end.
-
-Steps:
-  1. Create workspace: copy service code from robot-shop to workspace.
-  2. Remove .git from workspace (agents must not see git history).
-  3. Select a random fault from the fault-vault.
-  4. Get metrics summary before fault.
-  5. Apply fault to the workspace (git apply patch).
-  6. Deploy service and wait for problems to appear (default 3 min).
-  7. Get metrics summary after fault.
-  8. Use INCIDENT.md to announce the incident to the team.
-  9. Create prompt with metrics (before/after) and incident for the agent to fix the fault.
-
-Usage:
-  python -m agent.episode_runner [--workspace-dir DIR] [--wait-minutes N] [--no-deploy] [--no-metrics]
-"""
-
 import asyncio
 import json
 import os
@@ -24,6 +5,7 @@ import random
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from agent.grafana_client.client import GrafanaClient
@@ -159,14 +141,21 @@ def build_agent_prompt(
     incident_md: str,
 ) -> str:
     """Build the prompt for the agent to fix the fault."""
+# """
+# ---
+# Focused metrics comparison (changed services only)
+#
+# {focused_metrics_report}
+# ---
+# """
+    print(f"\033[33mfocused_metrics_report: {focused_metrics_report}\033[0m")
+    incident_start_time = datetime.now() - timedelta(minutes=5)
     return f"""
 ## Incident announcement
+Current time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+Incident start time: {incident_start_time.strftime("%Y-%m-%d %H:%M:%S")}
 {incident_md}
----
-## Focused metrics comparison (changed services only)
 
-{focused_metrics_report}
----
 Your task is to: 
  - provide a root cause analysis of the incident
  - propose a fix
@@ -178,7 +167,11 @@ Your task is to:
  - Execution
  - Conclusion
  
- Proceed with work right after this message.
+Proceed with work right after this message.
+Remember: 
+- Your fixes need to maintain the API contract with the user.
+- Once you need to use deploy tool once fix is ready to be deployed.
+
 """
 
 
@@ -229,7 +222,7 @@ async def run_episode(
     await apply_fault(workspace_dir, fault_dir)
 
     # 6. Deploy and wait
-    await deploy_and_wait(workspace_dir, wait_seconds)
+    # await deploy_and_wait(workspace_dir, wait_seconds)
 
     # 7. Metrics after
     out["metrics_after"] = await get_metrics_summary()
@@ -246,6 +239,8 @@ async def run_episode(
         out["focused_metrics_report"],
         out["incident_md"],
     )
+    # Print agent prompt in pink color
+    print("\033[95m" + out["agent_prompt"] + "\033[0m")
 
     return out
 

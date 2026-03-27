@@ -201,7 +201,8 @@ def format_status_report_from_dict(
 
 def format_diff_status_report(diff_payload: dict[str, Any], cause_of_incident: str) -> str:
     """
-    Build a focused report for only services present in diff payload.
+    Build a focused report for services whose before/after metrics differ enough
+    to count as significant (same rules and default threshold as detect_differences).
 
     This keeps the same style as format_status_report but limits output size and
     puts healthy (before) and unhealthy (after) views side by side as two tables.
@@ -573,6 +574,9 @@ def detect_differences(metrics_before: dict, metrics_after: dict, threshold: flo
 if __name__ == "__main__":
     # Quick local smoke tests with mock data:
     #   python -m agent.grafana_client.report
+    #
+    # `shipping` has only tiny before/after deltas (all < default threshold), so it must
+    # not appear in focused diff output — only services with visible metric changes show.
     mock_metrics_before = {
         "namespace": "robot-shop",
         "window": "5m",
@@ -607,6 +611,21 @@ if __name__ == "__main__":
                 "http_4xx": 5,
                 "http_5xx": 1,
                 "error_log_count": 2,
+                "error_logs_samples": [],
+            },
+            "shipping": {
+                "latency_p50_ms": 12,
+                "latency_p95_ms": 45,
+                "latency_p99_ms": 78,
+                "cpu_cores": 0.080,
+                "cpu_cores_percent_of_limit": 16,
+                "memory_mb": 140,
+                "memory_percent_of_limit": 28,
+                "request_rate_rps": 22,
+                "success_rate": 0.999,
+                "http_4xx": 0,
+                "http_5xx": 0,
+                "error_log_count": 0,
                 "error_logs_samples": [],
             },
         },
@@ -651,6 +670,21 @@ if __name__ == "__main__":
                     {"count": 8, "truncated_message": "circuit breaker open for user profile calls"},
                 ],
             },
+            "shipping": {
+                "latency_p50_ms": 13,
+                "latency_p95_ms": 46,
+                "latency_p99_ms": 79,
+                "cpu_cores": 0.082,
+                "cpu_cores_percent_of_limit": 16,
+                "memory_mb": 141,
+                "memory_percent_of_limit": 29,
+                "request_rate_rps": 21,
+                "success_rate": 0.998,
+                "http_4xx": 0,
+                "http_5xx": 0,
+                "error_log_count": 1,
+                "error_logs_samples": [],
+            },
         },
     }
 
@@ -659,5 +693,5 @@ if __name__ == "__main__":
     print("\n=== FULL REPORT (MOCK AFTER) ===\n")
     print(format_status_report_from_dict(mock_metrics_after))
 
-    print("\n=== FOCUSED DIFF REPORT (MOCK BEFORE VS AFTER) ===\n")
-    print(format_diff_status_report(mock_diff))
+    print("\n=== FOCUSED DIFF REPORT (detect_differences — no sub-threshold services) ===\n")
+    print(format_diff_status_report(mock_diff, "incident"))

@@ -73,6 +73,32 @@ class TaskExecutor:
             current_task.status = TaskStatus.AWAITING_FEEDBACK
             current_task.conversation = shared["messages"]
 
+            # Sync tool usage from conversation
+            current_task.tool_usage = []
+            tool_calls = {}
+            for msg in current_task.conversation:
+                role = msg.get("role")
+                content = msg.get("content")
+                if not isinstance(content, list):
+                    continue
+                if role == "assistant":
+                    for block in content:
+                        if block.get("type") == "tool_use":
+                            tool_calls[block["id"]] = block
+                elif role == "user":
+                    for block in content:
+                        if block.get("type") == "tool_result":
+                            tid = block.get("tool_use_id")
+                            if tid in tool_calls:
+                                call = tool_calls[tid]
+                                res = block.get("content", "")
+                                current_task.tool_usage.append({
+                                    "name": call["name"],
+                                    "input": call["input"],
+                                    "is_success": not block.get("is_error", False),
+                                    "result_summary": str(res)[:200] if res else ""
+                                })
+
             feedback_tools_definitions = feedback_tools.tools_definitions(
                 format=assignee_agent.api_handler.provider,
                 format_kwargs=assignee_agent.get_shared()
@@ -82,10 +108,21 @@ class TaskExecutor:
             # print("THIS IS CONVO")
             # print(current_task.get_conversation_with_swapped_roles())
             
-            messages = current_task.get_conversation_with_swapped_roles()
+            messages = current_task.get_conversation_with_swapped_roles(include_actions=True)
+            feedback_messages = messages[1:] if len(messages) > 1 else []
+            if not feedback_messages:
+                feedback_messages = [
+                    {
+                        "role": "user",
+                        "content": (
+                            "No transcript remained after filtering (or only the task line exists). "
+                            "Use the task description in the system prompt to provide_feedback."
+                        ),
+                    }
+                ]
 
             feedback_iterator: ChunkProxyIterator = await assigner_agent.create_message(
-                messages=messages[1:],
+                messages=feedback_messages,
                 metadata=None,
                 tools=feedback_tools_definitions,
                 system_prompt=FEEDBACK_SYSTEM_PROMPT_TEMPLATE.format(task_description=messages[0]["content"])
@@ -93,6 +130,10 @@ class TaskExecutor:
 
             async for _ in feedback_iterator:
                 pass
+
+            if feedback_iterator.usage_summary:
+                for k, v in feedback_iterator.usage_summary.items():
+                    current_task.usage[k] = current_task.usage.get(k, 0) + v
 
             feedback_tool_use = next(
                 filter(

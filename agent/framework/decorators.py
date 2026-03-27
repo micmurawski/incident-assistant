@@ -69,6 +69,14 @@ def create_model_from_dict(model_name: str, field_definitions: dict):
     return create_model(model_name, **fields)
 
 
+def _validated_kwargs(input_model: BaseModel, prep_res: dict[str, Any]) -> dict[str, Any]:
+    """Validate input and ensure materialized plain types (consume one-shot Pydantic iterators)."""
+    validated = input_model(**prep_res)
+    raw = {name: getattr(validated, name) for name in validated.model_fields}
+    # During injection, we want to preserve rich objects so nodes get the instances they expect.
+    return _deep_materialize(raw, preserve_custom_objects=True)
+
+
 def __init(self, **kwargs):
     super(type(self), self).__init__()
     self.max_retries = kwargs.get("max_retries", 1)
@@ -121,7 +129,8 @@ def create_batch_prep(
                     f"Batch item at index {i} must be a list or tuple of arguments, got {type(raw).__name__}, raw: {raw}"
                 )
             if items_type is dict:
-                prepped.append(input_model(**raw).model_dump())
+                validated = input_model(**raw)
+                prepped.append(_deep_materialize({name: getattr(validated, name) for name in validated.model_fields}, preserve_custom_objects=True))
             else:
                 key, *rest = raw
                 prepped[key] = rest
@@ -249,7 +258,7 @@ def node(
             post_fn = create_batch_post(results_key, results_type) if is_batch else __reduce_shared
             if is_method_or_cls:
                 def exec_sync(self, prep_res):
-                    return func(self.owner, **_deep_materialize(input_model(**prep_res).model_dump()))
+                    return func(self.owner, **_validated_kwargs(input_model, prep_res))
                 node_class = type(
                     class_name,
                     (node_class,),
@@ -269,7 +278,7 @@ def node(
                 (node_class,),
                 {
                     "__init__": make_node_init(False),
-                    "exec": lambda self, prep_res: func(**_deep_materialize(input_model(**prep_res).model_dump())),
+                    "exec": lambda self, prep_res: func(**_validated_kwargs(input_model, prep_res)),
                     "prep": prep_fn,
                     "post": post_fn,
                     "__doc__": func.__doc__,
@@ -293,7 +302,7 @@ def node(
             post_fn = create_batch_post(results_key, results_type) if is_batch else __reduce_shared
 
             async def exec_async(self, prep_res):
-                kwargs = _deep_materialize(input_model(**prep_res).model_dump())
+                kwargs = _validated_kwargs(input_model, prep_res)
                 if is_method_or_cls:
                     return await func(self.owner, **kwargs)
                 return await func(**kwargs)

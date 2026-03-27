@@ -57,9 +57,9 @@ async def run_cli_command(
                         # Move cursor up by the number of lines previously printed
                         sys.stdout.write(f"\033[{lines_printed}A")
                     
-                    for l in lines_buffer:
+                    for _line in lines_buffer:
                         # Clear line then print
-                        sys.stdout.write(f"\r\033[K{l}\n")
+                        sys.stdout.write(f"\r\033[K{_line}\n")
                     
                     sys.stdout.flush()
                     lines_printed = len(lines_buffer)

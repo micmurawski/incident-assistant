@@ -95,12 +95,14 @@ def _print_summarize_response_debug(resp: SummarizeResponse) -> None:
     messages: Full conversation list to use for the next API request — use this for turns.
     """
     msg_json = json.dumps(resp["messages"], indent=2, default=str)
-    print(
-        f"{_SUMMARIZE_DEBUG_PINK}[SummarizeResponse]\n"
-        f"  summary (string): {resp['summary']!r}\n"
-        f"  messages (full list for next turn — indented JSON):\n{msg_json}"
-        f"{_SUMMARIZE_DEBUG_RESET}"
-    )
+    with open("summarize_response.json", "w") as f:
+        f.write(msg_json)
+    # print(
+    #     f"{_SUMMARIZE_DEBUG_PINK}[SummarizeResponse]\n"
+    #     f"  summary (string): {resp['summary']!r}\n"
+    #     f"  messages (full list for next turn — indented JSON):\n{msg_json}"
+    #     f"{_SUMMARIZE_DEBUG_RESET}"
+    # )
 
 
 async def estimate_token_count(

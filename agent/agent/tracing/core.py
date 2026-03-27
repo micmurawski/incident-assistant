@@ -17,7 +17,7 @@ logger = getLogger(__name__)
 
 
 def _serialize_shared(data: Any, depth: int = 0) -> Any:
-    if depth > 6:
+    if depth > 10:
         return "<...>"
     if data is None or isinstance(data, (str, int, float, bool)):
         return data
@@ -147,3 +147,4 @@ class GraphTracer:
             self._provider.force_flush()
         except Exception as e:
             logger.error(f"[GraphTracer] flush failed: {e}")
+

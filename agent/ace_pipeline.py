@@ -9,6 +9,7 @@ from agent.llm import LLMAgent
 from agent.tasks.tasks import Task
 from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
 from framework import AsyncFlow
+from typing import Optional
 
 PossibleActions = Literal["ADD", "UPDATE", "DELETE", "NONE"]
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,47 +37,63 @@ class Reflection(TypedDict):
 
 
 class Playbook:
-    @classmethod
-    def get_instance(cls) -> "Playbook":
-        if not hasattr(cls, "instance"):
-            cls.instance = cls.restore_latest()
-        return cls.instance
+    _instances: dict[str, "Playbook"] = {}
 
-    def __init__(self):
+    @classmethod
+    def get_instance(cls, playbook_id: str = "default") -> "Playbook":
+        if playbook_id not in cls._instances:
+            cls._instances[playbook_id] = cls.restore_latest(playbook_id)
+        return cls._instances[playbook_id]
+
+    def __init__(self, playbook_id: str = "default"):
+        self.playbook_id = playbook_id
         self.iteration = 0
         self.playbook = {}
-        os.makedirs(PLAYBOOK_DIR, exist_ok=True)
+        self.storage_dir = os.path.join(PLAYBOOK_DIR, self.playbook_id)
+        os.makedirs(self.storage_dir, exist_ok=True)
 
     def dump(self) -> str:
-        with open(os.path.join(PLAYBOOK_DIR, f"playbook-{self.iteration}.json"), "w") as f:
-            json.dump(self.playbook, f, indent=4)
-        return f"Playbook dumped to {os.path.join(PLAYBOOK_DIR, f'playbook-{self.iteration}.json')}"
+        data = {
+            "playbook_id": self.playbook_id,
+            "iteration": self.iteration,
+            "playbook": self.playbook
+        }
+        file_path = os.path.join(self.storage_dir, f"playbook-{self.iteration}.json")
+        with open(file_path, "w") as f:
+            json.dump(data, f, indent=4)
+        return f"Playbook dumped to {file_path}"
 
-    @staticmethod
-    def dump_changes(change: dict) -> str:
-        with open(os.path.join(PLAYBOOK_DIR, f"playbook-change-{change['iteration']}.json"), "w") as f:
+    def dump_changes(self, change: dict) -> str:
+        file_path = os.path.join(self.storage_dir, f"playbook-change-{change['iteration']}.json")
+        with open(file_path, "w") as f:
             json.dump(change, f, indent=4)
-        return f"Changes dumped to {os.path.join(PLAYBOOK_DIR, f'playbook-change-{change['iteration']}.json')}"
+        return f"Changes dumped to {file_path}"
 
     @classmethod
     def from_dict(cls, data: dict) -> "Playbook":
-        instance = cls()
+        instance = cls(data.get("playbook_id", "default"))
         instance.iteration = data["iteration"]
         instance.playbook = data["playbook"]
         return instance
 
     @classmethod
-    def restore_latest(cls) -> "Playbook":
-        files = glob.glob(os.path.join(PLAYBOOK_DIR, "playbook-*.json"))
-        if not files:
-            return cls()
-        latest_file = max(files, key=lambda x: os.path.getctime(x))
+    def restore_latest(cls, playbook_id: str = "default") -> "Playbook":
+        storage_dir = os.path.join(PLAYBOOK_DIR, playbook_id)
+        if not os.path.exists(storage_dir):
+            return cls(playbook_id)
+        files = glob.glob(os.path.join(storage_dir, "playbook-*.json"))
+        # Exclude change files from being restored as the main playbook
+        playbook_files = [f for f in files if "playbook-change-" not in os.path.basename(f)]
+        if not playbook_files:
+            return cls(playbook_id)
+        latest_file = max(playbook_files, key=lambda x: os.path.getctime(x))
         with open(latest_file, "r") as f:
             return cls.from_dict(json.load(f))
 
     def apply_operations(self, reasoning: str, operations: list[Operation]):
         change = {
             "iteration": self.iteration,
+            "playbook_id": self.playbook_id,
             "playbook": self.playbook,
             "timestamp": datetime.now().isoformat(),
             "reasoning": reasoning,
@@ -89,7 +106,8 @@ class Playbook:
             elif operation["action"] == "UPDATE":
                 self.playbook[operation["section"]] = operation["content"]
             elif operation["action"] == "DELETE":
-                del self.playbook[operation["section"]]
+                if operation["section"] in self.playbook:
+                    del self.playbook[operation["section"]]
             elif operation["action"] == "NONE":
                 pass
         self.iteration += 1
@@ -101,9 +119,18 @@ async def update_playbook(
     playbook: Hidden[Playbook],
     reasoning: Annotated[str, "The reasoning for the operations"],
     operations: Annotated[list[Operation], "The operations to perform on the playbook"],
+    playbook_id: Annotated[Optional[str], "The ID of the playbook to update. If not provided, updates the current injected playbook."] = None,
 ) -> ToolResult:
-    playbook.apply_operations(reasoning, operations)
-    return ToolResult(result=playbook.playbook, error=None)
+    """
+    Update a playbook with new insights or corrections.
+    If playbook_id is provided, it will update that specific playbook instance.
+    """
+    target_playbook = playbook
+    if playbook_id and playbook_id != playbook.playbook_id:
+        target_playbook = Playbook.get_instance(playbook_id)
+
+    target_playbook.apply_operations(reasoning, operations)
+    return ToolResult(result=target_playbook.playbook, error=None)
 
 
 @tool(tags=["ace", "reflector"])
@@ -152,11 +179,13 @@ expectations (e.g., apis.blah.show_contents() returns a list of content_ids (str
 
 
 class ReflectorAgent(LLMAgent):
-    pass
+    def __init__(self, name: str = "reflector", system_prompt: str = REFLECTOR_SYSTEM_PROMPT, **kwargs):
+        super().__init__(name=name, system_prompt=system_prompt, **kwargs)
 
 
 class CuratorAgent(LLMAgent):
-    pass
+    def __init__(self, name: str = "curator", system_prompt: str = CURATOR_SYSTEM_PROMPT, **kwargs):
+        super().__init__(name=name, system_prompt=system_prompt, **kwargs)
 
 
 reflector_agent = ReflectorAgent()

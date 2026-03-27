@@ -365,8 +365,11 @@ class AnthropicHandler(ApiHandler):
         return ""
 
     async def count_tokens(self, content: List[AnthropicMessageParam], tools: List[dict] | None = None) -> int:
+        print("content: ", type(content[0]["content"]))
+        with open("debug_content.json", "w") as f:
+            f.write(json.dumps(content, indent=2))
         """
-        Count tokens for the given content using Anthropic's API.
+        Count tokens for the given messages using Anthropic's API.
 
         Args:
             content: List of content blocks to count tokens for
@@ -376,7 +379,7 @@ class AnthropicHandler(ApiHandler):
         """
         try:
             config = self.get_model()
-            
+
             response = await self.client.messages.count_tokens(
                 model=config["id"],
                 messages=content,

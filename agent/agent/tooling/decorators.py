@@ -451,6 +451,25 @@ class Tools(AsyncNode):
     async def exec_async(self, prep_res: dict) -> dict:
         return await self.exec(prep_res)
 
+    @staticmethod
+    def _missing_required_fields(tool: BaseTool, llm_input: dict[str, Any]) -> list[str]:
+        """
+        Return required LLM-visible fields missing from the agent's tool input.
+
+        Hidden[...] / injected parameters are supplied by the framework (prep_res), not the model;
+        they are excluded from the schema and must not be treated as agent omissions here.
+        """
+        inject_names = set(getattr(tool, "_inject_params", []))
+        params = tool.tool_definition.get("parameters", {})
+        required = params.get("required", [])
+        if not isinstance(required, list):
+            return []
+        return [
+            field
+            for field in required
+            if field not in llm_input and field not in inject_names
+        ]
+
     async def exec(self, prep_res: dict) -> dict:
         messages: list[AnthropicMessage] = prep_res.get("messages", [])
         tools_to_call: list[AnthropicMessage] = select_tools_use(messages)
@@ -464,21 +483,41 @@ class Tools(AsyncNode):
             if tool is None:
                 raise Exception(f"Tool {name} not found")
 
-            # Inject Hidden params from shared (convention: param name -> prep_res[key])
+            tool_result: ToolResult | Coroutine[Any, Any, ToolResult]
+            # Hidden params: framework must supply via prep_res; failure is not recoverable by the agent.
             inject_params = getattr(tool, "_inject_params", [])
             injected = {}
-            for name in inject_params:
-                if name not in prep_res:
-                    raise ValueError(
-                        f"Tool {tool.name} requires injected param '{name}' "
-                        f"(Hidden param). Ensure shared['{name}'] is set when running the flow."
-                    )
-                injected[name] = prep_res[name]
-            final_input = {**injected, **llm_input}
+            missing_injected = [param_name for param_name in inject_params if param_name not in prep_res]
+            if missing_injected:
+                raise Exception(
+                    f"Tool {tool.name} is missing required injected fields: "
+                    f"{', '.join(missing_injected)}"
+                )
+            for param_name in inject_params:
+                injected[param_name] = prep_res[param_name]
 
-            tool_result: ToolResult | Coroutine[Any, Any, ToolResult] = tool(**final_input)
-            if asyncio.iscoroutine(tool_result):
-                tool_result = await tool_result
+            # Non-hidden required schema fields: agent omission → ToolResult error for the model to fix.
+            missing_required = self._missing_required_fields(tool, llm_input)
+            if missing_required:
+                tool_result = ToolResult(
+                    result=None,
+                    error=(
+                        f"Tool {tool.name} is missing required input fields: "
+                        f"{', '.join(missing_required)}"
+                    ),
+                )
+            else:
+                final_input = {**injected, **llm_input}
+                try:
+                    tool_result = tool(**final_input)
+                    if asyncio.iscoroutine(tool_result):
+                        tool_result = await tool_result
+                except TypeError as e:
+                    # Convert runtime signature mismatch to tool error for LLM feedback loops.
+                    tool_result = ToolResult(
+                        result=None,
+                        error=f"Invalid tool input for {tool.name}: {e}",
+                    )
 
             if self.debug_mode:
                 print(f"\033[95mResult of: {tool.name}({', '.join(f'{k}={v}' for k, v in llm_input.items())})=\033[0m")

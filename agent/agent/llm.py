@@ -1,4 +1,5 @@
 import json
+import os
 import random
 from abc import ABC
 from typing import Any, AsyncIterator, List, Optional, TypeVar
@@ -8,6 +9,7 @@ from agent.context_ops import SummarizeResponse, summarize_conversation
 from agent.providers import build_api_handler
 from agent.providers.base import ApiHandler
 from agent.settings import SettingsManager
+from agent.tasks.tasks import Task
 from agent.tracing import trace_flow
 from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
                          StreamChunk)
@@ -28,6 +30,15 @@ def pr_light_gray(s: str, *args: Any, **kwargs: Any): print("\033[90m{}\033[0m".
 def pr_black(s: str, *args: Any, **kwargs: Any): print("\033[90m{}\033[0m".format(s), *args, **kwargs)
 
 
+def _debug_llm_enabled() -> bool:
+    return os.environ.get("DEBUG_LLM", "").lower() in ("1", "true", "yes")
+
+
+def _debug_llm(msg: str) -> None:
+    if _debug_llm_enabled():
+        pr_cyan(f"[call_llm] {msg}", flush=True)
+
+
 adjectives = [
     "thinking",
     "reflecting",
@@ -40,6 +51,49 @@ adjectives = [
     "deciding",
     "discombobulating",
 ]
+
+
+def _sanitize_message_content(content: Any) -> Any | None:
+    """Best-effort normalize Anthropic message content to supported shapes."""
+    if content is None:
+        return None
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        return {k: v for k, v in content.items()}
+    if not isinstance(content, list):
+        try:
+            content = list(content)
+        except TypeError:
+            return None
+    sanitized_blocks: list[dict[str, Any]] = []
+    for block in content:
+        if hasattr(block, "model_dump"):
+            block = block.model_dump()
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if not isinstance(block_type, str):
+            continue
+        sanitized_blocks.append(dict(block))
+    # Empty list content is invalid/no-op for Anthropic-style chat turns.
+    return sanitized_blocks or None
+
+
+def _sanitize_messages_for_provider(messages: List[AnthropicMessage]) -> List[AnthropicMessage]:
+    """Drop malformed messages/contents so provider payloads stay serializable."""
+    sanitized: list[AnthropicMessage] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = _sanitize_message_content(msg.get("content"))
+        if content is None:
+            continue
+        sanitized.append({"role": role, "content": content})
+    return sanitized
 
 
 class ChunkProxyIterator[T]:
@@ -72,11 +126,15 @@ class ChunkProxyIterator[T]:
         _type = chunk.get("type")
         match _type:
             case "text":
-                print(chunk.get("text", ""), end="", flush=True)
-                self.text += chunk.get("text", "")
+                piece = chunk.get("text") if chunk.get("text") is not None else chunk.get("content", "")
+                piece = piece if isinstance(piece, str) else str(piece or "")
+                print(piece, end="", flush=True)
+                self.text += piece
             case "reasoning":
-                pr_light_gray(chunk.get("text", ""), end="", flush=True)
-                self.reasoning += chunk.get("text", "")
+                piece = chunk.get("text") if chunk.get("text") is not None else chunk.get("content", "")
+                piece = piece if isinstance(piece, str) else str(piece or "")
+                pr_light_gray(piece, end="", flush=True)
+                self.reasoning += piece
             case "usage":
                 print()
                 pr_yellow(json.dumps(chunk), flush=True)
@@ -98,12 +156,14 @@ class ChunkProxyIterator[T]:
                 if sources:
                     pr_cyan(f"grounding: {json.dumps(sources)}", flush=True)
 
-    def get_response(self) -> List[AnthropicMessage]:
+    def get_response(self, include_reasoning: bool = False) -> List[AnthropicMessage]:
         result = []
+        content_blocks = []
+        if include_reasoning and self.reasoning:
+            content_blocks.append({"type": "reasoning", "text": self.reasoning})
+        if self.text:
+            content_blocks.append({"type": "text", "text": self.text})
         if self.tool_use:
-            content_blocks = []
-            if self.text:
-                content_blocks.append({"type": "text", "text": self.text})
             for tu in self.tool_use:
                 content_blocks.append({
                     "type": "tool_use",
@@ -111,9 +171,14 @@ class ChunkProxyIterator[T]:
                     "name": tu["name"],
                     "input": tu["input"],
                 })
-            result.append({"role": "assistant", "content": content_blocks})
-        elif self.text:
-            result.append({"role": "assistant", "content": self.text})
+        
+        if content_blocks:
+            # If there's only one block and it's text, return it as simple string (standard)
+            # unless reasoning is included, which always requires array format.
+            if len(content_blocks) == 1 and content_blocks[0]["type"] == "text":
+                result.append({"role": "assistant", "content": self.text})
+            else:
+                result.append({"role": "assistant", "content": content_blocks})
         return result
 
     def had_tool_use(self) -> bool:
@@ -260,29 +325,124 @@ class LLMAgent(ABC):
         shared.update(merged)
         return result
 
+    async def _complete_llm_turn(
+        self,
+        messages: List[AnthropicMessage],
+        metadata: Optional[ApiHandlerCreateMessageMetadata],
+        task: Task | None,
+        call_kwargs: dict[str, Any],
+        *,
+        forced_next: str | None = None,
+        log_label: str = "turn",
+    ) -> tuple[dict[str, list[AnthropicMessage]], str]:
+        """Stream one model completion, merge assistant output into messages, update history."""
+        it: ChunkProxyIterator = await self.create_message(
+            messages=messages,
+            metadata=metadata,
+            **call_kwargs,
+        )
+        async for _ in it:
+            pass
+
+
+        if task:
+            task.messages_history.extend(it.get_response(include_reasoning=True))
+            if it.usage_summary:
+                for k, v in it.usage_summary.items():
+                    task.usage[k] = task.usage.get(k, 0) + v
+
+        data: dict[str, Any] = {"messages": messages}
+        response = it.get_response()
+        if task:
+            _debug_llm(
+                f"{log_label} task={task.id} iterations_count={task.iterations_count}: "
+                f"text_len={len(it.text)} had_tool_use={it.had_tool_use()} "
+                f"response_blocks={len(response) if response else 0}"
+            )
+        if response:
+            data["messages"] = data["messages"] + response
+        if it.usage_summary:
+            data["_last_usage"] = it.usage_summary
+
+        if forced_next is not None:
+            return data, forced_next
+        _next = "tools" if it.had_tool_use() else "default"
+        return data, _next
+
     @node
     async def call_llm(
         self,
         messages: List[AnthropicMessage],
         metadata: Optional[ApiHandlerCreateMessageMetadata] = None,
+        task: Task | None = None,
         **kwargs: dict[str, Any],
     ) -> tuple[dict[str, list[AnthropicMessage]], str]:
         kwargs = {**kwargs.pop("kwargs", {}), **kwargs}
 
-        iter: ChunkProxyIterator = await self.create_message(
-            messages=messages,
-            metadata=metadata,
-            **kwargs
-        )
+        if task:
+            task.iterations_count += 1
+            _debug_llm(
+                f"task={task.id} iterations_count={task.iterations_count}/"
+                f"{task.iterations_limit} (before branch)"
+            )
 
-        async for _ in iter:
-            pass
+            if task.iterations_count > task.iterations_limit:
+                _debug_llm(
+                    f"hard stop: count > limit; skipping API (messages_len={len(messages)})"
+                )
+                print(
+                    f"\033[91mIteration hard stop for task {task.id} "
+                    f"(>{task.iterations_limit}).\033[0m"
+                )
+                terminal = {
+                    "role": "assistant",
+                    "content": "[Iteration limit already handled; no further model turn for this task.]",
+                }
+                return {"messages": messages + [terminal]}, "default"
 
-        data = {"messages": messages + iter.get_response()}
-        if iter.usage_summary:
-            data["_last_usage"] = iter.usage_summary
-        _next = "tools" if iter.had_tool_use() else "default"
-        return data, _next
+            if task.iterations_count >= task.iterations_limit:
+                print(
+                    f"\033[91mIteration limit reached for task {task.id}. "
+                    f"Generating final response (no tools).\033[0m"
+                )
+                _debug_llm(
+                    f"final wrap-up: messages_len={len(messages)}, create_message with tools=[]"
+                )
+                messages = messages + [
+                    {
+                        "role": "user",
+                        "content": (
+                            "Iteration limit reached. Do not use any tools. "
+                            "Reply with your final summary and findings in plain text only."
+                        ),
+                    }
+                ]
+                return await self._complete_llm_turn(
+                    messages,
+                    metadata,
+                    task,
+                    {**kwargs, "tools": []},
+                    forced_next="default",
+                    log_label="final",
+                )
+
+            if task.iterations_count == task.iterations_limit - 1:
+                messages = messages + [
+                    {
+                        "role": "user",
+                        "content": (
+                            "WARNING: You have reached the iteration limit for this task. "
+                            "This is your LAST turn. Do not use any more tools. "
+                            "Summarize your findings and report back with your final answer now."
+                        ),
+                    }
+                ]
+                print(f"\033[93mIteration limit warning sent to agent for task {task.id}.\033[0m")
+                _debug_llm(
+                    f"penultimate turn: appended WARNING, messages_len={len(messages)}"
+                )
+
+        return await self._complete_llm_turn(messages, metadata, task, kwargs)
 
     @node
     async def check_context_size(self, messages: List[AnthropicMessage], tools: list[dict] | None = None) -> bool:
@@ -353,9 +513,19 @@ class LLMAgent(ABC):
         task_id = kwargs.pop("task_id", None)
         session_id = kwargs.pop("session_id", None)
 
+        safe_messages = _sanitize_messages_for_provider(messages)
+        if not safe_messages:
+            safe_messages = [
+                {
+                    "role": "user",
+                    "content": "(No valid messages in context; judge or respond using the system prompt only.)",
+                }
+            ]
+            _debug_llm("create_message: empty after sanitize → placeholder user message")
+
         _iterator = self.api_handler.create_message(
             system_prompt=kwargs.pop("system_prompt", self.system_prompt),
-            messages=messages,
+            messages=safe_messages,
             metadata=metadata,
             tools=kwargs.pop("tools", self.tools_definitions),
             **kwargs

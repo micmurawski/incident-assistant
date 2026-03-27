@@ -1,4 +1,6 @@
 import inspect
+from datetime import datetime
+from enum import Enum
 from typing import Any, Callable
 
 from pydantic import BaseModel, Field, create_model
@@ -9,25 +11,45 @@ from framework import Node
 _JSON_PRIMITIVES = (type(None), str, int, float, bool)
 
 
-def _deep_materialize(obj: Any) -> Any:
+def _deep_materialize(obj: Any, preserve_custom_objects: bool = False) -> Any:
     """
     Recursively convert to JSON-serializable plain dict/list/primitive.
     Consumes one-shot iterators (e.g. Pydantic SerializationIterator) and
-    converts Pydantic models via model_dump(). Use when writing to shared or
-    when passing prep result into node exec so nodes never see non-serializable types.
+    converts Pydantic models via model_dump().
+
+    Args:
+        obj: The object to materialize.
+        preserve_custom_objects: If True, objects with model_dump() (like Task)
+            are preserved as-is. Useful when injecting into nodes so they
+            receive rich objects. If False (default), they are materialized.
     """
     if obj is None or isinstance(obj, _JSON_PRIMITIVES):
         return obj
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, Enum):
+        return obj.value
+
+    # If it's a custom object we want to preserve during node execution
+    if preserve_custom_objects and hasattr(obj, "model_dump"):
+        return obj
+
     if hasattr(obj, "model_dump"):
-        return _deep_materialize(obj.model_dump())
+        return _deep_materialize(obj.model_dump(), preserve_custom_objects=preserve_custom_objects)
     if isinstance(obj, dict):
-        return {k: _deep_materialize(v) for k, v in obj.items()}
+        return {k: _deep_materialize(v, preserve_custom_objects=preserve_custom_objects) for k, v in obj.items()}
     if isinstance(obj, list):
-        return [_deep_materialize(x) for x in obj]
-    try:
-        return [_deep_materialize(x) for x in obj]
-    except TypeError:
-        return str(obj)
+        return [_deep_materialize(x, preserve_custom_objects=preserve_custom_objects) for x in obj]
+    
+    # Handle other iterables (e.g., Pydantic's ValidatorIterator/SerializationIterator)
+    if hasattr(obj, "__iter__"):
+        try:
+            return [_deep_materialize(x, preserve_custom_objects=preserve_custom_objects) for x in obj]
+        except (TypeError, ValueError):
+            # If it's supposedly iterable but fails, we fall through to the exception
+            pass
+
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON-serializable and cannot be materialized.")
 
 
 def signature_to_field_definitions(parameters: dict[str, inspect.Parameter]) -> dict:

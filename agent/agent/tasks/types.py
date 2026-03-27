@@ -18,3 +18,5 @@ class TodoItem(TypedDict):
 class ToolUsage(TypedDict, total=False):
     name: str
     input: dict
+    is_success: bool
+    result_summary: str

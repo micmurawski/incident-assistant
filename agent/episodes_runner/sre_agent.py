@@ -39,20 +39,34 @@ SYSTEM_PROMPTS = {
     You are allowed to delegate tasks to your deputies, that are experts in their respective domains.
     You are responsible running deploy_app tool once fix is ready to be deployed.
     Your deputies are:
-    monitoring_agent: is responsible for collecting/interpreting logs/metrics from the cluster.
-    devops_agent: is responsible for managing the cluster resources.
+    - coder_agent: is responsible for coding the application.
+    - monitoring_agent: is responsible for collecting/interpreting logs/metrics from the cluster.
+    - devops_agent: is responsible for managing the cluster resources.
     """,
     "monitoring_agent": """
     You are a monitoring agent. You are responsible for collecting logs/metrics from the kubernetes cluster.
     You are allowed to delegate tasks/subtasks if assign_task tool is present in the tools list.
-    monitoring_agent: is responsible for collecting/interpreting logs/metrics from the cluster.
-    devops_agent: is responsible for managing the cluster resources.
+    You are able to delegate tasks/subtasks to the following agents:
+    - coder_agent: is responsible for coding the application.
+    - monitoring_agent: - you (you may call yourself recursively)
+    - devops_agent: is responsible for managing the cluster resources.
     """,
     "devops_agent": """
     You are a devops agent. You are responsible for managing the kubernetes cluster.
     You are allowed to delegate tasks/subtasks if assign_task tool is present in the tools list.
-    monitoring_agent: is responsible for collecting/interpreting logs/metrics from the cluster.
-    devops_agent: is responsible for managing the cluster resources.
+    You are able to delegate tasks/subtasks to the following agents:
+    
+    Focus on application namespace where the application is running.
+    - monitoring_agent: is responsible for collecting/interpreting logs/metrics from the cluster.
+    - devops_agent: - you (you may call yourself recursively)
+    """,
+    "coder_agent": """
+    You are a coder agent. You are responsible for coding the application.
+    You are allowed to delegate tasks/subtasks if assign_task tool is present in the tools list.
+    You are able to delegate tasks/subtasks to the following agents:
+    - coder_agent: - you (you may call yourself recursively)
+    - monitoring_agent: is responsible for collecting/interpreting logs/metrics from the cluster.
+    - devops_agent: is responsible for managing the cluster resources.
     """,
 }
 
@@ -96,13 +110,13 @@ def create_sre_agent(
         "env": SRE_AGENT_ENV,
     }
 
-    incident_commander_tools = PlanningTools | CliTools | deploy_app
+    incident_commander_tools = PlanningTools | deploy_app
     metrics_tools = MetricsTools | kubectl_get_resources | PlanningTools
     
     devops_read_tools = CliTools | CodebaseReadTools | KubectlReadTools | EksReadTools | PlanningTools
     devops_write_tools = CodebaseWriteTools | CliTools  | KubectlWriteTools | EksWriteTools | PlanningTools
     
-    CodebaseReadTools | CodebaseWriteTools | CliTools | PlanningTools
+    coder_tools = CodebaseReadTools | CodebaseWriteTools | CliTools | PlanningTools
     
     devops_tools = devops_read_tools | devops_write_tools
 
@@ -112,7 +126,8 @@ def create_sre_agent(
         tools=incident_commander_tools,
         shared_context={
             **shared_context,
-            "available_agents": "devops_agent,monitoring_agent",
+            "deploy_script_path": "/Users/micmur/GITHUB/o8s/workspace/k8s/deploy.sh",
+            "available_agents": "devops_agent,monitoring_agent,coder_agent",
         }
     )
     incident_commander.register()
@@ -123,7 +138,7 @@ def create_sre_agent(
         tools=metrics_tools,
         shared_context={
             **shared_context,
-            "available_agents": "devops_agent,monitoring_agent",
+            "available_agents": "devops_agent,monitoring_agent,coder_agent",
         }
     )
     monitoring_agent.register()
@@ -134,10 +149,22 @@ def create_sre_agent(
         tools=devops_tools,
         shared_context={
             **shared_context,
-            "available_agents": "devops_agent,monitoring_agent",
+            "available_agents": "devops_agent,monitoring_agent,coder_agent",
         }
     )
     devops_agent.register()
+    
+    coder_agent = LLMAgent(
+        name="coder_agent",
+        system_prompt=SYSTEM_PROMPTS["coder_agent"] + "\n" + playbooks.get("coder_agent", ""),
+        tools=coder_tools,
+        shared_context={
+            **shared_context,
+            "available_agents": "devops_agent,monitoring_agent,coder_agent",
+        }
+    )
+    coder_agent.register()
+    
     incident_commander.get_flow_graph_png("incident_commander.png")
     # return incident_commander
     with tracer.start_as_current_span(name):
@@ -161,7 +188,7 @@ if __name__ == "__main__":
                     conversation=[
                         {
                             "role": "user",
-                            "content": "Please ask monitoring_agent and devops_agent to list their tools and their capabilities. And show me the report about their capabilities."
+                            "content": "Please ask coder_agent, monitoring_agent and devops_agent to list their tools and their capabilities. And show me the report about their capabilities. You may achieve this by assigning tasks to them."
                         }
                     ]
                 )

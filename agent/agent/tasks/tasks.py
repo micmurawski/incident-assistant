@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import json
 from dataclasses import dataclass, field
@@ -25,10 +27,16 @@ class Task:
     assigner: str | None = None
 
     conversation: list[ApiMessage] = field(default_factory=list)
+    
+    messages_history: list[ApiMessage] = field(default_factory=list)
+
+    iterations_count: int = field(default=0)
+    iterations_limit: int = field(default=40)
 
     consecutive_mistakes_count: int = field(default=0)
     consecutive_mistakes_limit: int = field(default=3)
     tool_usage: list[ToolUsage] = field(default_factory=list)
+    usage: dict = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now())
     resolved_at: datetime | None = None
 
@@ -47,6 +55,52 @@ class Task:
             "todos": todos,
         }
         return json.dumps(data)
+
+    def model_dump(self) -> dict:
+        """Serializes the task and its children into a dictionary."""
+        return {
+            "id": self.id,
+            "status": self.status,
+            "todo_list": self.todo_list,
+            "children": [child.model_dump() for child in self.children],
+            "assignee": self.assignee,
+            "assigner": self.assigner,
+            "conversation": self.conversation,
+            "messages_history": self.messages_history,
+            "iterations_count": self.iterations_count,
+            "iterations_limit": self.iterations_limit,
+            "consecutive_mistakes_count": self.consecutive_mistakes_count,
+            "consecutive_mistakes_limit": self.consecutive_mistakes_limit,
+            "tool_usage": self.tool_usage,
+            "usage": self.usage,
+            "created_at": self.created_at,
+            "resolved_at": self.resolved_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict, parent: "Task" | None = None, root: "Task" | None = None) -> "Task":
+        """Rebuilds a task hierarchy from a dictionary."""
+        data_copy = copy.deepcopy(data)
+        children_data = data_copy.pop("children", [])
+
+        # Handle datetime fields
+        if isinstance(data_copy.get("created_at"), str):
+            data_copy["created_at"] = datetime.fromisoformat(data_copy["created_at"])
+        if isinstance(data_copy.get("resolved_at"), str):
+            data_copy["resolved_at"] = datetime.fromisoformat(data_copy["resolved_at"])
+
+        # Handle enum fields
+        if "status" in data_copy:
+            data_copy["status"] = TaskStatus(data_copy["status"])
+
+        task = cls(**data_copy)
+        task.parent = parent
+        task.root = root or task
+
+        for child_dict in children_data:
+            task.children.append(cls.from_dict(child_dict, parent=task, root=task.root))
+
+        return task
 
     def __post_init__(self):
         if self.root is None:
@@ -99,6 +153,15 @@ class Task:
                 lines.append(f"- [ ] {todo['content']}")
         return "\n".join(lines)
 
+    def get_total_usage(self) -> dict:
+        """Recursively aggregates usage from this task and all its children."""
+        total_usage = copy.deepcopy(self.usage)
+        for child in self.children:
+            child_usage = child.get_total_usage()
+            for k, v in child_usage.items():
+                total_usage[k] = total_usage.get(k, 0) + v
+        return total_usage
+
     def get_deepest_actionable_tasks(self, status: TaskStatus) -> list["Task"]:
         """BFS from root, returning AWAITING_INPUT/AWAITING_FEEDBACK tasks at the deepest level."""
         root = self.root or self
@@ -121,6 +184,7 @@ class Task:
     
     def save(self, key: tuple[str, str] | None = None):
         conv = json.dumps(self.conversation)
+        messages_history = json.dumps(self.messages_history)
         row = {
             "root_id": key[0] if key else self.root.id,
             "id": self.id,
@@ -132,7 +196,11 @@ class Task:
             "assignee": self.assignee or "",
             "assigner": self.assigner or "",
             "tool_usage": json.dumps(self.tool_usage),
+            "usage": json.dumps(self.usage),
+            "iterations_count": self.iterations_count,
+            "iterations_limit": self.iterations_limit,
             "conversation": conv,
+            "messages_history": messages_history,
             "last_message_ts": 0,
         }
         TaskModel.insert(row).on_conflict(
@@ -142,12 +210,12 @@ class Task:
         for child in self.children:
             child.save(key=key or (self.root.id, self.id))
 
-    def get_conversation_with_swapped_roles(self) -> list[dict]:
+    def get_conversation_with_swapped_roles(self, include_actions: bool = False) -> list[dict]:
         # Deep copy so get_conversation_text_messages never mutates stored conversation
         # (shallow list copy would share message dicts; stripping text-only would remove
         # tool_use blocks and leave orphan tool_results → Anthropic 400 invalid params).
         return swap_roles_in_conversation(
-            get_conversation_text_messages(copy.deepcopy(self.conversation))
+            get_conversation_text_messages(copy.deepcopy(self.conversation), include_actions=include_actions)
         )
 
 
@@ -173,7 +241,7 @@ def swap_roles_in_conversation(conversation: list[dict]) -> list[dict]:
     return swapped
 
 
-def get_conversation_text_messages(conversation: list[dict]) -> list[dict]:
+def get_conversation_text_messages(conversation: list[dict], include_actions: bool = False) -> list[dict]:
     """Return a text-only view of user/assistant messages for feedback. Does not mutate input."""
     selected_messages = []
     for msg in filter(lambda msg: msg.get("role") in ("user", "assistant"), conversation):
@@ -185,6 +253,13 @@ def get_conversation_text_messages(conversation: list[dict]) -> list[dict]:
             for item in content:
                 if item.get("type") == "text":
                     selected_content.append(item)
+                elif include_actions and item.get("type") == "tool_use":
+                    selected_content.append({"type": "text", "text": f"[Action: {item.get('name')}({json.dumps(item.get('input', {}))})]"})
+                elif include_actions and item.get("type") == "tool_result":
+                    res = item.get('content', '')
+                    if isinstance(res, str) and len(res) > 200:
+                        res = res[:200] + "..."
+                    selected_content.append({"type": "text", "text": f"[Result: {res}]"})
             if selected_content:
                 selected_messages.append({**msg, "content": selected_content})
     return selected_messages

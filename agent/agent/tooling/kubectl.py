@@ -30,7 +30,7 @@ async def kubectl_cluster_info(
     Get high-level Kubernetes cluster information including the control plane address and CoreDNS.
     Use this first to verify cluster connectivity before running other kubectl commands.
     """
-    return await _run_kubectl(["cluster-info"], env=env, cwd=cwd)
+    return await _run_kubectl(["cluster-info", "dump"], env=env, cwd=cwd)
 
 
 @tool(tags=["kubectl", "cluster"])
@@ -55,7 +55,7 @@ async def kubectl_top(
     resource_type: Annotated[Literal["nodes", "pods"], "The resource type to get the top for"],
     env: Hidden[Optional[dict[str, str]]] = None,
     sort_by: Annotated[Optional[str], "'cpu' or 'memory' to sort results"] = None,
-    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
+    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = APP_NAMESPACE,
 ) -> ToolResult:
     """
     Show CPU and memory usage for every node (requires metrics-server).
@@ -94,7 +94,6 @@ async def kubectl_get_namespaces(
 @tool(tags=["kubectl", "pods"])
 async def kubectl_get_pods(
     cwd: Hidden[str],
-    namespace: Annotated[Optional[str], "Namespace to query. Omit or pass null for all namespaces."] = None,
     label_selector: Annotated[Optional[str],
                               "Label selector filter, e.g. 'app=web' or 'tier in (frontend,backend)'"] = None,
     field_selector: Annotated[Optional[str],
@@ -102,6 +101,7 @@ async def kubectl_get_pods(
     sort_by: Annotated[Optional[str],
                        "JSONPath to sort by, e.g. '.status.startTime' or '.metadata.creationTimestamp'"] = None,
     env: Hidden[Optional[dict[str, str]]] = None,
+    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = APP_NAMESPACE,
 ) -> ToolResult:
     """
     List pods with status, restarts, age, node, and IP.
@@ -130,7 +130,7 @@ async def kubectl_get_pods(
 async def kubectl_get_pod_logs(
     cwd: Hidden[str],
     pod_name: Annotated[str, "Name of the pod"],
-    namespace: Annotated[str, "Namespace of the pod"],
+    namespace: Annotated[str, "Namespace of the pod"] = APP_NAMESPACE,
     container: Annotated[Optional[str], "Container name (required for multi-container pods)"] = None,
     tail_lines: Annotated[int, "Number of most recent log lines to return"] = 200,
     previous: Annotated[bool, "Get logs from the previous (crashed) container instance"] = False,
@@ -158,7 +158,7 @@ async def kubectl_get_pod_logs(
 async def kubectl_get_pod_containers(
     cwd: Hidden[str],
     pod_name: Annotated[str, "Name of the pod"],
-    namespace: Annotated[str, "Namespace of the pod"],
+    namespace: Annotated[str, "Namespace of the pod"] = APP_NAMESPACE,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
@@ -195,7 +195,7 @@ async def kubectl_get_pod_containers(
 async def kubectl_get_events(
     cwd: Hidden[str],
     env: Hidden[Optional[dict[str, str]]] = None,
-    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
+    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = APP_NAMESPACE,
     event_type: Annotated[Optional[str], "'Warning' or 'Normal' to filter event type"] = None,
     resource_name: Annotated[Optional[str], "Filter events for a specific resource, e.g. 'pod/my-pod'"] = None,
     sort_by_time: Annotated[bool, "Sort events by last timestamp (most recent last)"] = True,
@@ -229,7 +229,7 @@ async def kubectl_get_events(
 async def kubectl_get_deployments(
     cwd: Hidden[str],
     env: Hidden[Optional[dict[str, str]]] = None,
-    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
+    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = APP_NAMESPACE,
 ) -> ToolResult:
     """
     List deployments with desired/ready/up-to-date/available replica counts.
@@ -247,7 +247,7 @@ async def kubectl_get_deployments(
 async def kubectl_get_statefulsets(
     cwd: Hidden[str],
     env: Hidden[Optional[dict[str, str]]] = None,
-    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
+    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = APP_NAMESPACE,
 ) -> ToolResult:
     """
     List StatefulSets with ready/desired replica counts.
@@ -265,7 +265,7 @@ async def kubectl_get_statefulsets(
 async def kubectl_get_daemonsets(
     cwd: Hidden[str],
     env: Hidden[Optional[dict[str, str]]] = None,
-    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
+    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = APP_NAMESPACE,
 ) -> ToolResult:
     """
     List DaemonSets with desired/current/ready counts.
@@ -284,7 +284,7 @@ async def kubectl_get_daemonsets(
 async def kubectl_get_jobs(
     cwd: Hidden[str],
     env: Hidden[Optional[dict[str, str]]] = None,
-    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
+    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = APP_NAMESPACE,
     show_failed: Annotated[bool, "Only show failed jobs"] = False,
 ) -> ToolResult:
     """
@@ -314,7 +314,7 @@ async def kubectl_get_jobs(
 async def kubectl_rollout_status(
     cwd: Hidden[str],
     resource: Annotated[str, "Resource to check, e.g. 'deployment/my-app' or 'statefulset/my-db'"],
-    namespace: Annotated[str, "Namespace of the resource"],
+    namespace: Annotated[str, "Namespace of the resource"] = APP_NAMESPACE,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
@@ -447,7 +447,7 @@ async def kubectl_get_yaml(
     cwd: Hidden[str],
     resource_type: Annotated[str, "Resource type, e.g. 'pod', 'deployment', 'configmap', 'service'"],
     resource_name: Annotated[str, "Name of the resource"],
-    namespace: Annotated[Optional[str], "Namespace (omit for cluster-scoped resources)"] = None,
+    namespace: Annotated[Optional[str], "Namespace (omit for cluster-scoped resources)"] = APP_NAMESPACE,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
@@ -564,7 +564,7 @@ async def kubectl_api_resources(
 async def kubectl_get_resources(
     cwd: Hidden[str],
     resource_type: Annotated[K8sResourceTypes, "Any valid resource type, e.g. 'certificates', 'virtualservices', 'prometheusrules'"],
-    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
+    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = APP_NAMESPACE,
     label_selector: Annotated[Optional[str], "Label selector filter"] = None,
     field_selector: Annotated[Optional[str],
                               "Field selector filter, e.g. 'status.phase=Failed' or 'status.phase!=Running'"] = None,
@@ -600,7 +600,7 @@ async def kubectl_get_resource(
     cwd: Hidden[str],
     resource_type: Annotated[K8sResourceTypes, "Any valid resource type, e.g. 'certificates', 'virtualservices', 'prometheusrules'"],
     resource_name: Annotated[str, "Name of the resource"],
-    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = None,
+    namespace: Annotated[Optional[str], "Namespace to query. Omit for all namespaces."] = APP_NAMESPACE,
     label_selector: Annotated[Optional[str], "Label selector filter"] = None,
     field_selector: Annotated[Optional[str],
                               "Field selector filter, e.g. 'status.phase=Failed' or 'status.phase!=Running'"] = None,
@@ -637,7 +637,7 @@ async def kubectl_get_resource(
 
 KubectlReadTools = Tools(tools=[
     # Cluster & Nodes
-    kubectl_cluster_info,
+    # kubectl_cluster_info, - too big output
     kubectl_get_nodes,  # replaced by kubectl_get_resource
     # kubectl_top_nodes,
     # Namespaces
@@ -686,7 +686,7 @@ KubectlReadTools = Tools(tools=[
 async def kubectl_delete_pod(
     cwd: Hidden[str],
     pod_name: Annotated[str, "Name of the pod to delete"],
-    namespace: Annotated[str, "Namespace of the pod"],
+    namespace: Annotated[str, "Namespace of the pod"] = APP_NAMESPACE,
     grace_period: Annotated[Optional[int],
                             "Seconds to wait for graceful shutdown. 0 for immediate force-delete."] = None,
     env: Hidden[Optional[dict[str, str]]] = None,
@@ -706,8 +706,8 @@ async def kubectl_delete_pod(
 async def kubectl_exec(
     cwd: Hidden[str],
     pod_name: Annotated[str, "Name of the pod"],
-    namespace: Annotated[str, "Namespace of the pod"],
     command: Annotated[str, "Command to run inside the container, e.g. 'cat /etc/config/app.yaml'"],
+    namespace: Annotated[str, "Namespace of the pod"] = APP_NAMESPACE,
     container: Annotated[Optional[str], "Container name (required for multi-container pods)"] = None,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
@@ -739,7 +739,7 @@ async def kubectl_scale(
     cwd: Hidden[str],
     resource: Annotated[str, "Resource to scale, e.g. 'deployment/my-app' or 'statefulset/my-db'"],
     replicas: Annotated[int, "Desired number of replicas"],
-    namespace: Annotated[str, "Namespace of the resource"],
+    namespace: Annotated[str, "Namespace of the resource"] = APP_NAMESPACE,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
@@ -758,7 +758,7 @@ async def kubectl_scale(
 async def kubectl_rollout_restart(
     cwd: Hidden[str],
     resource: Annotated[str, "Resource to restart, e.g. 'deployment/my-app' or 'daemonset/my-agent'"],
-    namespace: Annotated[str, "Namespace of the resource"],
+    namespace: Annotated[str, "Namespace of the resource"] = APP_NAMESPACE,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
@@ -774,7 +774,7 @@ async def kubectl_rollout_restart(
 async def kubectl_rollout_undo(
     cwd: Hidden[str],
     resource: Annotated[str, "Resource to rollback, e.g. 'deployment/my-app'"],
-    namespace: Annotated[str, "Namespace of the resource"],
+    namespace: Annotated[str, "Namespace of the resource"] = APP_NAMESPACE,
     revision: Annotated[Optional[int],
                         "Specific revision to roll back to. Omit to rollback to the previous revision."] = None,
     env: Hidden[Optional[dict[str, str]]] = None,
@@ -794,7 +794,7 @@ async def kubectl_rollout_undo(
 async def kubectl_rollout_pause(
     cwd: Hidden[str],
     resource: Annotated[str, "Resource to pause, e.g. 'deployment/my-app'"],
-    namespace: Annotated[str, "Namespace of the resource"],
+    namespace: Annotated[str, "Namespace of the resource"] = APP_NAMESPACE,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
@@ -809,7 +809,7 @@ async def kubectl_rollout_pause(
 async def kubectl_rollout_resume(
     cwd: Hidden[str],
     resource: Annotated[str, "Resource to resume, e.g. 'deployment/my-app'"],
-    namespace: Annotated[str, "Namespace of the resource"],
+    namespace: Annotated[str, "Namespace of the resource"] = APP_NAMESPACE,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
@@ -829,7 +829,7 @@ async def kubectl_label(
     resource_type: Annotated[str, "Resource type, e.g. 'pod', 'node', 'namespace'"],
     resource_name: Annotated[str, "Name of the resource"],
     labels: Annotated[dict[str, str], "Labels to set, e.g. {'env': 'staging', 'team': 'platform'}. Use value '-' to remove a label."],
-    namespace: Annotated[Optional[str], "Namespace (omit for cluster-scoped resources)"] = None,
+    namespace: Annotated[Optional[str], "Namespace (omit for cluster-scoped resources)"] = APP_NAMESPACE,
     overwrite: Annotated[bool, "Allow overwriting existing labels"] = True,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
@@ -852,7 +852,7 @@ async def kubectl_annotate(
     resource_type: Annotated[str, "Resource type, e.g. 'pod', 'deployment', 'service'"],
     resource_name: Annotated[str, "Name of the resource"],
     annotations: Annotated[dict[str, str], "Annotations to set. Use value '-' to remove an annotation."],
-    namespace: Annotated[Optional[str], "Namespace (omit for cluster-scoped resources)"] = None,
+    namespace: Annotated[Optional[str], "Namespace (omit for cluster-scoped resources)"] = APP_NAMESPACE,
     overwrite: Annotated[bool, "Allow overwriting existing annotations"] = True,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
@@ -934,7 +934,7 @@ async def kubectl_drain(
 async def kubectl_apply(
     cwd: Hidden[str],
     manifest_yaml: Annotated[str, "YAML manifest content to apply"],
-    namespace: Annotated[Optional[str], "Namespace (overrides namespace in the manifest if set)"] = None,
+    namespace: Annotated[Optional[str], "Namespace (overrides namespace in the manifest if set)"] = APP_NAMESPACE,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
@@ -969,7 +969,7 @@ async def kubectl_patch(
     resource_type: Annotated[str, "Resource type, e.g. 'deployment', 'service', 'configmap'"],
     resource_name: Annotated[str, "Name of the resource"],
     patch: Annotated[str, "JSON patch content, e.g. '{\"spec\":{\"replicas\":3}}'"],
-    namespace: Annotated[str, "Namespace of the resource"],
+    namespace: Annotated[str, "Namespace of the resource"] = APP_NAMESPACE,
     patch_type: Annotated[str, "Patch strategy: 'strategic', 'merge', or 'json'"] = "strategic",
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
@@ -992,7 +992,7 @@ async def kubectl_delete_resource(
     cwd: Hidden[str],
     resource_type: Annotated[str, "Resource type, e.g. 'deployment', 'service', 'job', 'configmap'"],
     resource_name: Annotated[str, "Name of the resource to delete"],
-    namespace: Annotated[str, "Namespace of the resource"],
+    namespace: Annotated[str, "Namespace of the resource"] = APP_NAMESPACE,
     grace_period: Annotated[Optional[int], "Seconds for graceful shutdown. 0 for immediate."] = None,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
@@ -1031,7 +1031,7 @@ async def kubectl_create_namespace(
 async def kubectl_create_configmap(
     cwd: Hidden[str],
     name: Annotated[str, "Name of the ConfigMap"],
-    namespace: Annotated[str, "Namespace to create the ConfigMap in"],
+    namespace: Annotated[str, "Namespace to create the ConfigMap in"] = APP_NAMESPACE,
     from_literal: Annotated[Optional[dict[str, str]], "Key-value pairs for the ConfigMap data"] = None,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
@@ -1050,8 +1050,8 @@ async def kubectl_create_configmap(
 async def kubectl_create_secret(
     cwd: Hidden[str],
     name: Annotated[str, "Name of the Secret"],
-    namespace: Annotated[str, "Namespace to create the Secret in"],
     from_literal: Annotated[dict[str, str], "Key-value pairs for the Secret data"],
+    namespace: Annotated[str, "Namespace to create the Secret in"] = APP_NAMESPACE,
     secret_type: Annotated[str, "Secret type, e.g. 'generic', 'docker-registry', 'tls'"] = "generic",
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
@@ -1074,7 +1074,7 @@ async def kubectl_port_forward(
     cwd: Hidden[str],
     resource: Annotated[str, "Resource to forward to, e.g. 'pod/my-pod', 'svc/my-service', 'deploy/my-app'"],
     ports: Annotated[str, "Port mapping, e.g. '8080:80' (local:remote) or '8080' (same port)"],
-    namespace: Annotated[str, "Namespace of the resource"],
+    namespace: Annotated[str, "Namespace of the resource"] = APP_NAMESPACE,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
