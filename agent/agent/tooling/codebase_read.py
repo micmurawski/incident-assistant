@@ -3,11 +3,11 @@ from functools import wraps
 from typing import Annotated, Optional, TypedDict
 
 from agent.code_index.code_index_search_service import CodeIndexSearchService
-from agent.code_index.models import VectorStoreSearchResult
 from agent.file_ops import (FileOpsError, FileOpsManager, FileOpsResult,
                             PathNotAllowedError)
 from agent.telemetry_service import get_telemetry_service
 from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
+from agent.vector_store.models import VectorStoreSearchResult
 
 logging = get_telemetry_service()
 

@@ -138,7 +138,13 @@ class FileOpsManager:
         if not is_file:
             raise PathIsNotFileError(f"The path {path} is not file.")
 
-        lines = open(full_path).read().splitlines(keepends=True)
+        try:
+            lines = open(full_path).read().splitlines(keepends=True)
+        except UnicodeDecodeError as e:
+            return FileOpsResult(
+                path=path,
+                error=e
+            )
         start_line = start_line or 1
         end_line = end_line or len(lines)
         start = max(start_line - 1, 0)

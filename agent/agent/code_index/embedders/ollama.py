@@ -5,9 +5,9 @@ from typing import Any, Coroutine
 
 import aiohttp
 
-from agent.code_index.models import (EmbedderInfo, EmbedderResponse, IEmbedder,
-                                     Usage)
 from agent.constants import MAX_ITEM_TOKENS, OLLAMA_EMBEDDING_TIMEOUT
+from agent.vector_store.models import (EmbedderInfo, EmbedderResponse,
+                                       IEmbedder, Usage)
 
 from .models import get_model_dimension, get_model_query_prefix
 
@@ -67,10 +67,10 @@ class OllamaEmbedder(IEmbedder):
                                     "errorBody": error_body,
                                 },
                             )
-                        data = await response.json()
+                        data: dict[str, Any] = await response.json()
                 except asyncio.TimeoutError:
                     raise Exception("embeddings:ollama.requestTimeout")
-            embeddings = data.get("embeddings")
+            embeddings: list[list[float]] = data.get("embeddings")
             if not embeddings or not isinstance(embeddings, list):
                 raise Exception("embeddings:ollama.invalidResponse")
 

@@ -171,7 +171,7 @@ class ChunkProxyIterator[T]:
                     "name": tu["name"],
                     "input": tu["input"],
                 })
-        
+
         if content_blocks:
             # If there's only one block and it's text, return it as simple string (standard)
             # unless reasoning is included, which always requires array format.
@@ -344,9 +344,9 @@ class LLMAgent(ABC):
         async for _ in it:
             pass
 
-
         if task:
             task.messages_history.extend(it.get_response(include_reasoning=True))
+            task.tool_usage.extend(it.tool_use)
             if it.usage_summary:
                 for k, v in it.usage_summary.items():
                     task.usage[k] = task.usage.get(k, 0) + v
@@ -425,8 +425,18 @@ class LLMAgent(ABC):
                     forced_next="default",
                     log_label="final",
                 )
-
-            if task.iterations_count == task.iterations_limit - 1:
+            if task.iterations_count == task.iterations_limit - 3:
+                messages = messages + [
+                    {
+                        "role": "user",
+                        "content": (
+                            "WARNING: You are approaching the iteration limit for this task. "
+                            f"You have {task.iterations_limit - task.iterations_count} turns left before the limit is reached. "
+                            "Use your tools wisely."
+                        ),
+                    }
+                ]
+            elif task.iterations_count == task.iterations_limit - 1:
                 messages = messages + [
                     {
                         "role": "user",

@@ -35,6 +35,9 @@ DEFAULT_SETTINGS = {
     "workspace": {
         "path": os.getcwd(),
     },
+    "features": {
+        "include_assigner_history": False,
+    }
 }
 
 

@@ -21,7 +21,7 @@
 \RequirePackage[tableposition=top]{caption}
 \RequirePackage{listings}
 \RequirePackage{multirow}
-\RequirePackage[ruled, vlined]{algorithm2e}%algorytmy
+\RequirePackage[linesnumbered,ruled,vlined]{algorithm2e}%algorytmy
 \RequirePackage{tikz}
 \RequirePackage{amssymb}
 \RequirePackage{indentfirst}
@@ -34,13 +34,18 @@
 \usepackage{breakurl}
 \usepackage{epigraph}
 \usepackage{makecell}
-\usepackage{xcolor}
-
+%\usetikzlibrary{arrows.meta, positioning, shapes.geometric}
+%\usetikzlibrary{positioning, fit, backgrounds, arrows.meta}
 \definecolor{Gray}{gray}{0.68}
 \definecolor{LightGray}{gray}{0.93}
 \definecolor{LightGreen}{RGB}{149,222,149}
 \definecolor{LightRed}{RGB}{222,149,149}
-
+%\pgfkeys{%
+%  /tikz/on layer/.code={
+%    \pgfmainlayersheet
+%    \pgfsetlayer{#1}%
+%  }
+%}
 \pagestyle{headings}
 \parindent=1cm
 \linespread{1.5}

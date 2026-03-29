@@ -2,7 +2,8 @@
 import os
 
 from agent.llm import AgentRegistry, ChunkProxyIterator, LLMAgent
-from agent.tasks.tasks import Task
+from agent.settings import SettingsManager
+from agent.tasks.tasks import Task, get_conversation_text_messages
 from agent.tasks.types import TaskStatus
 from agent.tooling.decorators import ToolResult, Tools
 
@@ -13,7 +14,8 @@ You need to feedback completion of the task, verify if all tasks objectives are 
 The task was the following:
 {task_description}
 
-user will report back with the result of the task.
+user will report back with the result of the task. 
+If you are approving the task, do not provide any feedback. Only approve the task.
 """
 
 TODO_LIST_PROMPT = """
@@ -37,6 +39,7 @@ class TaskExecutor:
         feedback_tools: Tools | None = None,
         depth: int = 0,
     ) -> ToolResult:
+        feedback_enabled = True or SettingsManager.get_instance().get("features.feedback_enabled", False)
         if depth >= MAX_TASK_DEPTH:
             raise Exception("Task depth limit reached. You cannot assign tasks to anymore.")
 
@@ -66,50 +69,32 @@ class TaskExecutor:
 
         shared = {"task": current_task, "messages": current_task.conversation, "depth": depth + 1}
 
+        if not feedback_enabled:
+            await assignee_agent.call(shared=shared)
+            current_task.conversation.append(shared["messages"][-1])
+            current_task.status = TaskStatus.DONE
+            current_task.save()
+            return ToolResult(result=current_task.conversation[-1]["content"], error=None)
+
         for _ in range(current_task.consecutive_mistakes_limit):
             await assignee_agent.call(shared=shared)
-            # print("THIS IS RESULT CONVO")
-            # print(json.dumps(shared["messages"], indent=4))
             current_task.status = TaskStatus.AWAITING_FEEDBACK
-            current_task.conversation = shared["messages"]
-
-            # Sync tool usage from conversation
-            current_task.tool_usage = []
-            tool_calls = {}
-            for msg in current_task.conversation:
-                role = msg.get("role")
-                content = msg.get("content")
-                if not isinstance(content, list):
-                    continue
-                if role == "assistant":
-                    for block in content:
-                        if block.get("type") == "tool_use":
-                            tool_calls[block["id"]] = block
-                elif role == "user":
-                    for block in content:
-                        if block.get("type") == "tool_result":
-                            tid = block.get("tool_use_id")
-                            if tid in tool_calls:
-                                call = tool_calls[tid]
-                                res = block.get("content", "")
-                                current_task.tool_usage.append({
-                                    "name": call["name"],
-                                    "input": call["input"],
-                                    "is_success": not block.get("is_error", False),
-                                    "result_summary": str(res)[:200] if res else ""
-                                })
+            current_task.conversation.append(shared["messages"][-1])  # only conversation without tool_use, reasoning
 
             feedback_tools_definitions = feedback_tools.tools_definitions(
                 format=assignee_agent.api_handler.provider,
                 format_kwargs=assignee_agent.get_shared()
             )
 
-            # How to elegantly add conversation trajectory fron assingner to feedback agent?
-            # print("THIS IS CONVO")
-            # print(current_task.get_conversation_with_swapped_roles())
-            
-            messages = current_task.get_conversation_with_swapped_roles(include_actions=True)
-            feedback_messages = messages[1:] if len(messages) > 1 else []
+            messages = current_task.get_conversation_with_swapped_roles()
+
+            history = get_conversation_text_messages(
+                parent_task.messages_history,
+                include_actions=True,
+                include_reasoning=True,
+            )
+            feedback_messages = history + messages[1:]
+
             if not feedback_messages:
                 feedback_messages = [
                     {
@@ -157,7 +142,12 @@ class TaskExecutor:
             else:
                 current_task.consecutive_mistakes_count += 1
                 current_task.status = TaskStatus.AWAITING_INPUT
-                shared["messages"].append({"role": "user", "content": feedback_tool_use["input"].get("feedback")})
+                shared["messages"].append(
+                    {
+                        "role": "user",
+                        "content": feedback_tool_use["input"].get("feedback")
+                    }
+                )
                 current_task.save()
 
         return ToolResult(result=None, error="Assigned task execution exhausted all completion attempts. Please try again with a different approach.")

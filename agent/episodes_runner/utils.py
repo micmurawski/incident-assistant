@@ -1,6 +1,12 @@
+import json
 import time
 
 from agent.tasks.tasks import Task
+from agent.tooling.codebase_write import CodebaseWriteTools
+from agent.tooling.deploy import deploy_app
+
+WRITE_TOOLS = [f.name for f in CodebaseWriteTools.tools]
+DEPLOY_TOOLS = [deploy_app.name]
 
 
 def collect_tasks(t: Task) -> list[Task]:
@@ -19,22 +25,21 @@ def collect_meaningful_actions(goal: Task) -> tuple[list[str], set[str], bool]:
     for t in all_tasks:
         for tu in t.tool_usage:
             name = tu.get("name")
-            if name == "deploy_app":
+            if name in DEPLOY_TOOLS:
                 deploy_app_called = True
                 meaningful_actions.append("- Action: `deploy_app` was executed.")
-            elif name in ("write_file", "replace", "apply_diff", "patch_file"):
+            elif name in WRITE_TOOLS:
                 # Try to extract file path from various possible input schemas
                 inp: dict = tu.get("input", {})
                 path = (
-                    inp.get("path")
-                    or inp.get("filename")
-                    or inp.get("file_path")
+                    inp.pop("path", None)
+                    or inp.pop("filename", None)
+                    or inp.pop("file_path", None)
                 )
                 if path:
                     modified_files.add(path)
-                    meaningful_actions.append(f"- Action: `{name}` modified `{path}`")
+                    meaningful_actions.append(f"- Action: `{name}` modified \n `{json.dumps(inp, indent=4)}`")
     return meaningful_actions, modified_files, deploy_app_called
-
 
 
 def live_timer(seconds: int | float):

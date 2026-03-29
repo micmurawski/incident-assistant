@@ -27,7 +27,7 @@ class Task:
     assigner: str | None = None
 
     conversation: list[ApiMessage] = field(default_factory=list)
-    
+
     messages_history: list[ApiMessage] = field(default_factory=list)
 
     iterations_count: int = field(default=0)
@@ -118,7 +118,7 @@ class Task:
         self.children.append(child_task)
         return child_task
 
-    def attempt_complete(self, raise_if_not_done: bool = True) -> bool:
+    def attempt_complete(self, force: bool = False) -> bool:
         not_discarded_children = [
             task for task in self.children if not task.status == TaskStatus.DISCARDED
         ]
@@ -126,9 +126,12 @@ class Task:
             self.status = TaskStatus.DONE
             self.resolved_at = datetime.now()
             return True
-        if raise_if_not_done:
+        if not force:
             raise ValueError("Task is not done. It still has dependencies that are not done.")
-        return False
+        else:  # force is True
+            self.status = TaskStatus.DONE
+            self.resolved_at = datetime.now()
+            return True
 
     def add_feedback(self, feedback: str):
         if self.status != TaskStatus.AWAITING_FEEDBACK:
@@ -181,7 +184,7 @@ class Task:
             queue.extend((child, level + 1) for child in task.children)
 
         return deepest
-    
+
     def save(self, key: tuple[str, str] | None = None):
         conv = json.dumps(self.conversation)
         messages_history = json.dumps(self.messages_history)
@@ -241,7 +244,7 @@ def swap_roles_in_conversation(conversation: list[dict]) -> list[dict]:
     return swapped
 
 
-def get_conversation_text_messages(conversation: list[dict], include_actions: bool = False) -> list[dict]:
+def get_conversation_text_messages(conversation: list[dict], include_actions: bool = False, include_reasoning: bool = False) -> list[dict]:
     """Return a text-only view of user/assistant messages for feedback. Does not mutate input."""
     selected_messages = []
     for msg in filter(lambda msg: msg.get("role") in ("user", "assistant"), conversation):
@@ -253,8 +256,11 @@ def get_conversation_text_messages(conversation: list[dict], include_actions: bo
             for item in content:
                 if item.get("type") == "text":
                     selected_content.append(item)
+                elif include_reasoning and item.get("type") == "reasoning":
+                    selected_content.append(item)
                 elif include_actions and item.get("type") == "tool_use":
-                    selected_content.append({"type": "text", "text": f"[Action: {item.get('name')}({json.dumps(item.get('input', {}))})]"})
+                    selected_content.append(
+                        {"type": "text", "text": f"[Action: {item.get('name')}({json.dumps(item.get('input', {}))})]"})
                 elif include_actions and item.get("type") == "tool_result":
                     res = item.get('content', '')
                     if isinstance(res, str) and len(res) > 200:

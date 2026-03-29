@@ -15,6 +15,7 @@ from agent.grafana_client.report import (build_status_report_dict,
 from agent.tooling._utils import run_cli_command
 from agent.tooling.decorators import ToolResult
 from agent.tooling.metrics import APPS, NAMESPACE
+from episodes_runner.utils import live_timer
 
 # Resolve repo root (parent of agent/)
 CUR_DIR = Path(__file__).resolve().parent
@@ -114,7 +115,7 @@ async def deploy_and_wait(
             print(f"[6] Deploy failed: {result.error}")
             raise Exception(f"[6] Deploy failed: {result.error}")
         print(f"[6] Deploy completed; waiting {wait_seconds}s for symptoms...")
-        # live_timer(wait_seconds)
+        live_timer(wait_seconds)
     except Exception as e:
         print(f"[6] Deploy failed: {e}")
         raise e
@@ -222,7 +223,7 @@ async def run_episode(
     await apply_fault(workspace_dir, fault_dir)
 
     # 6. Deploy and wait
-    # await deploy_and_wait(workspace_dir, wait_seconds)
+    await deploy_and_wait(workspace_dir, wait_seconds)
 
     # 7. Metrics after
     out["metrics_after"] = await get_metrics_summary()

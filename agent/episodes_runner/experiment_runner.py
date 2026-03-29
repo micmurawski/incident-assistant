@@ -28,8 +28,13 @@ Your evaluation must be grounded in evidence. If the agent claims to have fixed 
 Criteria:
 - root_cause_analysis: 1 if the agent correctly identified the specific failure (e.g., the exact bug in a file or the misconfigured parameter), 0 otherwise.
 - successful_fix: 1 if the agent applied a correct fix AND triggered a deployment (deploy_app), 0 otherwise.
+    - assess files changes, if correct file was modified in correct place it needs to be correct fix, but not exactly the same code as before the incident, if not it needs to be 0.
+    - assess deployment, if deployment was triggered and it was successful, 0 otherwise.
 - system_recovery_visible: 1 if the metrics report clearly shows the system returned to a healthy state, 0 otherwise.
-
+    - if 5XX are visible in metrics put it as 0.
+    - assess all metrics, if CPU, memory usage or any other metric is lower than before the incident, 0 otherwise.
+    
+    
 Return your final assessment in the requested JSON format.
 """
 
@@ -82,7 +87,7 @@ async def run_experiment():
             return
 
         # Wait for recovery
-        live_timer(5)
+        live_timer(4*60)
         metrics_after_fixing = await get_metrics_summary()
         diff = detect_differences(episode["metrics_after"], metrics_after_fixing)
         focused_metrics_report = format_diff_status_report(diff, "recovery attempt")
@@ -134,9 +139,14 @@ async def run_experiment():
         await judge_agent.call(shared_judge)
 
         # Final save
-        goal.conversation = shared_judge["messages"]
+        goal.conversation.append(shared_judge["messages"][-1])
         # print final judgement
         print(f"Final judgement: {goal.conversation[-1]['content']}")
+        total_usage = goal.get_total_usage()
+        print("Total usage:")
+        print(total_usage)
+        goal.usage = total_usage
+        goal.attempt_complete(force=True)
         goal.save()
 
 
