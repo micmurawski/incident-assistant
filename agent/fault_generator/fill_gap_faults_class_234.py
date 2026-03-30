@@ -22,16 +22,13 @@ from pathlib import Path
 
 from openinference.instrumentation import using_attributes
 from opentelemetry import trace
-from agent.tooling import CodebaseReadTools, CodebaseWriteTools
-from framework.decorators import node
 
-from fault_generator.fault_vault_gaps import (
-    default_vault_dir,
-    format_gap_report,
-    gaps_class_234,
-    retry_excluded_fault_vault_dirnames,
-)
+from agent.tooling import CodebaseReadTools, CodebaseWriteTools
 from fault_generator import git_workflow as gw
+from fault_generator.fault_vault_gaps import (
+    default_vault_dir, format_gap_report, gaps_class_234,
+    retry_excluded_fault_vault_dirnames)
+from framework.decorators import node
 
 
 @node

@@ -1,5 +1,6 @@
-from agent.persistence.task_queries import fetch_last_root_tasks, Task
 import yaml
+
+from agent.persistence.task_queries import Task, fetch_last_root_tasks
 
 
 def merge_tool_uses(messages: list[dict]) -> list[dict]:

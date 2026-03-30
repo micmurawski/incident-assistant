@@ -1,8 +1,9 @@
 from typing import Annotated
 
-from agent.tooling.decorators import Hidden, ToolResult, tool, Tools
+from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
 
-from .playbook_core import BulletTag, Operation, Playbook, PlaybookOperationError
+from .playbook_core import (BulletTag, Operation, Playbook,
+                            PlaybookOperationError)
 
 
 @tool(tags=["ace", "curator"])

@@ -1,9 +1,11 @@
-from agent.llm import LLMAgent
-from ace.tools import ReflectorTools, CuratorTools
-from ace.prompts import REFLECTOR_SYSTEM_PROMPT_TEMPLATE, CURATOR_SYSTEM_PROMPT_TEMPLATE
-from agent.tasks.tasks import Task
-from ace.utils import create_details_for_reflector
 import yaml
+
+from ace.prompts import (CURATOR_SYSTEM_PROMPT_TEMPLATE,
+                         REFLECTOR_SYSTEM_PROMPT_TEMPLATE)
+from ace.tools import CuratorTools, ReflectorTools
+from ace.utils import create_details_for_reflector
+from agent.llm import LLMAgent
+from agent.tasks.tasks import Task
 
 
 def create_reflector_agent(agent_name: str, task: Task) -> LLMAgent:

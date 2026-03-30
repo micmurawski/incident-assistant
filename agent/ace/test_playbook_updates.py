@@ -2,12 +2,8 @@
 
 import unittest
 
-from ace import (
-    Playbook,
-    PlaybookOperationError,
-    PlaybookSection,
-    PlaybookSectionBullet,
-)
+from ace import (Playbook, PlaybookOperationError, PlaybookSection,
+                 PlaybookSectionBullet)
 
 
 def _sample_playbook() -> Playbook:

@@ -24,16 +24,13 @@ from pathlib import Path
 from openinference.instrumentation import using_attributes
 from opentelemetry import trace
 
-from fault_generator.fault_vault_gaps import default_vault_dir, format_gap_report, gaps_class_1
-from fault_generator.saboteur_chaos_class_1 import (
-    CHAOS_TEMPLATES,
-    NAMESPACE,
-    PROMPT_TEMPLATE,
-    REPO_ROOT,
-    WORKTREES_DIR,
-    LOAD_GEN_SCRIPT,
-    create_agent,
-)
+from fault_generator.fault_vault_gaps import (default_vault_dir,
+                                              format_gap_report, gaps_class_1)
+from fault_generator.saboteur_chaos_class_1 import (CHAOS_TEMPLATES,
+                                                    LOAD_GEN_SCRIPT, NAMESPACE,
+                                                    PROMPT_TEMPLATE, REPO_ROOT,
+                                                    WORKTREES_DIR,
+                                                    create_agent)
 
 
 def _load_gen_excerpt() -> str:
