@@ -472,6 +472,7 @@ class Tools(AsyncNode):
 
     async def exec(self, prep_res: dict) -> dict:
         messages: list[AnthropicMessage] = prep_res.get("messages", [])
+        _messages_len_before_tools = len(messages)
         tools_to_call: list[AnthropicMessage] = select_tools_use(messages)
 
         tool_to_call: AnthropicMessage
@@ -514,10 +515,13 @@ class Tools(AsyncNode):
                         tool_result = await tool_result
                 except TypeError as e:
                     # Convert runtime signature mismatch to tool error for LLM feedback loops.
+                    print(f"Invalid tool input for {tool.name}: {e}")
                     tool_result = ToolResult(
                         result=None,
                         error=f"Invalid tool input for {tool.name}: {e}",
                     )
+            if tool_result.error:
+                print(f"Tool result error: {tool_result.error}")
 
             if self.debug_mode:
                 print(f"\033[95mResult of: {tool.name}({', '.join(f'{k}={v}' for k, v in llm_input.items())})=\033[0m")
@@ -539,6 +543,9 @@ class Tools(AsyncNode):
                     ]
                 )
             )
+        task = prep_res.get("task")
+        if task is not None and len(messages) > _messages_len_before_tools:
+            task.messages_history.extend(messages[_messages_len_before_tools:])
         return {"messages": messages}
 
     def __or__(self, other: "Tools | BaseTool") -> "Tools":
