@@ -12,8 +12,40 @@ class EmbedderInfo:
     vector_size: int
 
 
+class AbstractPayload(ABC):
+    
+    @property
+    @abstractmethod
+    def payload_type(self) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AbstractPayload":
+        raise NotImplementedError
+
+    @abstractmethod
+    def to_dict(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+
+class MemoPayload(AbstractPayload):
+    id: str
+    value: Any
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MemoPayload":
+        return cls(id=data["id"], value=data["value"])
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"id": self.id, "value": self.value}
+
+
 @dataclass
-class Payload:
+class CodebasePayload(AbstractPayload):
+    @property
+    def payload_type(self) -> str:
+        return "codebase"
+
     file_path: str
     code_chunk: str
     start_line: int
@@ -22,7 +54,7 @@ class Payload:
     type: str
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Payload":
+    def from_dict(cls, data: dict[str, Any]) -> "CodebasePayload":
         return cls(
             file_path=data["file_path"],
             code_chunk=data["code_chunk"],
@@ -47,17 +79,30 @@ class Payload:
 class PointStruct:
     id: str
     vector: list[float]
-    payload: Payload
+    payload: AbstractPayload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PointStruct":
-        return cls(id=data["id"], vector=data["vector"], payload=Payload.from_dict(data["payload"]))
+        # Detect which payload subclass to use from the dict keys
+        payload_data = data["payload"]
+        if "file_path" in payload_data and "code_chunk" in payload_data:
+            payload = CodebasePayload.from_dict(payload_data)
+        elif "id" in payload_data and "value" in payload_data:
+            payload = MemoPayload.from_dict(payload_data)
+        else:
+            # fallback, could raise an exception or use AbstractPayload
+            payload = AbstractPayload()
+        return cls(id=data["id"], vector=data["vector"], payload=payload)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "vector": self.vector, "payload": self.payload.to_dict()}
+        return {
+            "id": self.id,
+            "vector": self.vector,
+            "payload": self.payload.to_dict(),
+        }
 
 
-@dataclass
+@dataclass(frozen=True)
 class VectorStoreSearchResult:
     id: str
     score: float
@@ -87,6 +132,10 @@ class IVectorStoreClient(ABC):
 
     @abstractmethod
     async def upsert_points(self, points: list[PointStruct], collection_name: str | None = None) -> Coroutine[Any, Any, None]:
+        pass
+
+    @abstractmethod
+    async def retrieve(self, ids: list[str], collection_name: str | None = None) -> list[VectorStoreSearchResult]:
         pass
 
     @abstractmethod

@@ -9,7 +9,7 @@ import uuid
 from logging import getLogger
 from typing import Any, Dict, Optional
 
-from opentelemetry.context import attach
+from opentelemetry.context import attach, detach
 from opentelemetry.trace import StatusCode, set_span_in_context
 from phoenix.otel import register
 
@@ -17,7 +17,7 @@ logger = getLogger(__name__)
 
 
 def _serialize_shared(data: Any, depth: int = 0) -> Any:
-    if depth > 6:
+    if depth > 10:
         return "<...>"
     if data is None or isinstance(data, (str, int, float, bool)):
         return data
@@ -97,6 +97,9 @@ class GraphTracer:
         else:
             self._root_span.set_status(StatusCode.OK)
         self._root_span.end()
+        if self._root_token is not None:
+            detach(self._root_token)
+            self._root_token = None
 
     def start_node_span(self, node_name: str) -> Optional[str]:
         if not self._tracer or not self._root_span:
@@ -144,3 +147,4 @@ class GraphTracer:
             self._provider.force_flush()
         except Exception as e:
             logger.error(f"[GraphTracer] flush failed: {e}")
+

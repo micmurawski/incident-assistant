@@ -11,7 +11,8 @@ import openai
 
 from agent.constants import (INITIAL_RETRY_DELAY_MS, MAX_BATCH_RETRIES,
                              MAX_ITEM_TOKENS)
-from agent.models import EmbedderInfo, EmbedderResponse, IEmbedder, Usage
+from agent.vector_store.models import (EmbedderInfo, EmbedderResponse,
+                                       IEmbedder, Usage)
 
 from .models import get_model_query_prefix
 

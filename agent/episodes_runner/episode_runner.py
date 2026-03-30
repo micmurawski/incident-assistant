@@ -1,52 +1,35 @@
-#!/usr/bin/env python3
-"""
-Episode runner: executes a single fault-injection episode end-to-end.
-
-Steps:
-  1. Create workspace: copy service code from robot-shop to workspace.
-  2. Remove .git from workspace (agents must not see git history).
-  3. Select a random fault from the fault-vault.
-  4. Get metrics summary before fault.
-  5. Apply fault to the workspace (git apply patch).
-  6. Deploy service and wait for problems to appear (default 3 min).
-  7. Get metrics summary after fault.
-  8. Use INCIDENT.md to announce the incident to the team.
-  9. Create prompt with metrics (before/after) and incident for the agent to fix the fault.
-
-Usage:
-  python -m agent.episode_runner [--workspace-dir DIR] [--wait-minutes N] [--no-deploy] [--no-metrics]
-"""
-
 import asyncio
+import json
 import os
 import random
 import shutil
 import subprocess
 import sys
-import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
+from agent.grafana_client.client import GrafanaClient
+from agent.grafana_client.report import (build_status_report_dict,
+                                         detect_differences,
+                                         format_diff_status_report)
+from agent.tooling._utils import run_cli_command
+from agent.tooling.decorators import ToolResult
+from agent.tooling.metrics import APPS, NAMESPACE
+from episodes_runner.utils import live_timer
+
 # Resolve repo root (parent of agent/)
-AGENT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = AGENT_DIR.parent
+CUR_DIR = Path(__file__).resolve().parent
 
 # Default paths (override with env or CLI)
-DEFAULT_SOURCE = REPO_ROOT / "services" / "robot-shop"
-DEFAULT_WORKSPACE = REPO_ROOT / "workspace"
-FAULT_VAULT_DIR = AGENT_DIR / "fault_generator" / "fault-vault"
-
-# Robot Shop app labels (for metrics)
-ROBOT_SHOP_APPS = [
-    "cart", "catalogue", "user", "payment", "shipping",
-    "ratings", "dispatch", "web",
-]
-ROBOT_SHOP_NAMESPACE = "robot-shop"
+DEFAULT_SOURCE = Path("/Users/micmur/GITHUB/o8s/services/robot-shop")
+DEFAULT_WORKSPACE = Path("/Users/micmur/GITHUB/o8s/workspace")
+FAULT_VAULT_DIR = Path("/Users/micmur/GITHUB/o8s/agent/fault_generator/fault-vault")
 
 # Wait after deploy for symptoms to appear (seconds)
 DEFAULT_WAIT_SECONDS = 180
 
 
-def step1_create_workspace(source_dir: Path, workspace_dir: Path) -> None:
+def create_workspace(source_dir: Path, workspace_dir: Path) -> None:
     """Copy source to workspace. Overwrites existing workspace."""
     if workspace_dir.exists():
         shutil.rmtree(workspace_dir)
@@ -57,11 +40,10 @@ def step1_create_workspace(source_dir: Path, workspace_dir: Path) -> None:
     print(f"[1] Created workspace at {workspace_dir}")
 
 
-def step2_select_fault(fault_vault_dir: Path) -> Path | None:
+def select_fault(fault_vault_dir: Path) -> Path:
     """Select a random fault from fault-vault (directory containing git.patch + INCIDENT.md)."""
     if not fault_vault_dir.exists():
-        print(f"[2] Fault-vault not found: {fault_vault_dir}")
-        return None
+        raise Exception(f"[2] Fault-vault not found: {fault_vault_dir}")
     candidates = []
     for d in fault_vault_dir.iterdir():
         if not d.is_dir():
@@ -69,136 +51,142 @@ def step2_select_fault(fault_vault_dir: Path) -> Path | None:
         if (d / "git.patch").exists() and (d / "INCIDENT.md").exists():
             candidates.append(d)
     if not candidates:
-        print("[2] No fault scenarios found in fault-vault (need git.patch + INCIDENT.md)")
-        return None
+        raise Exception("[2] No fault scenarios found in fault-vault (need git.patch + INCIDENT.md)")
     chosen = random.choice(candidates)
     print(f"[2] Selected fault: {chosen.name}")
     return chosen
 
 
-def get_metrics_summary(window: str = "15m") -> str:
+async def get_metrics_summary(window: str = "5m") -> dict:
     """Get metrics report from Grafana if configured; otherwise return placeholder."""
     url = os.environ.get("GRAFANA_URL")
     api_key = os.environ.get("GRAFANA_API_KEY")
     if not url or not api_key:
-        return "# Metrics (Grafana not configured)\nSet GRAFANA_URL and GRAFANA_API_KEY to fetch real metrics.\n"
-    try:
-        from agent.grafana_client.client import GrafanaClient
-        from agent.grafana_client.report import build_status_report
-
-        async def _run() -> str:
-            client = GrafanaClient(url=url, api_key=api_key)
-            try:
-                return await build_status_report(
-                    client,
-                    namespace=ROBOT_SHOP_NAMESPACE,
-                    apps=ROBOT_SHOP_APPS,
-                    window=window,
-                )
-            finally:
-                await client.aclose()
-
-        return asyncio.run(_run())
-    except Exception as e:
-        return f"# Metrics (error)\nGrafana request failed: {e}\n"
+        raise ValueError("GRAFANA_URL and GRAFANA_API_KEY must be set")
+    return await build_status_report_dict(
+        client=GrafanaClient(url=url, api_key=api_key),
+        namespace=NAMESPACE,
+        apps=APPS,
+        window=window,
+    )
 
 
-def step3_apply_fault(workspace_dir: Path, fault_dir: Path) -> bool:
+async def apply_fault(workspace_dir: Path, fault_dir: Path) -> None:
     """Apply git.patch in workspace. Returns True on success."""
     patch_file = fault_dir / "git.patch"
     if not patch_file.exists():
-        print("[3] No git.patch in fault directory")
-        return False
+        raise Exception(f"[3] No git.patch in fault directory: {fault_dir}")
+    print("workspace_dir:", workspace_dir)
+    print("patch_file:", patch_file)
+
     try:
-        cmd = ["patch", "-p1", "<", str(patch_file)]
-        print("running:", " ".join(cmd))
-        result = subprocess.run(
-            ["patch", "-p1", "<", str(patch_file)],
-            cwd=workspace_dir,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            print(f"[3] git apply failed: {result.stderr or result.stdout}")
-            return False
-        print(f"[3] Applied patch from {fault_dir.name}")
-        return True
+        cmd = ["patch", "-p1"]
+        with patch_file.open("rb") as stdin:
+            print("stdin:", stdin)
+            result = subprocess.run(cmd, cwd=workspace_dir, stdin=stdin, check=True)
+            if result.returncode != 0:
+                raise Exception(f"[3] git apply failed: {result.stderr or result.stdout}")
+            print(f"[3] Applied patch from {fault_dir.name}")
     except Exception as e:
-        print(f"[3] Error applying patch: {e}")
-        return False
+        raise Exception(f"[3] Error applying patch: {e}")
 
 
-def step6_deploy_and_wait(
+async def deploy_and_wait(
     workspace_dir: Path,
     wait_seconds: int = DEFAULT_WAIT_SECONDS,
-) -> bool:
-    """Run deploy script from workspace k8s/ and wait. Returns True if deploy succeeded."""
+):
+    """
+    Run deploy script from workspace k8s/ and wait.
+    Streams up to 30 lines of deployment output.
+    Returns True if deploy succeeded.
+    """
     deploy_script = workspace_dir / "k8s" / "deploy.sh"
     if not deploy_script.exists():
-        print(f"[6] No deploy script at {deploy_script}; skipping deploy")
-        return False
+        raise Exception(f"[6] No deploy script at {deploy_script}; skipping deploy")
     try:
-        subprocess.run(
-            [str(deploy_script)],
-            cwd=workspace_dir,
-            check=True,
-            capture_output=False,
+        result: ToolResult = await run_cli_command(
+            ["bash", "-e", str(deploy_script)],
+            timeout=300,
+            cwd=str(workspace_dir),
+            stream=True,
+            tail_lines=10,
         )
-    except subprocess.CalledProcessError as e:
+        if result.error is not None:
+            print(f"[6] Deploy failed: {result.error}")
+            raise Exception(f"[6] Deploy failed: {result.error}")
+        print(f"[6] Deploy completed; waiting {wait_seconds}s for symptoms...")
+        live_timer(wait_seconds)
+    except Exception as e:
         print(f"[6] Deploy failed: {e}")
-        return False
-    print(f"[6] Deploy completed; waiting {wait_seconds}s for symptoms...")
-    time.sleep(wait_seconds)
-    return True
+        raise e
 
 
-def step9_incident_content(fault_dir: Path) -> str:
+def fault_content(fault_dir: Path) -> str:
+    """Read FAULT.md from fault directory (fault description)."""
+    fault_file = fault_dir / "FAULT.md"
+    if not fault_file.exists():
+        raise Exception(f"[9] No FAULT.md in fault directory: {fault_dir}")
+    return fault_file.read_text().strip()
+
+
+def incident_content(fault_dir: Path) -> str:
     """Read INCIDENT.md from fault directory (announcement for the team)."""
     incident_file = fault_dir / "INCIDENT.md"
     if not incident_file.exists():
-        return ""
-    return incident_file.read_text()
+        raise Exception(f"[9] No INCIDENT.md in fault directory: {fault_dir}")
+    return incident_file.read_text().strip()
 
 
-def step10_build_agent_prompt(
-    metrics_before: str,
-    metrics_after: str,
+def build_agent_prompt(
+    focused_metrics_report: str,
     incident_md: str,
 ) -> str:
     """Build the prompt for the agent to fix the fault."""
+# """
+# ---
+# Focused metrics comparison (changed services only)
+#
+# {focused_metrics_report}
+# ---
+# """
+    print(f"\033[33mfocused_metrics_report: {focused_metrics_report}\033[0m")
+    incident_start_time = datetime.now() - timedelta(minutes=5)
     return f"""
 ## Incident announcement
+Current time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+Incident start time: {incident_start_time.strftime("%Y-%m-%d %H:%M:%S")}
 {incident_md}
----
-## Metrics before fault
 
-{metrics_before}
+Your task is to: 
+ - provide a root cause analysis of the incident
+ - propose a fix
+ - execute the fix
+ 
+ Provide your response in post-mortem report format with sections: 
+ - Root Cause Analysis
+ - Proposed Fix
+ - Execution
+ - Conclusion
+ 
+Proceed with work right after this message.
+Remember: 
+- Your fixes need to maintain the API contract with the user.
+- Once you need to use deploy tool once fix is ready to be deployed.
 
----
-## Metrics after fault
-
-{metrics_after}
----
-
-Your task: diagnose and fix the fault. Use the codebase and metrics; do not assume the cause from the incident description alone.
 """
 
 
-def run_episode(
-    source_dir: Path | None = None,
-    workspace_dir: Path | None = None,
-    fault_vault_dir: Path | None = None,
+async def run_episode(
+    selected_fault: Path | None = None,
     wait_seconds: int = DEFAULT_WAIT_SECONDS,
-    skip_deploy: bool = False,
-    skip_metrics: bool = False,
 ) -> dict:
     """
     Run one full episode. Returns a dict with workspace_dir, fault_dir, metrics_before,
     metrics_after, incident_md, and agent_prompt (and success flags).
     """
-    source_dir = source_dir or Path(os.environ.get("EPISODE_SOURCE", str(DEFAULT_SOURCE)))
-    workspace_dir = workspace_dir or Path(os.environ.get("EPISODE_WORKSPACE", str(DEFAULT_WORKSPACE)))
-    fault_vault_dir = fault_vault_dir or FAULT_VAULT_DIR
+    source_dir = Path(os.environ.get("EPISODE_SOURCE", str(DEFAULT_SOURCE)))
+    workspace_dir = Path(os.environ.get("EPISODE_WORKSPACE", str(DEFAULT_WORKSPACE)))
+    fault_vault_dir = FAULT_VAULT_DIR
 
     out = {
         "workspace_dir": str(workspace_dir),
@@ -208,88 +196,60 @@ def run_episode(
         "metrics_after": "",
         "incident_md": "",
         "agent_prompt": "",
-        "steps_ok": {},
     }
 
     # 1. Create workspace
-    step1_create_workspace(source_dir, workspace_dir)
-    out["steps_ok"]["create_workspace"] = True
+    create_workspace(source_dir, workspace_dir)
 
     # 2. Select fault
-    fault_dir = step2_select_fault(fault_vault_dir)
-    if not fault_dir:
-        out["steps_ok"]["select_fault"] = False
-        return out
+    if selected_fault:
+        fault_dir = Path(fault_vault_dir) / selected_fault
+    else:
+        fault_dir = select_fault(fault_vault_dir)
+
     out["fault_dir"] = str(fault_dir)
     out["fault_id"] = fault_dir.name
-    out["steps_ok"]["select_fault"] = True
 
     # 4. Metrics before
-    if not skip_metrics:
-        out["metrics_before"] = get_metrics_summary(workspace_dir)
+    if Path(CUR_DIR / "metrics_before.json").exists():
+        with open(CUR_DIR / "metrics_before.json", "r") as f:
+            out["metrics_before"] = json.load(f)
     else:
-        out["metrics_before"] = "# Metrics skipped (--no-metrics)\n"
-    out["steps_ok"]["metrics_before"] = True
+        out["metrics_before"] = await get_metrics_summary()
+        with open(CUR_DIR / "metrics_before.json", "w") as f:
+            json.dump(out["metrics_before"], f)
 
     # 5. Apply fault
-    if not step3_apply_fault(workspace_dir, fault_dir):
-        out["steps_ok"]["apply_fault"] = False
-        return out
-    out["steps_ok"]["apply_fault"] = True
+    await apply_fault(workspace_dir, fault_dir)
 
     # 6. Deploy and wait
-    if not skip_deploy:
-        out["steps_ok"]["deploy_and_wait"] = step6_deploy_and_wait(workspace_dir, wait_seconds)
-    else:
-        print("[6] Deploy skipped (--no-deploy)")
-        out["steps_ok"]["deploy_and_wait"] = None
+    await deploy_and_wait(workspace_dir, wait_seconds)
 
     # 7. Metrics after
-    if not skip_metrics:
-        out["metrics_after"] = get_metrics_summary(workspace_dir)
-    else:
-        out["metrics_after"] = "# Metrics skipped (--no-metrics)\n"
-    out["steps_ok"]["metrics_after"] = True
+    out["metrics_after"] = await get_metrics_summary()
+
+    out["metrics_diff"] = detect_differences(out["metrics_before"], out["metrics_after"])
+    out["focused_metrics_report"] = format_diff_status_report(out["metrics_diff"], "incident")
 
     # 8. Incident (for team) — we just have the content
-    out["incident_md"] = step9_incident_content(fault_dir)
-    out["steps_ok"]["incident"] = True
+    out["incident_md"] = incident_content(fault_dir)
+    out["fault_md"] = fault_content(fault_dir)
 
     # 9. Agent prompt
-    out["agent_prompt"] = step10_build_agent_prompt(
-        out["metrics_before"],
-        out["metrics_after"],
+    out["agent_prompt"] = build_agent_prompt(
+        out["focused_metrics_report"],
         out["incident_md"],
-        out["fault_id"],
     )
-    out["steps_ok"]["agent_prompt"] = True
+    # Print agent prompt in pink color
+    print("\033[95m" + out["agent_prompt"] + "\033[0m")
 
     return out
 
 
-def main() -> int:
-    wait_seconds = int(DEFAULT_WAIT_SECONDS)
-    result = run_episode(
-        source_dir=DEFAULT_WORKSPACE,
-        workspace_dir=DEFAULT_WORKSPACE,
-        fault_vault_dir=FAULT_VAULT_DIR,
-        wait_seconds=wait_seconds,
-        skip_deploy=False,
-        skip_metrics=False,
-    )
-
-    if not result["steps_ok"].get("select_fault"):
-        print("Episode failed: could not select a fault.", file=sys.stderr)
-        return 1
-    if not result["steps_ok"].get("apply_fault"):
-        print("Episode failed: could not apply patch.", file=sys.stderr)
-        return 1
-
-    print("\n--- Agent prompt ---")
-    print(result["agent_prompt"])
-    print("---")
-    return 0
-
+async def main() -> int:
+    import json
+    result = await get_metrics_summary()
+    print(json.dumps(result, indent=4))
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))

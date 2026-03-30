@@ -1,3 +1,4 @@
+import json
 from typing import Dict, List, Optional, Required, TypedDict
 
 from agent.providers.base import AnthropicMessage, ApiHandler
@@ -83,13 +84,34 @@ class TruncateResponse(SummarizeResponse):
     prev_context_tokens: Required[int]
 
 
+# ANSI 256-color pink for SummarizeResponse debug output
+_SUMMARIZE_DEBUG_PINK = "\033[38;5;213m"
+_SUMMARIZE_DEBUG_RESET = "\033[0m"
+
+
+def _print_summarize_response_debug(resp: SummarizeResponse) -> None:
+    """
+    summary: LLM-produced summary text only (also embedded as assistant message in messages).
+    messages: Full conversation list to use for the next API request — use this for turns.
+    """
+    msg_json = json.dumps(resp["messages"], indent=2, default=str)
+    with open("summarize_response.json", "w") as f:
+        f.write(msg_json)
+    # print(
+    #     f"{_SUMMARIZE_DEBUG_PINK}[SummarizeResponse]\n"
+    #     f"  summary (string): {resp['summary']!r}\n"
+    #     f"  messages (full list for next turn — indented JSON):\n{msg_json}"
+    #     f"{_SUMMARIZE_DEBUG_RESET}"
+    # )
+
+
 async def estimate_token_count(
-    content: list[AnthropicMessage],
+    messages: list[AnthropicMessage],
     api_handler: ApiHandler,
 ) -> int:
-    if not content or len(content) == 0:
+    if not messages or len(messages) == 0:
         return 0
-    return await api_handler.count_tokens(content)
+    return await api_handler.count_tokens(messages)
 
 
 def truncate_conversation(
@@ -153,10 +175,12 @@ async def truncate_conversation_if_needed(
     last_message_content = last_message.content
 
     if isinstance(last_message_content, list):
-        last_message_tokens = await estimate_token_count(last_message_content, api_handler)
+        last_message_tokens = await estimate_token_count(
+            [{"role": "user", "content": last_message_content}], api_handler
+        )
     else:
         last_message_tokens = await estimate_token_count(
-            [{"type": "text", "text": str(last_message_content)}], api_handler
+            [{"role": "user", "content": str(last_message_content)}], api_handler
         )
 
     # Calculate total effective tokens (total_tokens never includes the last message)
@@ -280,20 +304,49 @@ async def summarize_conversation(
     # Always preserve the first message (which may contain slash command content)
     first_message = messages[0]
 
-    # Get messages to summarize, excluding the first message and last N messages
-    messages_to_summarize = get_messages_since_last_summary(
-        messages[1:-N_MESSAGES_TO_KEEP] if len(messages) > N_MESSAGES_TO_KEEP else []
-    )
+    # Find a stable boundary for keep_messages to avoid splitting tool-use/result pairs.
+    # We want to keep at least N_MESSAGES_TO_KEEP, but we may need to keep more
+    # to ensure the first kept message isn't a tool_result or doesn't immediately
+    # follow a tool_use without its results.
+    split_index = len(messages) - N_MESSAGES_TO_KEEP
+
+    def is_tool_result(msg: AnthropicMessage) -> bool:
+        content = msg.get("content")
+        if isinstance(content, list):
+            return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
+        return False
+
+    def has_tool_use(msg: AnthropicMessage) -> bool:
+        content = msg.get("content")
+        if isinstance(content, list):
+            return any(isinstance(block, dict) and block.get("type") == "tool_use" for block in content)
+        return False
+
+    # Backtrack to find a stable starting point for keep_messages
+    while split_index > 1:
+        # If the current split starts with a tool result, we MUST include the previous message (the tool use)
+        if is_tool_result(messages[split_index]):
+            split_index -= 1
+            continue
+        # If the previous message has a tool use, we should keep it together with its results
+        if has_tool_use(messages[split_index - 1]):
+            split_index -= 1
+            continue
+        break
+
+    keep_messages = messages[split_index:]
+    messages_to_summarize_raw = messages[1:split_index]
+
+    # Get messages to summarize, excluding the first message and the kept messages
+    messages_to_summarize = get_messages_since_last_summary(messages_to_summarize_raw)
 
     if len(messages_to_summarize) <= 1:
         error = (
             "Not enough messages to condense"
-            if len(messages) <= N_MESSAGES_TO_KEEP + 1
+            if len(messages) <= (len(messages) - split_index) + 1
             else "Conversation was condensed recently"
         )
         return SummarizeResponse(messages=messages, cost=0.0, summary="", error=error)
-
-    keep_messages = messages[-N_MESSAGES_TO_KEEP:]
 
     # Check if there's a recent summary in the messages we're keeping
     recent_summary_exists = any(msg.get("isSummary", False) for msg in keep_messages)
@@ -307,10 +360,39 @@ async def summarize_conversation(
         "content": "Summarize the conversation so far, as described in the prompt instructions.",
     }
 
+    # Prepare messages for summarization: flatten all content to text and merge consecutive roles
+    # to avoid tool calling validation errors and ensure alternating roles for the summarizer LLM.
+#    sanitized_messages = []
+#    for msg in messages_to_summarize + [final_request_message]:
+#        role = msg["role"]
+#        content = msg["content"]
+#
+#        # Flatten content to string
+#        text_content = ""
+#        if isinstance(content, str):
+#            text_content = content
+#        elif isinstance(content, list):
+#            parts = []
+#            for block in content:
+#                if isinstance(block, str):
+#                    parts.append(block)
+#                elif isinstance(block, dict):
+#                    if block.get("type") == "text":
+#                        parts.append(block.get("text", ""))
+#                    elif block.get("type") == "tool_use":
+#                        parts.append(f"[Tool Use: {block.get('name')}, input: {block.get('input')}]")
+#                    elif block.get("type") == "tool_result":
+#                        parts.append(f"[Tool Result: {block.get('content')}]")
+#            text_content = "\n".join(parts)
+#
+#        if sanitized_messages and sanitized_messages[-1]["role"] == role:
+#            sanitized_messages[-1]["content"] += "\n\n" + text_content
+#        else:
+#            sanitized_messages.append({"role": role, "content": text_content})
+#
+#    request_messages = sanitized_messages
+#
     request_messages = messages_to_summarize + [final_request_message]
-
-    request_messages = [{"role": msg["role"], "content": msg["content"]} for msg in request_messages]
-
     # Use custom prompt if provided and non-empty, otherwise use the default SUMMARY_PROMPT
     prompt_to_use = (
         custom_condensing_prompt.strip()
@@ -345,8 +427,8 @@ async def summarize_conversation(
             summary += chunk.get("text", "")
         elif chunk.get("type") == "usage":
             # Record final usage chunk only
-            cost = chunk.get("totalCost", 0.0)
-            output_tokens = chunk.get("outputTokens", 0)
+            cost = chunk.get("total_cost", 0.0)
+            output_tokens = chunk.get("output_tokens", 0)
 
     summary = summary.strip()
 
@@ -355,7 +437,7 @@ async def summarize_conversation(
         return SummarizeResponse(messages=messages, cost=cost, summary="", error=error)
 
     summary_message: AnthropicMessage = AnthropicMessage(
-        role="assistant", content=summary, ts=keep_messages[0]["ts"], isSummary=True
+        role="assistant", content=summary, ts=keep_messages[0].get("ts"), isSummary=True
     )
 
     # Reconstruct messages: [first message, summary, last N messages]
@@ -371,19 +453,18 @@ async def summarize_conversation(
         else [system_prompt_message, summary_message] + keep_messages
     )
 
-    # Extract content blocks
-    context_blocks = []
-    for message in context_messages:
-        content = message["content"]
-        if isinstance(content, str):
-            context_blocks.append({"text": content, "type": "text"})
-        else:
-            context_blocks.extend(content)
-
-    new_context_tokens = output_tokens + await api_handler.count_tokens(context_blocks)
+    # Count full messages to keep token-count payload shape uniform across providers.
+    new_context_tokens = output_tokens + await api_handler.count_tokens(context_messages)
 
     if new_context_tokens >= prev_context_tokens:
         error = "Context grew after condensing"
         return SummarizeResponse(messages=messages, cost=cost, summary="", error=error)
 
-    return SummarizeResponse(messages=new_messages, summary=summary, cost=cost, new_context_tokens=new_context_tokens)
+    result: SummarizeResponse = SummarizeResponse(
+        messages=new_messages,
+        summary=summary,
+        cost=cost,
+        new_context_tokens=new_context_tokens,
+    )
+    _print_summarize_response_debug(result)
+    return result

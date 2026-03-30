@@ -9,13 +9,13 @@ import httpx
 from agent.code_index.cache_manager import CacheManager
 from agent.code_index.code_index_search_service import CodeIndexSearchService
 from agent.code_index.file_processor import CodeParser
-from agent.code_index.models import EmbedderInfo, IEmbedder
 from agent.code_index.scanner import DirectoryScanner
-from agent.code_index.vector_store import (VectorStoreClient,
-                                           VectorStoreSearchResult)
 from agent.list_files import Ignore
 from agent.settings import SettingsManager
 from agent.telemetry_service import get_telemetry_service
+from agent.vector_store.client import (VectorStoreClient,
+                                       VectorStoreSearchResult)
+from agent.vector_store.models import EmbedderInfo, IEmbedder
 
 logging = get_telemetry_service()
 

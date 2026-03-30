@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Task Explorer</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            background-color: #f5f7f9;
+            overflow: hidden;
+        }
+        #sidebar {
+            width: 320px;
+            background: white;
+            border-right: 1px solid #ddd;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        #sidebar-header {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #sidebar-header h2 { margin: 0; font-size: 1.1rem; }
+        #roots-list {
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+        .root-item {
+            padding: 12px 15px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+            transition: background 0.2s;
+            font-size: 0.85rem;
+            word-break: break-all;
+        }
+        .root-item:hover { background-color: #f0f4f8; }
+        .root-item.active {
+            background-color: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            font-weight: bold;
+        }
+        #main {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            background: #fff;
+        }
+        #network {
+            flex-grow: 1;
+            width: 100%;
+            height: 100%;
+        }
+        #details {
+            width: 450px;
+            background: white;
+            border-left: 1px solid #ddd;
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: -2px 0 5px rgba(0,0,0,0.05);
+            display: none;
+            height: 100%;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .status-completed, .status-done { background: #e8f5e9; color: #2e7d32; }
+        .status-failed { background: #ffebee; color: #c62828; }
+        .status-in-progress, .status-awaiting-input { background: #e3f2fd; color: #1565c0; }
+        .status-pending, .status-awaiting-feedback { background: #fff8e1; color: #f9a825; }
+
+        .todo-item { margin: 8px 0; display: flex; align-items: start; font-size: 0.9rem; }
+        .todo-status { margin-right: 10px; min-width: 12px; height: 12px; border-radius: 2px; margin-top: 4px; }
+        
+        .message { margin: 10px 0; padding: 10px; border-radius: 8px; font-size: 0.85rem; border: 1px solid #eee; }
+        .message-user { background: #f8f9fa; }
+        .message-assistant { background: #f0f7ff; }
+        
+        /* Markdown Styling */
+        .message-content { font-size: 0.85rem; line-height: 1.4; }
+        .message-content p { margin: 8px 0; }
+        .message-content code { background: rgba(0,0,0,0.05); padding: 2px 4px; border-radius: 3px; font-family: monospace; }
+        .message-content pre { background: #2d2d2d; color: #ccc; padding: 10px; border-radius: 5px; overflow-x: auto; }
+        .message-content pre code { background: none; color: inherit; padding: 0; }
+        .message-content ul, .message-content ol { padding-left: 20px; }
+        
+        .refresh-btn {
+            background: #f5f5f5; border: 1px solid #ddd; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.7rem;
+        }
+        h3 { font-size: 1rem; margin-top: 20px; color: #333; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <div id="sidebar-header">
+            <h2>Root Tasks</h2>
+            <button class="refresh-btn" onclick="fetchRoots()">Refresh</button>
+        </div>
+        <div id="roots-list"></div>
+    </div>
+    <div id="main">
+        <div id="network"></div>
+    </div>
+    <div id="details">
+        <h2 id="task-id-display" style="font-size: 1.2rem; margin-top: 0;">Task Details</h2>
+        <div id="task-status"></div>
+        <div style="margin: 15px 0; font-size: 0.9rem;">
+            <div><strong>Assignee:</strong> <span id="task-assignee"></span></div>
+            <div><strong>Assigner:</strong> <span id="task-assigner"></span></div>
+        </div>
+        <div id="task-todos">
+            <h3>Todo List</h3>
+            <div id="todos-container"></div>
+        </div>
+        <div id="task-conversation">
+            <h3>Conversation History</h3>
+            <div id="conversation-container"></div>
+        </div>
+    </div>
+
+    <script>
+        let network = null;
+        let tasksData = [];
+        let currentRootId = null;
+
+        const colors = {
+            'COMPLETED': '#4CAF50', 'DONE': '#4CAF50',
+            'FAILED': '#F44336',
+            'IN_PROGRESS': '#2196F3', 'AWAITING_INPUT': '#2196F3',
+            'PENDING': '#FFC107', 'AWAITING_FEEDBACK': '#FF9800',
+            'DISCARDED': '#9E9E9E'
+        };
+
+        async function fetchRoots() {
+            const resp = await fetch('/api/roots');
+            const data = await resp.json();
+            const list = document.getElementById('roots-list');
+            list.innerHTML = '';
+            
+            if (!data.roots || data.roots.length === 0) {
+                list.innerHTML = '<div style="padding: 20px; color: #666;">No tasks found.</div>';
+                return;
+            }
+
+            data.roots.forEach(root => {
+                const item = document.createElement('div');
+                item.className = 'root-item';
+                if (currentRootId === root) item.classList.add('active');
+                item.textContent = root;
+                item.onclick = () => loadRoot(root, item);
+                list.appendChild(item);
+            });
+        }
+
+        async function loadRoot(rootId, itemElement) {
+            document.querySelectorAll('.root-item').forEach(el => el.classList.remove('active'));
+            itemElement.classList.add('active');
+            currentRootId = rootId;
+
+            const resp = await fetch(`/api/tasks/${rootId}`);
+            const data = await resp.json();
+            tasksData = data.tasks;
+            renderGraph(data.tasks);
+        }
+
+        function renderGraph(tasks) {
+            const nodes = tasks.map(t => ({
+                id: t.id,
+                label: t.assignee ? `${t.assignee}\n(${t.id.substring(0,6)})` : t.id.substring(0,6),
+                color: colors[t.status] || '#9E9E9E',
+                title: `Status: ${t.status}`,
+                shape: 'dot',
+                size: 20
+            }));
+
+            const edges = [];
+            tasks.forEach(t => {
+                if (t.parent) edges.push({ from: t.parent, to: t.id });
+            });
+
+            const container = document.getElementById('network');
+            const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+            const options = {
+                layout: { hierarchical: { direction: 'LR', sortMethod: 'directed', nodeSpacing: 150 } },
+                physics: false,
+                interaction: { hover: true, tooltipDelay: 200 }
+            };
+
+            if (network) network.destroy();
+            network = new vis.Network(container, data, options);
+
+            network.on("click", function (params) {
+                if (params.nodes.length > 0) showDetails(params.nodes[0]);
+                else document.getElementById('details').style.display = 'none';
+            });
+        }
+
+        function showDetails(taskId) {
+            const task = tasksData.find(t => t.id === taskId);
+            if (!task) return;
+
+            document.getElementById('details').style.display = 'block';
+            document.getElementById('task-id-display').textContent = 'Task: ' + taskId.substring(0, 12);
+            document.getElementById('task-assignee').textContent = task.assignee || 'None';
+            document.getElementById('task-assigner').textContent = task.assigner || 'None';
+
+            const statusEl = document.getElementById('task-status');
+            statusEl.innerHTML = `<span class="status-badge status-${task.status.toLowerCase().replace(/_/g, '-')}">${task.status}</span>`;
+
+            const todosContainer = document.getElementById('todos-container');
+            todosContainer.innerHTML = '';
+            if (task.todo_list && task.todo_list.length > 0) {
+                task.todo_list.forEach(todo => {
+                    const div = document.createElement('div');
+                    div.className = 'todo-item';
+                    const bulletColor = todo.status === 'completed' || todo.status === 'done' ? '#4CAF50' : (todo.status === 'in_progress' ? '#2196F3' : '#ddd');
+                    div.innerHTML = `<div class="todo-status" style="background: ${bulletColor}"></div><span>${todo.content}</span>`;
+                    todosContainer.appendChild(div);
+                });
+            } else todosContainer.innerHTML = '<em>No todos</em>';
+
+            const convContainer = document.getElementById('conversation-container');
+            convContainer.innerHTML = '';
+            if (task.conversation && task.conversation.length > 0) {
+                task.conversation.forEach(msg => {
+                    const div = document.createElement('div');
+                    div.className = `message message-${msg.role}`;
+                    
+                    let content = msg.content;
+                    if (Array.isArray(content)) {
+                        content = content.map(c => c.type === 'text' ? c.text : `[Action: ${c.name || 'tool'}]`).join('\n');
+                    }
+                    
+                    const roleLabel = document.createElement('div');
+                    roleLabel.style.fontWeight = 'bold';
+                    roleLabel.style.fontSize = '0.7rem';
+                    roleLabel.style.marginBottom = '5px';
+                    roleLabel.style.color = msg.role === 'user' ? '#666' : '#1565c0';
+                    roleLabel.textContent = msg.role.toUpperCase();
+                    
+                    const contentDiv = document.createElement('div');
+                    contentDiv.className = 'message-content';
+                    contentDiv.innerHTML = marked.parse(content);
+                    
+                    div.appendChild(roleLabel);
+                    div.appendChild(contentDiv);
+                    convContainer.appendChild(div);
+                });
+            } else convContainer.innerHTML = '<em>No messages</em>';
+        }
+
+        fetchRoots();
+    </script>
+</body>
+</html>

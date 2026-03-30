@@ -43,9 +43,7 @@ tracer_provider = register(project_name="fault-generator-tracing")
 # Get a tracer for your application
 tracer = trace.get_tracer(__name__)
 
-tracer_provider = register(
-    auto_instrument=True
-)
+tracer_provider = register(auto_instrument=True)
 
 # Instrument Anthropic SDK so traces use Anthropic semantics (calls still go to
 # whatever base_url the client uses, e.g. Minimax when using MiniMaxHandler).

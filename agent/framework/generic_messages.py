@@ -375,30 +375,23 @@ class MessageConverter:
         return generic_messages
 
 
-def select_tools_use(messages: list[Message]) -> list[dict]:
-    deserialized_messages = [m for m in messages]
-    tool_use_ids = {
-        c["id"]
-        for m in deserialized_messages
-        if isinstance(m.get("content"), list)
-        for c in m["content"]
-        if c.get("type") == "tool_use"
-    }
-    tool_result_ids = set()
-    for m in deserialized_messages:
-        if m.get("role") == "tool" and "tool_call_id" in m:
-            tool_result_ids.add(m["tool_call_id"])
-        elif isinstance(m.get("content"), list):
-            for c in m["content"]:
-                if isinstance(c, dict) and c.get("type") == "tool_result" and "tool_use_id" in c:
-                    tool_result_ids.add(c["tool_use_id"])
-    tools_to_call = tool_use_ids - tool_result_ids
+def select_tools_use(messages: list[dict]) -> list[dict]:
+    if not messages:
+        return []
+    
+    last_msg = messages[-1]
+    if last_msg.get("role") != "assistant":
+        return []
+        
+    content = last_msg.get("content")
+    if not isinstance(content, list):
+        return []
+        
+    # Return all tool_use blocks from the last assistant message.
+    # In a turn-based system, these are the ones that need execution now.
     return [
-        c
-        for m in deserialized_messages
-        if m.get("role") == "assistant" and isinstance(m.get("content"), list)
-        for c in m["content"]
-        if c.get("type") == "tool_use" and c["id"] in tools_to_call
+        c for c in content 
+        if isinstance(c, dict) and c.get("type") == "tool_use"
     ]
 
 

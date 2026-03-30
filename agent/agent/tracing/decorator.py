@@ -61,8 +61,8 @@ def _trace_flow_class(flow_class, flow_name):
             _patch_async_flow_nodes(self)
             self._nodes_patched = True
         self._graph_tracer = GraphTracer()
-        self._graph_tracer.start_trace(self._flow_trace_name, shared)
         try:
+            self._graph_tracer.start_trace(self._flow_trace_name, shared)
             await original_run_async(self, shared)
             self._graph_tracer.end_trace("success")
         except Exception:
@@ -123,13 +123,12 @@ def _trace_flow_function(flow_func, flow_name):
     if flow_name is None:
         flow_name = flow_func.__name__
 
-    tracer = GraphTracer()
-
     @functools.wraps(flow_func)
     async def traced(*args, **kwargs):
+        tracer = GraphTracer()
         shared = args[0] if args else {}
-        tracer.start_trace(flow_name, shared)
         try:
+            tracer.start_trace(flow_name, shared)
             result = await flow_func(*args, **kwargs)
             tracer.end_trace("success")
             return result
