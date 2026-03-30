@@ -17,15 +17,17 @@ DEFAULT_PERSISTENCE_SETTINGS: PersistenceSettings = {
 
 
 def init_db() -> SqliteDatabase:
+    from agent.persistence.model import TaskModel
     from agent.settings import SettingsManager
     settings = SettingsManager.get_instance()
     database_settings = settings.get("persistence") or DEFAULT_PERSISTENCE_SETTINGS
     database = SqliteDatabase(database_settings["url"])
-    from agent.persistence.model import ConversationModel, TaskModel
-    models = [ConversationModel, TaskModel]
+    models = [TaskModel]
     for model in models:
         model.bind(database)
     database.connect()
+    database.create_tables(models, safe=True)
+    return database
 
 
 if __name__ == "__main__":

@@ -8,9 +8,6 @@ from uuid import uuid5
 
 from agent.code_index.cache_manager import CacheManager
 from agent.code_index.file_processor import CodeBlock, CodeParser
-from agent.code_index.models import (EmbedderResponse, IEmbedder, Payload,
-                                     PointStruct)
-from agent.code_index.vector_store import VectorStoreClient
 from agent.constants import (BATCH_PROCESSING_CONCURRENCY,
                              BATCH_SEGMENT_THRESHOLD, DIRS_TO_IGNORE,
                              EXTENSIONS, INITIAL_RETRY_DELAY_MS,
@@ -19,6 +16,9 @@ from agent.constants import (BATCH_PROCESSING_CONCURRENCY,
                              PARSING_CONCURRENCY, QDRANT_CODE_BLOCK_NAMESPACE)
 from agent.list_files import Ignore, list_files
 from agent.telemetry_service import TelemetryService
+from agent.vector_store.client import VectorStoreClient
+from agent.vector_store.models import (EmbedderResponse, IEmbedder, Payload,
+                                       PointStruct)
 
 
 def generate_relative_file_path(file_path: str, workspace: str) -> str:

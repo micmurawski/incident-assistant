@@ -2,6 +2,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -13,6 +14,14 @@ class Datasource:
     uid: str
     type: str
     name: str
+    
+    
+    
+class GrafanaBadRequestError(Exception):
+    """Exception raised for Grafana bad request errors."""
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(self.message)
 
 
 class GrafanaClient:
@@ -77,6 +86,8 @@ class GrafanaClient:
                     await asyncio.sleep(backoff)
                     backoff *= 2
                     continue
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 400:
+                    raise GrafanaBadRequestError(e.response.text)
                 raise
         raise RuntimeError("Retry loop exhausted")
 
@@ -121,6 +132,12 @@ class GrafanaClient:
                 sec = int(rest)  # assume seconds
             return now_ms - sec * 1000
         return int(t)
+
+    def _loki_time_range_ns(self, from_time: str, to_time: str) -> tuple[str, str]:
+        """Loki label APIs expect start/end as nanoseconds since Unix epoch (strings)."""
+        from_ms = self._parse_time(from_time)
+        to_ms = self._parse_time(to_time)
+        return str(from_ms * 1_000_000), str(to_ms * 1_000_000)
 
     async def query_prometheus(
         self,
@@ -167,15 +184,7 @@ class GrafanaClient:
             timeout=60,
         )
         data = r.json()
-        return self._extract_prometheus_results(data)
-
-    def _extract_prometheus_results(self, data: dict) -> list[dict[str, Any]]:
-        """Extract result frames from Grafana query response."""
-        results = []
-        for ref_id, resp in data.get("results", {}).items():
-            for frame in resp.get("frames", []):
-                results.append(frame)
-        return results
+        return data
 
     async def query_loki(
         self,
@@ -224,75 +233,88 @@ class GrafanaClient:
             timeout=120,
         )
         data = r.json()
-        return self._extract_loki_results(data)
+        return data
 
-    def _extract_loki_results(self, data: dict) -> list[dict[str, Any]]:
-        """Extract log entries from Grafana Loki query response."""
-        logs = []
-        for _ref_id, resp in data.get("results", {}).items():
-            for frame in resp.get("frames", []):
-                schema = frame.get("schema", {})
-                schema_fields = schema.get("fields", [])
-                values = frame.get("data", {}).get("values", [])
-                # Expect at least: fields, Time (ms), Line. Some responses also include tsNs and id.
-                if len(values) < 3:
-                    continue
-                fields = values[0]
-                times_ms = values[1]
-                lines_raw = values[2]
+    async def list_loki_labels(
+        self,
+        from_time: str = "now-1h",
+        to_time: str = "now",
+        *,
+        query: str | None = None,
+        source: str = "loki",
+    ) -> list[str]:
+        """
+        List label names present in Loki for the time range (via Grafana datasource proxy).
 
-                # Prefer the high‑precision tsNs column when available
-                ts_ns_values = None
-                if len(values) >= 4:
-                    ts_ns_values = values[3]
+        Args:
+            from_time: Range start (e.g. 'now-5m', 'now-1h')
+            to_time: Range end
+            query: Optional LogQL stream selector (e.g. '{namespace="app"}') to scope labels
+            source: Grafana datasource type key (default 'loki')
 
-                labels = {}
-                if schema_fields and isinstance(schema_fields[0], dict):
-                    labels = schema_fields[0].get("labels") or {}
-                    if labels and not isinstance(labels, dict):
-                        labels = {}
-                for idx, (fields_val, line_val) in enumerate(zip(fields, lines_raw)):
-                    fields_val.pop("filename", None)
-                    if line_val is None or line_val == "":
-                        continue
+        Returns:
+            Label names, e.g. ['app', 'namespace', 'pod', ...]
+        """
+        ds = await self._ensure_datasource(source)
+        start_ns, end_ns = self._loki_time_range_ns(from_time, to_time)
+        params: dict[str, Any] = {"start": start_ns, "end": end_ns}
+        if query:
+            params["query"] = query
 
-                    # Determine timestamp in seconds since epoch.
-                    ts_ns = None
-                    if ts_ns_values is not None and idx < len(ts_ns_values):
-                        # tsNs is a string representing nanoseconds since epoch
-                        ts_raw = ts_ns_values[idx]
-                        try:
-                            ts_ns = int(ts_raw)
-                        except (TypeError, ValueError):
-                            ts_ns = None
+        r = await self._request_with_retry(
+            "GET",
+            f"/api/datasources/uid/{ds.uid}/resources/labels",
+            params=params,
+            timeout=60,
+        )
+        payload = r.json()
+        values = payload.get("data", []) or []
+        return [str(v) for v in values if v is not None]
 
-                    if ts_ns is None:
-                        # Fallback to Time column (milliseconds since epoch)
-                        if idx < len(times_ms):
-                            ts_raw = times_ms[idx]
-                            try:
-                                ts_ms = int(ts_raw)
-                                ts_ns = ts_ms * 1_000_000
-                            except (TypeError, ValueError):
-                                ts_ns = 0
-                        else:
-                            ts_ns = 0
+    async def list_loki_label_values(
+        self,
+        label_name: str,
+        from_time: str = "now-1h",
+        to_time: str = "now",
+        *,
+        query: str | None = None,
+        source: str = "loki",
+    ) -> list[str]:
+        """
+        List values seen for a given Loki label in the time range (via Grafana datasource proxy).
 
-                    if line_val is None or line_val == "":
-                        continue
-                    logs.append(
-                        {
-                            "timestamp": ts_ns / 1e9,
-                            "message": str(line_val) if line_val else "",
-                            "labels": dict(labels),
-                            "fields": dict(fields_val),
-                        }
-                    )
-        return logs
+        Args:
+            label_name: Label to enumerate (e.g. 'namespace', 'pod')
+            from_time: Range start
+            to_time: Range end
+            query: Optional LogQL stream selector to scope values
+            source: Grafana datasource type key (default 'loki')
 
-    async def list_prometheus_metrics(
+        Returns:
+            Distinct values for that label in the range
+        """
+        # http://ab6b391db314a4260829b56261dd2616-319386874.us-east-1.elb.amazonaws.com/api/datasources/uid/P8E80F9AEF21F6940/resources/label/app/values?start=1774455864772000000&end=1774459464772000000
+        ds = await self._ensure_datasource(source)
+        start_ns, end_ns = self._loki_time_range_ns(from_time, to_time)
+        params: dict[str, Any] = {"start": start_ns, "end": end_ns}
+        if query:
+            params["query"] = query
+
+        safe_label = quote(label_name, safe="")
+        r = await self._request_with_retry(
+            "GET",
+            f"/api/datasources/uid/{ds.uid}/resources/label/{safe_label}/values",
+            params=params,
+            timeout=60,
+        )
+        payload = r.json()
+        values = payload.get("data", []) or []
+        return [str(v) for v in values if v is not None]
+
+    async def list_metrics(
         self,
         match: str | None = None,
+        source: str = "prometheus",
         from_time: str = "now-1h",
         to_time: str = "now",
     ) -> list[str]:
@@ -300,7 +322,7 @@ class GrafanaClient:
         List available Prometheus metric names via Grafana's CallResource API.
         Optionally filter using a Prometheus match[] selector.
         """
-        ds = await self._ensure_datasource("prometheus")
+        ds = await self._ensure_datasource(source)
         from_s = self._parse_time(from_time) // 1000
         to_s = self._parse_time(to_time) // 1000
 
@@ -321,13 +343,13 @@ class GrafanaClient:
         values = payload.get("data", []) or []
         return [str(v) for v in values if v is not None]
 
-    async def get_prometheus_metric_metadata(
-        self, metric_name: str
+    async def get_metric_metadata(
+        self, metric_name: str, source: str = "prometheus"
     ) -> list[dict[str, Any]]:
         """
         Get metadata (type, help, unit) for a specific Prometheus metric via Grafana's CallResource API.
         """
-        ds = await self._ensure_datasource("prometheus")
+        ds = await self._ensure_datasource(source)
         params = {"metric": metric_name}
 
         r = await self._request_with_retry(
@@ -338,41 +360,10 @@ class GrafanaClient:
         payload = r.json()
         return payload.get("data", {}).get(metric_name, [])
 
-    async def list_prometheus_label_names(
-        self,
-        match: str | None = None,
-        from_time: str = "now-1h",
-        to_time: str = "now",
-    ) -> list[str]:
-        """
-        List all label names available for a given metric or selector via Grafana's CallResource API.
-        This helps identify what "input parameters" (labels) a metric accepts.
-        Example: match='http_requests_total'
-        """
-        ds = await self._ensure_datasource("prometheus")
-        from_s = self._parse_time(from_time) // 1000
-        to_s = self._parse_time(to_time) // 1000
-
-        params: dict[str, Any] = {
-            "start": str(from_s),
-            "end": str(to_s),
-        }
-        if match:
-            params["match[]"] = match
-
-        r = await self._request_with_retry(
-            "GET",
-            f"/api/datasources/uid/{ds.uid}/resources/api/v1/labels",
-            params=params,
-            timeout=60,
-        )
-        payload = r.json()
-        values = payload.get("data", []) or []
-        return [str(v) for v in values if v is not None]
-
-    async def list_prometheus_label_values(
+    async def get_label_values(
         self,
         label_name: str,
+        source: str = "prometheus",
         match: str | None = None,
         from_time: str = "now-1h",
         to_time: str = "now",
@@ -381,7 +372,7 @@ class GrafanaClient:
         List available values for a specific Prometheus label via Grafana's CallResource API.
         Example: label_name='method', match='http_requests_total'
         """
-        ds = await self._ensure_datasource("prometheus")
+        ds = await self._ensure_datasource(source)
         from_s = self._parse_time(from_time) // 1000
         to_s = self._parse_time(to_time) // 1000
 
@@ -395,6 +386,39 @@ class GrafanaClient:
         r = await self._request_with_retry(
             "GET",
             f"/api/datasources/uid/{ds.uid}/resources/api/v1/label/{label_name}/values",
+            params=params,
+            timeout=60,
+        )
+        payload = r.json()
+        values = payload.get("data", []) or []
+        return [str(v) for v in values if v is not None]
+
+    async def get_label_names(
+        self,
+        source: str = "prometheus",
+        match: str | None = None,
+        from_time: str = "now-1h",
+        to_time: str = "now",
+    ) -> list[str]:
+        """
+        List all label names available for a given metric or selector via Grafana's CallResource API.
+        This helps identify what "input parameters" (labels) a metric accepts.
+        Example: match='http_requests_total'
+        """
+        ds = await self._ensure_datasource(source)
+        from_s = self._parse_time(from_time) // 1000
+        to_s = self._parse_time(to_time) // 1000
+
+        params: dict[str, Any] = {
+            "start": str(from_s),
+            "end": str(to_s),
+        }
+        if match:
+            params["match[]"] = match
+
+        r = await self._request_with_retry(
+            "GET",
+            f"/api/datasources/uid/{ds.uid}/resources/api/v1/labels",
             params=params,
             timeout=60,
         )

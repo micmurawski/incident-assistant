@@ -132,7 +132,7 @@ module "eks" {
           policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy"
           access_scope = {
             type       = "namespace"
-            namespaces = ["application"]
+            namespaces = ["application", "bastion"]
           }
         }
         cluster_view = {
@@ -153,6 +153,40 @@ module "eks" {
 resource "aws_iam_user_policy_attachment" "incident_assistant_ecr_poweruser" {
   user       = data.aws_iam_user.incident-assistant.user_name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
+}
+
+# EKS access_entries above grant Kubernetes API access; IAM still needs eks:* API
+# permissions for aws eks update-kubeconfig, SDK DescribeCluster, etc.
+resource "aws_iam_user_policy" "incident_assistant_eks_api_read" {
+  name = "incident-assistant-eks-api-read"
+  user = data.aws_iam_user.incident-assistant.user_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "EKSListClusters"
+        Effect   = "Allow"
+        Action   = "eks:ListClusters"
+        Resource = "*"
+      },
+      {
+        Sid      = "EKSDescribeThisCluster"
+        Effect   = "Allow"
+        Action   = "eks:DescribeCluster"
+        Resource = "arn:aws:eks:${var.region}:${data.aws_caller_identity.current.account_id}:cluster/${var.cluster_name}"
+      },
+      {
+        Sid    = "EKSNodegroupsRead"
+        Effect = "Allow"
+        Action = [
+          "eks:DescribeNodegroup",
+          "eks:ListNodegroups",
+        ]
+        Resource = "*"
+      }
+    ]
+  })
 }
 
 

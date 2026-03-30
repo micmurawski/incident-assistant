@@ -59,7 +59,6 @@ ANTHROPIC_MODELS = {
 GEMINI_DEFAULT_MODEL_ID = "gemini-2.5-flash"
 
 GEMINI_MODELS = {
-    
     "gemini-2.5-flash:thinking": {
         "max_tokens": 65_535,
         "context_window": 1_048_576,

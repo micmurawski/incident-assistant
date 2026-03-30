@@ -1,6 +1,7 @@
 from typing import Any
 
 from agent.grafana_client.client import GrafanaClient
+from agent.grafana_client.parsers import extract_prometheus_results
 
 # Linkerd proxy metrics job name
 LINKERD_JOB = "linkerd-proxy"
@@ -41,8 +42,8 @@ async def get_latency_percentiles(
 
     for q, p in [("0.50", "p50"), ("0.95", "p95"), ("0.99", "p99")]:
         expr = f"histogram_quantile({q}, {base})"
-        frames = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
-        for frame in frames:
+        results = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
+        for frame in extract_prometheus_results(results):
             for pod_name, val in _extract_series_by_pod(frame):
                 if val is None:
                     continue
@@ -85,8 +86,8 @@ async def get_http_error_counts(
 
     for status_pattern, key in [("4..", "4xx"), ("5..", "5xx")]:
         expr = f'sum(increase(response_total{{{sel}, status_code=~"{status_pattern}"}}[{window}])) by (pod)'
-        frames = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
-        for frame in frames:
+        results = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
+        for frame in extract_prometheus_results(results):
             for pod_name, val in _extract_series_by_pod(frame):
                 if val is None:
                     continue
@@ -122,9 +123,9 @@ async def get_request_rate(
     """
     sel = _get_rate_selector(namespace, apps)
     expr = f'sum(rate(response_total{{{sel}}}[{window}])) by (pod)'
-    frames = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
+    results = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
     pod_rates: dict[str, float] = {}
-    for frame in frames:
+    for frame in extract_prometheus_results(results):
         for pod_name, val in _extract_series_by_pod(frame):
             pod_rates[pod_name] = float(val) if val is not None else 0.0
 
@@ -159,8 +160,8 @@ async def get_cpu_usage(
             f'sum(rate(container_cpu_usage_seconds_total{{namespace="{namespace}", '
             f'container!="", container!="POD", pod={pod_filter}}}[{window}]))'
         )
-        frames = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
-        val = _extract_single_value(frames)
+        results = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
+        val = _extract_single_value(extract_prometheus_results(results))
         result[app] = float(val) if val is not None else 0.0
     return result
 
@@ -185,16 +186,16 @@ async def get_memory_usage(
             f'sum(container_memory_working_set_bytes{{namespace="{namespace}", '
             f'container!="", container!="POD", pod={pod_filter}}})'
         )
-        frames = await client.query_prometheus(expr, from_time="now-5m", to_time="now")
-        val = _extract_single_value(frames)
+        results = await client.query_prometheus(expr, from_time="now-5m", to_time="now")
+        val = _extract_single_value(extract_prometheus_results(results))
         if val is None:
             # Fallback to container_memory_usage_bytes if working_set not available
             expr = (
                 f'sum(container_memory_usage_bytes{{namespace="{namespace}", '
                 f'container!="", container!="POD", pod={pod_filter}}})'
             )
-            frames = await client.query_prometheus(expr, from_time="now-5m", to_time="now")
-            val = _extract_single_value(frames)
+            results = await client.query_prometheus(expr, from_time="now-5m", to_time="now")
+            val = _extract_single_value(extract_prometheus_results(results))
         result[app] = float(val) if val is not None else 0.0
     return result
 
@@ -215,9 +216,9 @@ async def get_success_rate(
     total = f'sum(rate(response_total{{{sel}}}[{window}])) by (pod)'
     success = f'sum(rate(response_total{{{sel}, classification="success"}}[{window}])) by (pod)'
     expr = f"({success}) / ({total})"
-    frames = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
+    results = await client.query_prometheus(expr, from_time=f"now-{window}", to_time="now")
     pod_rates: dict[str, float] = {}
-    for frame in frames:
+    for frame in extract_prometheus_results(results):
         for pod_name, val in _extract_series_by_pod(frame):
             if val is not None and val == val:  # skip NaN
                 pod_rates[pod_name] = float(val)

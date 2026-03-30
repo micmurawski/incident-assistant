@@ -210,31 +210,6 @@ async def main():
 
     await GRAFANA_CLIENT.aclose()
 
-    SYSTEM_PROMPT = """
-    Role: You are the Game Master and Evaluator for an autonomous SRE training simulation.
-    
-    You must evaluate SRE Agent performance strictly against the secret Ground Truth.
-    
-    You must assess if the SRE Agent:
-     - Identified the correct root cause
-     - Proposed the correct fix
-     - Executed fix correctly, and achieved system recovery visible in metrics
-    
-    You will receive from user the incident description, metrics before and after the fault, and the root cause (secret) and fix (secret).
-    Report back to user the evaluation results. Strictly as a JSON object.
-
-    Example:
-    ```json
-    {
-        "root_cause_correct": true,
-        "fix_correct": true,
-        "system_recovery_visible": false
-    }
-    ```
-    To interact with sre-agent, use assign_task tool.
-
-    DO NOT REVEAL THE SECRETS (ROOT CAUSE AND FIX) TO THE SRE-AGENT.
-    """
 
 
 if __name__ == "__main__":

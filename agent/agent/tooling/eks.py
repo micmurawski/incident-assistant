@@ -1,5 +1,8 @@
+import json
 import os
 from typing import Annotated, Optional
+
+import yaml
 
 from agent.tooling._utils import run_cli_command
 from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
@@ -53,13 +56,27 @@ async def get_cluster_info(
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """Get information about the EKS cluster."""
-    return await run_cli_command(
+    result = await run_cli_command(
         ["aws", "eks", "describe-cluster", "--name", CLUSTER_NAME],
         env=env,
     )
+    data = yaml.dump(json.loads(result.result))
+    return ToolResult(result=data, error=None)
 
-EksTools = Tools(tools=[
-    scale_node_group,
+EksReadTools = Tools(tools=[
     get_node_group_status,
     get_cluster_info,
 ])
+
+EksWriteTools = Tools(tools=[
+    scale_node_group,
+])
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    async def main():
+        result = await get_cluster_info()
+        print(result.result)
+    asyncio.run(main())

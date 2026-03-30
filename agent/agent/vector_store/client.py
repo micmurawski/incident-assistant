@@ -9,10 +9,10 @@ from qdrant_client.models import (CollectionInfo, Distance, FieldCondition,
                                   Filter, FilterSelector, MatchValue,
                                   VectorParams)
 
-from agent.code_index.models import (IVectorStoreClient, PointStruct,
-                                     VectorStoreSearchResult)
 from agent.constants import CODEBASE_INDEX_DEFAULTS, QDRANT_DEFAULT_URL
 from agent.telemetry_service import get_telemetry_service
+from agent.vector_store.models import (IVectorStoreClient, PointStruct,
+                                       VectorStoreSearchResult)
 
 logging = get_telemetry_service()
 
@@ -189,7 +189,7 @@ class VectorStoreClient(IVectorStoreClient):
             processed_points = []
             for point in points:
                 payload = point.payload
-                file_path = payload.file_path
+                file_path = getattr(payload, "file_path", None)
                 if file_path:
                     segments = [seg for seg in file_path.split(os.sep) if seg]
                     path_segments = {str(i): segment for i, segment in enumerate(segments)}
@@ -199,18 +199,36 @@ class VectorStoreClient(IVectorStoreClient):
                     new_point["payload"] = new_payload
                     processed_points.append(new_point)
                 else:
-                    processed_points.append(point)
+                    processed_points.append(point.to_dict())
             await self.client.upsert(collection_name, points=processed_points, wait=True)
         except Exception as e:
             logging.error(f"[VectorStore] Failed to upsert points for {collection_name}. {e}")
             raise e
 
+    async def retrieve(self, ids: list[str], collection_name: str | None = None) -> list[VectorStoreSearchResult]:
+        collection_name = collection_name or self.default_collection_name
+        try:
+            res = await self.client.retrieve(collection_name, ids=ids, with_payload=True)
+            return [
+                VectorStoreSearchResult(id=str(point.id), score=1.0, payload=point.payload)
+                for point in res
+            ]
+        except Exception as e:
+            logging.error(f"[VectorStore] Failed to retrieve points. {e}")
+            raise e
+
     def _is_payload_valid(self, payload: Any) -> bool:
         if not payload:
             return False
-        valid_keys = ["file_path", "code_chunk", "start_line", "end_line", "key"]
-        has_all_keys = all(key in payload for key in valid_keys)
-        return has_all_keys
+        # If it's a codebase payload, it must have these keys
+        codebase_keys = ["file_path", "code_chunk", "start_line", "end_line"]
+        if all(key in payload for key in codebase_keys):
+            return True
+        # If it's a memo payload, it must have these keys
+        memo_keys = ["id", "value"]
+        if all(key in payload for key in memo_keys):
+            return True
+        return False
 
     async def search(
         self,
@@ -222,11 +240,11 @@ class VectorStoreClient(IVectorStoreClient):
     ) -> list[VectorStoreSearchResult]:
         collection_name = collection_name or self.default_collection_name
         try:
-            filter = None
+            qdrant_filter = None
             if directory_prefix:
                 normalized_prefix = os.path.normpath(directory_prefix.replace("\\", "/"))
                 if normalized_prefix == "." or normalized_prefix == "./":
-                    filter = None
+                    qdrant_filter = None
                 else:
                     if normalized_prefix.startswith("./"):
                         cleaned_prefix = os.path.normpath(normalized_prefix[2:])
@@ -235,7 +253,7 @@ class VectorStoreClient(IVectorStoreClient):
                     segments = [seg for seg in cleaned_prefix.split("/") if seg]
 
                     if segments:
-                        filter = {
+                        qdrant_filter = {
                             "must": [
                                 {"key": f"path_segments.{idx}", "match": {"value": segment}}
                                 for idx, segment in enumerate(segments)
@@ -243,16 +261,16 @@ class VectorStoreClient(IVectorStoreClient):
                         }
             search_req = {
                 "query_vector": query_vector,
-                "filter": filter,
+                "filter": qdrant_filter,
                 "score_threshold": min_score if min_score else CODEBASE_INDEX_DEFAULTS["DEFAULT_SEARCH_MIN_SCORE"],
                 "limit": max_results if max_results else CODEBASE_INDEX_DEFAULTS["DEFAULT_SEARCH_RESULTS"],
                 "params": {"hnsw_ef": 128, "exact": False},
-                "with_payload": {"include": ["file_path", "code_chunk", "start_line", "end_line", "path_segments"]},
+                "with_payload": {"include": ["file_path", "code_chunk", "start_line", "end_line", "path_segments", "id", "value"]},
             }
-            res = await self.client.search(collection_name, search_req)
-            filtered_points = filter(lambda point: self._is_payload_valid(point.payload), res)
+            res = await self.client.search(collection_name, **search_req)
+            filtered_points = list(filter(lambda point: self._is_payload_valid(point.payload), res))
             return [
-                VectorStoreSearchResult(id=point.id, score=point.score, payload=point.payload)
+                VectorStoreSearchResult(id=str(point.id), score=point.score, payload=point.payload)
                 for point in filtered_points
             ]
         except Exception as e:

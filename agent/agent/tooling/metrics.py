@@ -1,14 +1,15 @@
-from datetime import datetime, timezone
 from typing import Annotated, List, Literal, Optional
 
 import yaml
 
-from agent.grafana_client.client import GrafanaClient
-from agent.grafana_client.report import build_status_report_yaml
+from agent.grafana_client.client import GrafanaBadRequestError, GrafanaClient
+from agent.grafana_client.parsers import (extract_labels, extract_loki_results,
+                                          group_by_similarity, prase_to_table)
+from agent.grafana_client.report import build_status_report
 from agent.tooling.cli import bash
 from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
 
-TimeWindow = Literal["5m", "15m", "30m"]
+TimeWindow = Literal["1m", "5m", "15m", "30m"]
 
 
 APPS = [
@@ -55,6 +56,62 @@ NAMESPACE = "application"
 LINKERD_NAMESPACE = "bastion"
 
 
+def _grafana_bad_request_result(exc: GrafanaBadRequestError) -> ToolResult:
+    return ToolResult(result=None, error=exc.message)
+
+
+def _ensure_namespace_in_query(query: str | None) -> str:
+    if query is None:
+        return f"{{namespace=\"{NAMESPACE}\"}}"
+    else:
+        extracted_labels = extract_labels(query)
+        extracted_labels.update({"namespace": NAMESPACE})
+        return f"{{{','.join([f'{k}="{v}"' for k, v in extracted_labels.items()])}}}"
+
+
+async def _loki_label_validation_message(
+    grafana_client: GrafanaClient,
+    query: str,
+    from_time: str,
+    to_time: str,
+) -> str | None:
+    """If stream-selector label names are unknown for the time range, return a warning line."""
+    labels = extract_labels(query)
+    if not labels:
+        return None
+    issues: list[str] = []
+    try:
+        known_names = set(await grafana_client.list_loki_labels(from_time, to_time, query=None))
+    except GrafanaBadRequestError:
+        raise
+    for name in labels.keys():
+        if name not in known_names:
+            issues.append(f'label name {name!r} is not present in Loki for this time range')
+    if not issues:
+        return None
+    return 'NOTE: ' + '; '.join(issues) + '. Use tool list_loki_labels to get the available labels.'
+
+
+async def _prometheus_label_validation_message(
+    grafana_client: GrafanaClient,
+    query: str,
+    from_time: str,
+    to_time: str,
+) -> str | None:
+    """If selector label names are unknown for the time range, return a warning line."""
+    labels = extract_labels(query)
+    if not labels:
+        return None
+    issues: list[str] = []
+    known_names = set(await grafana_client.get_label_names(match=None, from_time=from_time, to_time=to_time))
+    for name in labels.keys():
+        if name not in known_names:
+            issues.append(f'label name {name!r} is not present in Prometheus for this time range')
+    if not issues:
+        return None
+    return 'NOTE: ' + '; '.join(issues) + '. Use tool list_metric_labels to get the available labels.'
+
+
 @tool(tags=["metrics"])
 async def get_app_summary(
     grafana_client: Hidden[GrafanaClient],
@@ -64,58 +121,134 @@ async def get_app_summary(
     cwd: Hidden[Optional[str]] = None,
 ) -> ToolResult:
     """Get a summary of the application's metric and logs."""
-    report = await build_status_report_yaml(
-        grafana_client, NAMESPACE, apps, window, env=env, cwd=cwd
-    )
-    return ToolResult(result=report, error=None)
+    try:
+        report = await build_status_report(
+            grafana_client, NAMESPACE, apps, window, env=env, cwd=cwd
+        )
+        return ToolResult(result=report, error=None)
+    except GrafanaBadRequestError as e:
+        return _grafana_bad_request_result(e)
 
 
-@tool(tags=["metrics"])
-async def query_loki(
+@tool(tags=["metrics", "logs"])
+async def list_loki_logs_labels(
+    grafana_client: Hidden[GrafanaClient],
+    query: Annotated[str, "The query to execute"],
+    time_window: Annotated[Optional[TimeWindow], "Get logs from the last X minutes"] = "5m",
+) -> ToolResult:
+    """List all labels for the Loki logs query. Optionally filter by query.
+    
+    Examples:
+       - list_loki_logs_labels('{app="mysql"}') - get all labels for the mysql app
+    """
+    from_time = f"now-{time_window}"
+    to_time = "now"
+    query = _ensure_namespace_in_query(query)
+    try:
+        labels = await grafana_client.list_loki_labels(from_time, to_time, query=query)
+    except GrafanaBadRequestError as e:
+        return _grafana_bad_request_result(e)
+    data = yaml.dump(labels)
+    return ToolResult(result=data, error=None)
+
+
+@tool(tags=["metrics", "logs"])
+async def list_loki_label_values(
+    grafana_client: Hidden[GrafanaClient],
+    label_name: Annotated[str, "The name of the label to get the values for"],
+    query: Annotated[Optional[str], "The query to execute"] = None,
+    time_window: Annotated[Optional[TimeWindow], "Get logs from the last X minutes"] = "5m",
+) -> ToolResult:
+    """List all values for a specific label for the Loki logs query.
+    
+    Examples:
+       - list_loki_label_values('app', '{app="mysql"}') - get all values for the app label for the mysql app
+    """
+    from_time = f"now-{time_window}"
+    to_time = "now"
+
+    query = _ensure_namespace_in_query(query)
+    try:
+        values = await grafana_client.list_loki_label_values(label_name, from_time, to_time, query=query)
+    except GrafanaBadRequestError as e:
+        return _grafana_bad_request_result(e)
+    data = yaml.dump(values)
+    return ToolResult(result=data, error=None)
+
+
+@tool(tags=["metrics", "logs"])
+async def query_loki_logs(
     grafana_client: Hidden[GrafanaClient],
     query: Annotated[str, "The query to execute"],
     time_window: Annotated[Optional[TimeWindow], "Get logs from the last X minutes"] = "5m"
 ) -> ToolResult:
-    f"""Query the Loki logs. Remember to use correct namespace ({NAMESPACE}) and app names ({', '.join(APPS)}).
-    Schema:
-     - timestamp: float - the timestamp of the log line in seconds
-     - message: str - the log line content
-     - labels: map - key-value pairs attached to each log line
-     - fields: map - key-value pairs parsed from the log line
+    """Query Loki logs. Remember to use correct namespace (application) and app names (mysql, catalogue, dispatch, mongodb, mysql, payment, shipping, user, web, rabbitmq, ratings, redis).
+    Examples:
+       - query_loki_logs('{app="mysql"}', time_window="1m") - get all logs for the mysql app
+       - query_loki_logs('{app="catalogue"} |~ "(?i)error"', time_window="1m") - get all logs for the catalogue app with error
+       - query_loki_logs('{app="dispatch"} |~ "(?i)error" |~ "(?i)timeout"', time_window="1m") - get all logs for the dispatch app with error and timeout
     """
     from_time = f"now-{time_window}"
     to_time = "now"
-    logs = await grafana_client.query_loki(query, from_time, to_time)
-    entries = []
-    for log in logs:
-        # parse timestamp to datetime utc
-        time_utc = datetime.fromtimestamp(log.get("timestamp", 0), tz=timezone.utc).isoformat()
-        entries.append(
-            {
-                "datetime": time_utc,
-                "message": log.get("message", ""),
-                "labels": log.get("labels", {}),
-                "fields": log.get("fields", {}),
-            }
-        )
-    return ToolResult(result=yaml.dump(entries), error=None)
+    try:
+        note = await _loki_label_validation_message(grafana_client, query, from_time, to_time)
+        logs = await grafana_client.query_loki(query, from_time, to_time)
+    except GrafanaBadRequestError as e:
+        return _grafana_bad_request_result(e)
+    result = prase_to_table(logs, exclude_fields=["tsNs", "id"])
+    if note:
+        result = f"{result}\n\n{note}"
+    return ToolResult(result=result, error=None)
+
+
+@tool(tags=["metrics", "logs"])
+async def query_loki_groups(
+    grafana_client: Hidden[GrafanaClient],
+    query: Annotated[str, "The query to execute"],
+    time_window: Annotated[Optional[TimeWindow], "Get logs from the last X minutes"] = "5m",
+    similarity_threshold: Annotated[Optional[float], "The similarity threshold for grouping logs (0-1)"] = 0.5,
+) -> ToolResult:
+    """Query logs from Loki and group them by similarity. Remember to use correct namespace (application) and app names (mysql, catalogue, dispatch, mongodb, mysql, payment, shipping, user, web, rabbitmq, ratings, redis).
+    Returns a list of Loki log groups, each with a representative message and a count of occurrences.
+    
+    Examples:
+       - query_loki_groups('{app="mysql"}', time_window="1m") - get all logs for the mysql app
+    """
+    from_time = f"now-{time_window}"
+    to_time = "now"
+    try:
+        logs = await grafana_client.query_loki(query, from_time, to_time)
+    except GrafanaBadRequestError as e:
+        return _grafana_bad_request_result(e)
+    extracted_logs = extract_loki_results(logs)
+    grouped_logs = group_by_similarity(extracted_logs, threshold=similarity_threshold)
+    return ToolResult(result=yaml.dump(grouped_logs), error=None)
 
 
 @tool(tags=["metrics"])
-async def query_prometheus(
+async def query_prometheus_metrics(
     grafana_client: Hidden[GrafanaClient],
     query: Annotated[str, "The query to execute"],
     time_window: Annotated[Optional[TimeWindow], "Get metrics from the last X minutes"] = "5m",
     range_query: Annotated[Optional[bool], "If True, use range query"] = True,
 ) -> ToolResult:
     """
-    Query the Prometheus metrics as a range query. Remember to use correct namespace and app names.
-    Handles both simple vector and timeseries matrix responses.
+    Query metrics from Prometheus as a range query. Remember to use correct namespace (application) and app names (mysql, catalogue, dispatch, mongodb, mysql, payment, shipping, user, web, rabbitmq, ratings, redis).
+    
+    Examples:
+       - query_prometheus_metrics('sum(rate(up[5m]))', time_window="1m") - get the request rate for the last 5 minutes
     """
     from_time = f"now-{time_window}"
     to_time = "now"
-    result = await grafana_client.query_prometheus(query, from_time, to_time, instant=not range_query)
-    return ToolResult(result=yaml.dump(result), error=None)
+    try:
+        note = await _prometheus_label_validation_message(grafana_client, query, from_time, to_time)
+        result = await grafana_client.query_prometheus(query, from_time, to_time, instant=not range_query)
+    except GrafanaBadRequestError as e:
+        return _grafana_bad_request_result(e)
+    out = prase_to_table(result)
+    if note:
+        out = f"{out}\n\n{note}"
+    return ToolResult(result=out, error=None)
 
 
 @tool(tags=["metrics"])
@@ -158,7 +291,10 @@ async def get_metric_metadata(
     metric_name: Annotated[str, "The name of the metric to get the metadata for"],
 ) -> ToolResult:
     """Get the metadata for a specific metric from the Grafana instance."""
-    metadata = await grafana_client.get_prometheus_metric_metadata(metric_name)
+    try:
+        metadata = await grafana_client.get_metric_metadata(metric_name)
+    except GrafanaBadRequestError as e:
+        return _grafana_bad_request_result(e)
     if not metadata:
         return ToolResult(result="No metadata found for the metric", error=None)
     data = yaml.dump(metadata)
@@ -166,27 +302,43 @@ async def get_metric_metadata(
 
 
 @tool(tags=["metrics"])
-async def list_metric_labels(
+async def list_prometheus_metric_labels(
     grafana_client: Hidden[GrafanaClient],
     metric_name: Annotated[str, "The name of the metric to get the labels for"],
 ) -> ToolResult:
-    """Get the labels for a specific metric from the Grafana instance."""
-    labels = await grafana_client.list_prometheus_label_names(match=metric_name)
+    """Get the labels for a specific metric from the Grafana instance.
+    
+    Examples:
+       - list_prometheus_metric_labels('request_total') - get all labels for the request_total metric
+    """
+    try:
+        labels = await grafana_client.get_label_names(match=metric_name)
+    except GrafanaBadRequestError as e:
+        return _grafana_bad_request_result(e)
     data = yaml.dump(labels)
     return ToolResult(result=data, error=None)
 
 
 @tool(tags=["metrics"])
-async def list_metric_label_values(
+async def list_prometheus_metric_label_values(
     grafana_client: Hidden[GrafanaClient],
     label_name: Annotated[str, "The name of the label to get the values for"],
     metric_name: Annotated[str, "The name of the metric to get the values for"],
     time_window: Annotated[Optional[TimeWindow], "Get metrics from the last X minutes"] = "5m",
 ) -> ToolResult:
-    """Get the values for a specific label from the Grafana instance."""
+    """Get the values for a specific label from the Grafana instance.
+    
+    Examples:
+       - list_prometheus_metric_label_values('dst_service', 'request_total') - get all values for the dst_service label for the request_total metric
+    """
     from_time = f"now-{time_window}"
     to_time = "now"
-    values = await grafana_client.list_prometheus_label_values(label_name=label_name, match=metric_name, from_time=from_time, to_time=to_time)
+    try:
+        values = await grafana_client.get_label_values(
+            label_name=label_name, match=metric_name, from_time=from_time, to_time=to_time
+        )
+    except GrafanaBadRequestError as e:
+        return _grafana_bad_request_result(e)
     data = yaml.dump(values)
     return ToolResult(result=data, error=None)
 
@@ -196,7 +348,10 @@ async def list_metrics(
     grafana_client: Hidden[GrafanaClient],
 ) -> ToolResult:
     """List all metrics from the Grafana instance."""
-    metrics = await grafana_client.list_prometheus_metrics()
+    try:
+        metrics = await grafana_client.list_metrics()
+    except GrafanaBadRequestError as e:
+        return _grafana_bad_request_result(e)
 
     def filter_unwanted_metrics(metrics: list[str]) -> list[str]:
         unwanted_prefixes = ("prometheus", "container_", "go_", "tokio_", "opentelemetry_")
@@ -209,13 +364,16 @@ async def list_metrics(
 MetricsTools = Tools(
     tools=[
         get_app_summary,
-        query_loki,
-        query_prometheus,
         get_edges_summary,
         get_resource_routes,
+        query_loki_logs,
+        query_loki_groups,
+        list_loki_logs_labels,
+        list_loki_label_values,
+        query_prometheus_metrics,
         get_metric_metadata,
-        list_metric_label_values,
-        list_metric_labels,
+        list_prometheus_metric_label_values,
+        list_prometheus_metric_labels,
         list_metrics,
     ]
 )
@@ -229,45 +387,66 @@ if __name__ == "__main__":
 
     async def main():
         grafana_client = GrafanaClient(url=GRAFANA_URL, api_key=GRAFANA_API_KEY)
-        
-        print("Testing get_resource_routes...")
-        result = await get_resource_routes(resource_type="deployment", resource_id="cart")
-        print(result.result)
 
-        print("Testing get_edges_summary...")
-        result = await get_edges_summary(resource="deployments")
-        print(result.result)
         
-        print("Testing range_query_prometheus...")
-        result = await query_prometheus(grafana_client=grafana_client, query='sum(rate(up[5m]))', time_window="60m")
+        result = await query_loki_logs(grafana_client=grafana_client, query='{app="shipping",bleh="bleh"}', time_window="1m")
         print(result.result)
+        exit()
 
-        # Test all metric tooling functions
-        print("Testing get_metric_metadata...")
-        result = await get_metric_metadata(grafana_client=grafana_client, metric_name="up")
+        print("Testing list_metric_labels...")
+        result = await list_prometheus_metric_labels(grafana_client=grafana_client, metric_name="request_total")
         print(result.result)
 
         print("Testing list_metric_label_values...")
-        result = await list_metric_label_values(grafana_client=grafana_client, label_name="instance", metric_name="up")
+        result = await list_prometheus_metric_label_values(grafana_client=grafana_client, label_name="dst_service", metric_name="request_total")
         print(result.result)
 
-        print("Testing list_metric_labels...")
-        result = await list_metric_labels(grafana_client=grafana_client, metric_name="up")
-        print(result.result)
+        # print("Testing list_metric_label_values...")
+        # result = await list_metric_label_values(grafana_client=grafana_client, label_name="dst_service", metric_name="request_total")
+        # print(result.result)
 
-        print("Testing list_metrics...")
-        result = await list_metrics(grafana_client=grafana_client)
-        print(result.result)
-
-
+        exit()
 
         print("Testing get_app_summary...")
         result = await get_app_summary(grafana_client=grafana_client)
         print(result.result)
 
+        print("Testing query_loki_groups...")
+        result = await query_loki_groups(grafana_client=grafana_client, query='{app="shipping"}', time_window="1m", similarity_threshold=0.5)
+        print(result.result)
+
+        print("Testing get_resource_routes...")
+        result = await get_resource_routes(resource_type="deployment", resource_id="cart")
+        print(result.result)
+
         print("Testing query_loki...")
         # For demo purposes - parameters may need to be replaced with real ones that make sense for your environment.
-        result = await query_loki(grafana_client=grafana_client, query='{app="cart"}')
+        result = await query_loki_logs(grafana_client=grafana_client, query='{app="shipping"}', time_window="1m")
+        print(result.result)
+
+        print("Testing get_edges_summary...")
+        result = await get_edges_summary(resource="deployments")
+        print(result.result)
+
+        print("Testing range_query_prometheus...")
+        result = await query_prometheus_metrics(grafana_client=grafana_client, query='sum(rate(up[5m]))', time_window="60m")
+        print(result.result)
+
+        # Test all metric tooling functions
+        print("Testing get_metric_metadata...")
+        result = await get_metric_metadata(grafana_client=grafana_client, metric_name="request_total")
+        print(result.result)
+
+        print("Testing list_metric_label_values...")
+        result = await list_prometheus_metric_label_values(grafana_client=grafana_client, label_name="instance", metric_name="up")
+        print(result.result)
+
+        print("Testing list_metric_labels...")
+        result = await list_prometheus_metric_labels(grafana_client=grafana_client, metric_name="up")
+        print(result.result)
+
+        print("Testing list_metrics...")
+        result = await list_metrics(grafana_client=grafana_client)
         print(result.result)
 
     asyncio.run(main())

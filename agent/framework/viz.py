@@ -1,3 +1,4 @@
+
 from mermaid import Mermaid
 
 from framework import Flow
@@ -29,7 +30,8 @@ def build_mermaid(flow):
         visited.add(node_id)
         if isinstance(node, Flow):
             node.start_node and parent and link(parent, get_id(node.start_node), label)
-            lines.append(f"\n    subgraph sub_flow_{get_id(node)}[{type(node).__name__}]")
+            node_name = getattr(node, "_flow_trace_name", None) or type(node).__name__
+            lines.append(f"\n    subgraph sub_flow_{get_id(node)}[{node_name}]")
             node.start_node and walk(node.start_node, parent, label)
             for label, nxt in node.successors.items():
                 node.start_node and walk(nxt, get_id(node.start_node), label) or (

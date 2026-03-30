@@ -14,6 +14,7 @@ async def assign_task(
     assignee: Annotated[str, "The slug of an assignee to start the new task in (e.g., {available_agents})"],
     message: Annotated[str, "The initial user message or instructions for this new task."],
     todos: Annotated[str, "The initial todo list in markdown checklist format for the new task."],
+    depth: Hidden[int] = 0,
 ) -> ToolResult:
     """
     This will let you create a new task instance in the chosen mode using your provided message and initial todo list.
@@ -31,6 +32,7 @@ async def assign_task(
         message=message,
         todos_str=todos,
         feedback_tools=FeedbackTools,
+        depth=depth,
     )
 
 
@@ -95,6 +97,7 @@ async def update_todo(
     """
     task: Task
     task.todo_list = parse_markdown_checklist(todos)
+    task.save()
     return ToolResult(result="TODO list updated", error=None)
 
 
@@ -105,7 +108,7 @@ async def provide_feedback(
     approve: Annotated[bool, "Whether to approve the task."] = False,
 ) -> ToolResult:
     """
-    Provide feedback on the task.
+    Provide feedback on the task. If you are approving task, do not provide any feedback.
 
     Usage:
     provide_feedback(approve=True)
