@@ -30,7 +30,7 @@ def _row_to_dict(row: TaskModel) -> dict:
         "messages_history": _loads(row.messages_history, []),
         "iterations_count": row.iterations_count,
         "iterations_limit": row.iterations_limit,
-        "tool_usage": _loads(row.tool_usage, []),
+        "total_usage": _loads(row.total_usage, {}),
         "usage": _loads(row.usage, {}),
         "created_at": row.created_at,
     }

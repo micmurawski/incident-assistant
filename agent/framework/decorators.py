@@ -2,11 +2,10 @@ import inspect
 import weakref
 from typing import Any, Callable
 
-from pydantic import BaseModel, Field, create_model
-
 from framework import (AsyncBatchNode, AsyncNode, AsyncParallelBatchNode,
                        BatchNode, Node)
 from framework.utils import _deep_materialize
+from pydantic import BaseModel, Field, create_model
 
 # Sentinel: return NO_APPEND from a batch node to exclude that item from the stored results list.
 NO_APPEND = object()

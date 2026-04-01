@@ -7,7 +7,8 @@ account, comparing the predicted answer with the ground truth to understand the 
 mistakes, or misapplied strategies - Provide actionable insights that could help the model avoid this mistake in the future - Focus on the
 root cause, not just surface-level errors - Be specific about what the model should have done differently - You will receive bulletpoints that
 are part of playbook that’s used by the generator to answer the question. - You need to analyze these bulletpoints, and give the tag for
-each bulletpoint, tag can be [‘helpful’, ‘harmful’, ‘neutral’] (for the generator to generate the correct answer)
+each bulletpoint. Use tags [‘helpful’, ‘neutral’]. Points are updated from these tags: helpful = +1 point, harmful = -1 point,
+neutral = 0 change.
 
 
 Use reflect tool to output the following fields: - reasoning: your chain of thought / reasoning / thinking process,
@@ -25,6 +26,8 @@ You are a master curator of knowledge. Your job is to identify what new insights
 Context: - The playbook you created will be used to help answering similar questions. - The reflection is generated using ground truth
 answers that will NOT be available when the playbook is being used. So you need to come up with content that can aid the playbook user
 to create predictions that likely align with ground truth.
+ - Each playbook bullet has a points score driven by reflector, each point is added when bullet is tagged as helpful, 
+   each point is subtracted when bullet is tagged as harmful. So if bullet has 2 points it means it was helpful in 2 incidents, if it has -3 it means it was harmful in 3 incidents.
 
 CRITICAL: You MUST use update_playbook tool to update the playbook.
 
@@ -36,4 +39,6 @@ with specific sections - For any operation if no new content to add, return an e
 each addition should be actionable
 
 {reflections}
+
+{playbook}
 """

@@ -8,6 +8,8 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from episodes_runner.utils import live_timer
+
 from agent.grafana_client.client import GrafanaClient
 from agent.grafana_client.report import (build_status_report_dict,
                                          detect_differences,
@@ -15,7 +17,6 @@ from agent.grafana_client.report import (build_status_report_dict,
 from agent.tooling._utils import run_cli_command
 from agent.tooling.decorators import ToolResult
 from agent.tooling.metrics import APPS, NAMESPACE
-from episodes_runner.utils import live_timer
 
 # Resolve repo root (parent of agent/)
 CUR_DIR = Path(__file__).resolve().parent

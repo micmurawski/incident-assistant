@@ -2,9 +2,10 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agent.rlm.container import (ContainerRLMSandbox,
-                                     ContainersResourceManager)
+                                     ContainersResourceManager,
+                                     DataScienceSandbox)
 
-__all__ = ["ContainerRLMSandbox", "ContainersResourceManager"]
+__all__ = ["ContainerRLMSandbox", "ContainersResourceManager", "DataScienceSandbox"]
 
 
 def __getattr__(name: str):

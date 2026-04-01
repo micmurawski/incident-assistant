@@ -37,8 +37,26 @@ class Task:
     consecutive_mistakes_limit: int = field(default=3)
     tool_usage: list[ToolUsage] = field(default_factory=list)
     usage: dict = field(default_factory=dict)
+    total_usage: dict = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now())
     resolved_at: datetime | None = None
+
+    def get_tool_usage(self) -> list[ToolUsage]:
+        # collect tool usage from all messages in messages_history
+        tool_usage = []
+        for message in self.messages_history:
+            if isinstance(message.get("content"), list):
+                for item in message.get("content"):
+                    if item.get("type") == "tool_use":
+                        tool_usage.append(item)
+        return tool_usage
+
+    def feedback(self, message: ApiMessage):
+        if message.get("role") != "user":
+            raise ValueError("Message is not a user message")
+        self.conversation.append(message)
+        self.messages_history.append(message)
+        self.save()
 
     def __repr__(self):
         todos = []
@@ -71,8 +89,8 @@ class Task:
             "iterations_limit": self.iterations_limit,
             "consecutive_mistakes_count": self.consecutive_mistakes_count,
             "consecutive_mistakes_limit": self.consecutive_mistakes_limit,
-            "tool_usage": self.tool_usage,
             "usage": self.usage,
+            "total_usage": self.get_total_usage(),
             "created_at": self.created_at,
             "resolved_at": self.resolved_at,
         }
@@ -132,11 +150,6 @@ class Task:
             self.status = TaskStatus.DONE
             self.resolved_at = datetime.now()
             return True
-
-    def add_feedback(self, feedback: str):
-        if self.status != TaskStatus.AWAITING_FEEDBACK:
-            raise ValueError("Task is not awaiting feedback")
-        self.conversation.append({"role": "user", "content": feedback})
 
     def remove_all_discarded(self):
         root = [self.root] if self.root else [self]
@@ -198,8 +211,8 @@ class Task:
             "root": self.root.id if self.root else "",
             "assignee": self.assignee or "",
             "assigner": self.assigner or "",
-            "tool_usage": json.dumps(self.tool_usage),
             "usage": json.dumps(self.usage),
+            "total_usage": json.dumps(self.get_total_usage()),
             "iterations_count": self.iterations_count,
             "iterations_limit": self.iterations_limit,
             "conversation": conv,
@@ -220,6 +233,29 @@ class Task:
         return swap_roles_in_conversation(
             get_conversation_text_messages(copy.deepcopy(self.conversation), include_actions=include_actions)
         )
+
+    @classmethod
+    def create_root_task(cls, assignee: str, assigner: str, content: str, id: str | None = None) -> "Task":
+        if id is None:
+            id = str(uuid4())
+
+        initial_message = {
+            "role": "user",
+            "content": content
+        }
+        goal = cls(
+            id=id,
+            assignee=assignee,
+            assigner=assigner,
+            conversation=[
+                initial_message
+            ],
+            messages_history=[
+                initial_message
+            ]
+        )
+        goal.save()
+        return goal
 
 
 def swap_roles_in_conversation(conversation: list[dict]) -> list[dict]:
@@ -260,7 +296,7 @@ def get_conversation_text_messages(conversation: list[dict], include_actions: bo
                     selected_content.append(item)
                 elif include_actions and item.get("type") == "tool_use":
                     selected_content.append(
-                        {"type": "text", "text": f"[Action: {item.get('name')}({json.dumps(item.get('input', {}))})]"})
+                        {"type": "text", "text": f"[Action (task_id: {item.get('id', 'unknown')}): {item.get('name')}({json.dumps(item.get('input', {}))})]"})
                 elif include_actions and item.get("type") == "tool_result":
                     res = item.get('content', '')
                     if isinstance(res, str) and len(res) > 200:

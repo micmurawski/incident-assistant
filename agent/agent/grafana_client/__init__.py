@@ -21,10 +21,12 @@ from .logs import (count_error_logs, fetch_error_logs, get_error_counts_by_app,
 from .metrics import (WINDOWS, get_cpu_usage, get_http_error_counts,
                       get_latency_percentiles, get_memory_usage,
                       get_request_rate, get_success_rate)
+from .pandas_client import GrafanaPandasClient
 from .report import build_status_report, format_status_report
 
 __all__ = [
     "GrafanaClient",
+    "GrafanaPandasClient",
     "Datasource",
     "get_latency_percentiles",
     "get_http_error_counts",

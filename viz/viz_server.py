@@ -5,9 +5,8 @@ import traceback
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
@@ -17,7 +16,7 @@ sys.path.append(os.path.join(os.getcwd(), "agent"))
 try:
     from agent.persistence.model import TaskModel
     from agent.persistence.settings import init_db
-    import peewee
+
     # Initialize and bind the database
     print("Initializing database...")
     init_db()
@@ -40,6 +39,17 @@ class Feedback(BaseModel):
     task_id: str
     root_id: str
     feedback: str
+
+
+def _parse_json_list(raw_value: Optional[str]) -> list:
+    """Parse a JSON array payload from DB text fields."""
+    if not raw_value:
+        return []
+    try:
+        value = json.loads(raw_value)
+        return value if isinstance(value, list) else []
+    except json.JSONDecodeError:
+        return []
 
 @app.get("/", response_class=HTMLResponse)
 async def get_index(request: Request):
@@ -67,15 +77,16 @@ async def get_tasks(root_id: str):
         query = TaskModel.select().where(TaskModel.root_id == root_id)
         tasks = []
         for task in query:
+            messages_history = _parse_json_list(task.messages_history)
             tasks.append({
                 "id": task.id,
                 "status": task.status,
-                "todo_list": json.loads(task.todo_list) if task.todo_list else [],
-                "children": json.loads(task.children) if task.children else [],
+                "todo_list": _parse_json_list(task.todo_list),
+                "children": _parse_json_list(task.children),
                 "parent": task.parent,
                 "assignee": task.assignee,
                 "assigner": task.assigner,
-                "conversation": json.loads(task.conversation) if task.conversation else [],
+                "messages_history": messages_history,
                 "created_at": task.created_at.isoformat() if isinstance(task.created_at, datetime) else task.created_at,
             })
         return {"tasks": tasks}
@@ -103,14 +114,14 @@ async def select_task(selection: Selection):
 
 @app.post("/api/feedback")
 async def add_feedback(fb: Feedback):
-    """Inject feedback into a task's conversation in the database."""
+    """Inject feedback into a task's messages_history in the database."""
     if TaskModel is None:
         return JSONResponse(status_code=500, content={"error": "TaskModel not initialized."})
     try:
         # Load the task
         task_row = TaskModel.get((TaskModel.root_id == fb.root_id) & (TaskModel.id == fb.task_id))
-        conv = json.loads(task_row.conversation) if task_row.conversation else []
-        conv.append({"role": "user", "content": fb.feedback})
+        history = json.loads(task_row.messages_history) if task_row.messages_history else []
+        history.append({"role": "user", "content": fb.feedback})
         
         # Update status if needed (e.g. from AWAITING_FEEDBACK to IN_PROGRESS)
         status = task_row.status
@@ -118,7 +129,7 @@ async def add_feedback(fb: Feedback):
             status = "IN_PROGRESS"
             
         TaskModel.update(
-            conversation=json.dumps(conv),
+            messages_history=json.dumps(history),
             status=status,
             updated_at=datetime.now()
         ).where((TaskModel.root_id == fb.root_id) & (TaskModel.id == fb.task_id)).execute()

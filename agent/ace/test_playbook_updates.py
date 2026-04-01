@@ -96,7 +96,7 @@ class TestPlaybookUpdates(unittest.TestCase):
             pb.apply_operations(
                 [
                     {
-                        "action": "ADD",
+                        "action": "UPDATE",
                         "section": "nope",
                         "bullet_id": "x",
                         "content": "y",
@@ -119,6 +119,77 @@ class TestPlaybookUpdates(unittest.TestCase):
                 ]
             )
         self.assertIn("Unknown bullet", str(ctx.exception))
+
+    def test_add_creates_missing_section(self):
+        pb = _sample_playbook()
+        pb.apply_operations(
+            [
+                {
+                    "action": "ADD",
+                    "section": "new_section",
+                    "bullet_id": "b9",
+                    "content": "new content",
+                }
+            ]
+        )
+        self.assertEqual(pb.sections[-1].id, "new_section")
+        self.assertEqual(len(pb.sections[-1].bullets), 1)
+        self.assertEqual(pb.sections[-1].bullets[0].id, "b9")
+        self.assertEqual(pb.sections[-1].bullets[0].content, "new content")
+
+    def test_delete_removes_section_when_empty(self):
+        pb = _sample_playbook()
+        pb.apply_operations(
+            [
+                {
+                    "action": "DELETE",
+                    "section": "sec_a",
+                    "bullet_id": "b1",
+                    "content": "",
+                },
+                {
+                    "action": "DELETE",
+                    "section": "sec_a",
+                    "bullet_id": "b2",
+                    "content": "",
+                },
+            ]
+        )
+        self.assertTrue(all(section.id != "sec_a" for section in pb.sections))
+
+    def test_to_dict_excludes_empty_sections(self):
+        pb = _sample_playbook()
+        payload = pb.to_dict()
+        self.assertEqual(len(payload["sections"]), 1)
+        self.assertIn("sec_a", payload["sections"][0])
+
+    def test_to_markdown_excludes_empty_sections(self):
+        pb = _sample_playbook()
+        md = pb.to_markdown()
+        self.assertIn("### sec_a", md)
+        self.assertNotIn("### sec_b", md)
+
+    def test_apply_bullet_tags_helpful_adds_helpful_point(self):
+        pb = _sample_playbook()
+        self.assertEqual(pb.sections[0].bullets[0].useful, 0)
+        self.assertEqual(pb.sections[0].bullets[0].helpful, 0)
+        pb.apply_bullet_tags([{"id": "b1", "tag": "helpful"}])
+        self.assertEqual(pb.sections[0].bullets[0].useful, 0)
+        self.assertEqual(pb.sections[0].bullets[0].helpful, 1)
+
+    def test_apply_bullet_tags_harmful_decrements_helpful_point(self):
+        pb = _sample_playbook()
+        self.assertEqual(pb.sections[0].bullets[0].useful, 0)
+        self.assertEqual(pb.sections[0].bullets[0].helpful, 0)
+        pb.apply_bullet_tags([{"id": "b1", "tag": "harmful"}])
+        self.assertEqual(pb.sections[0].bullets[0].useful, 0)
+        self.assertEqual(pb.sections[0].bullets[0].helpful, -1)
+
+    def test_apply_bullet_tags_unknown_bullet_raises(self):
+        pb = _sample_playbook()
+        with self.assertRaises(PlaybookOperationError) as ctx:
+            pb.apply_bullet_tags([{"id": "missing", "tag": "helpful"}])
+        self.assertIn("Unknown bullet id", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,31 @@
 import yaml
+from ace.playbook_core import Playbook
 
-from agent.persistence.task_queries import Task, fetch_last_root_tasks
+from agent.persistence.task_queries import Task
+
+MAX_TOOL_RESULT_LENGTH = 1000
+
+
+def collect_data_on_task(root: Task, data: dict):
+    if root.assignee not in data:
+        data[root.assignee] = []
+
+    data[root.assignee].append(
+        {
+            "conversation": root.conversation,
+            "trajectory": parse_trajectory(root.messages_history),
+        }
+    )
+    for child_task in root.children:
+        collect_data_on_task(child_task, data)
+
+
+def trim_content(content: str) -> str:
+    if len(content) > MAX_TOOL_RESULT_LENGTH:
+        head = content[:MAX_TOOL_RESULT_LENGTH // 2]
+        tail = content[-MAX_TOOL_RESULT_LENGTH // 2:]
+        return f"{head}...[trimmed {len(content) - MAX_TOOL_RESULT_LENGTH} characters]...{tail}"
+    return content
 
 
 def merge_tool_uses(messages: list[dict]) -> list[dict]:
@@ -47,6 +72,30 @@ def merge_tool_uses(messages: list[dict]) -> list[dict]:
     return merged
 
 
+def trim_trajectory(messages: list[dict]) -> list[dict]:
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if item.get("type") == "tool_use":
+                if item.get("name") == "assign_task":
+                    continue
+                else:
+                    # trim result.content
+                    content_length = len(item["result"]["content"])
+                    if content_length > MAX_TOOL_RESULT_LENGTH:
+                        item["result"]["content"] = trim_content(
+                            item["result"]["content"]
+                        )
+    return messages
+
+
+def parse_trajectory(messages: list[dict]) -> list[dict]:
+    merged = merge_tool_uses(messages)
+    return merged
+
+
 def get_reflections(messages: list[dict]) -> list[dict]:
     reflections = []
     for message in messages:
@@ -54,36 +103,40 @@ def get_reflections(messages: list[dict]) -> list[dict]:
         if not isinstance(content, list):
             continue
         for item in content:
-            if item.get("type") == "tool_use":
-                if item.get("name") == "reflect":
-                    reflections.append(item.get("input"))
+            if (
+                item.get("type") == "tool_use"
+                and item.get("name") == "reflect"
+                and item.get("result", {}).get("is_error") is not True
+            ):
+                reflections.append(item.get("input"))
     return reflections
 
-def process_task(task: Task) -> dict:
-    query = task.conversation[0]["content"]
-    assessment = task.conversation[-1]["content"]
-    trajectory = merge_tool_uses(task.messages_history[:-1])
-    trajectory_yaml = yaml.dump(trajectory, indent=4, sort_keys=False)
-    return {
-        "query": query,
-        "assessment": assessment,
-        "trajectory": trajectory_yaml,
-    }
 
+def create_details_for_reflector(task: Task, playbook: Playbook) -> str:
+    query = task.messages_history[0]["content"]
 
-def create_details_for_reflector(task: Task) -> str:
-    data = process_task(task)
+    assessment_msg = task.messages_history[-1]
+    assessment = ""
+    if isinstance(assessment_msg["content"], str):
+        assessment = assessment_msg["content"]
+    else:
+        for content in assessment_msg["content"]:
+            if content.get("type") == "text":
+                assessment = content.get("text")
+                break
+
+    trajectory_yaml = yaml.dump(merge_tool_uses(task.messages_history[1:-1]), indent=4, sort_keys=False)
 
     res = "## Task\n\n"
-    res += f"{data['query']}\n\n"
+    res += f"{query}\n\n"
     res += "## Assessment\n\n"
-    res += f"{data['assessment']}\n\n"
+    res += f"{assessment}\n\n"
     res += "## Trajectory\n\n"
-    res += f"{data['trajectory']}\n\n"
+    res += f"{trajectory_yaml}\n\n"
+    res += "## Playbook\n\n"
+    res += f"{playbook.to_markdown(without_points=True)}\n\n"
     return res
 
 
 if __name__ == "__main__":
-    tasks = fetch_last_root_tasks(last_n=1)
-    for task in tasks:
-        process_task(task)
+    pass

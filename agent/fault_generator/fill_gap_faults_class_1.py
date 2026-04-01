@@ -21,9 +21,6 @@ import uuid
 from itertools import product
 from pathlib import Path
 
-from openinference.instrumentation import using_attributes
-from opentelemetry import trace
-
 from fault_generator.fault_vault_gaps import (default_vault_dir,
                                               format_gap_report, gaps_class_1)
 from fault_generator.saboteur_chaos_class_1 import (CHAOS_TEMPLATES,
@@ -31,6 +28,8 @@ from fault_generator.saboteur_chaos_class_1 import (CHAOS_TEMPLATES,
                                                     PROMPT_TEMPLATE, REPO_ROOT,
                                                     WORKTREES_DIR,
                                                     create_agent)
+from openinference.instrumentation import using_attributes
+from opentelemetry import trace
 
 
 def _load_gen_excerpt() -> str:

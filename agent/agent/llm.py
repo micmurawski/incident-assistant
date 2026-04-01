@@ -5,6 +5,10 @@ from abc import ABC
 from typing import Any, AsyncIterator, List, Optional, TypeVar
 from uuid import uuid4
 
+from framework import AsyncFlow
+from framework.decorators import end, node
+from framework.viz import build_mermaid, to_png
+
 from agent.context_ops import SummarizeResponse, summarize_conversation
 from agent.providers import build_api_handler
 from agent.providers.base import ApiHandler
@@ -13,9 +17,6 @@ from agent.tasks.tasks import Task
 from agent.tracing import trace_flow
 from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
                          StreamChunk)
-from framework import AsyncFlow
-from framework.decorators import end, node
-from framework.viz import build_mermaid, to_png
 
 T = TypeVar('T')
 
@@ -40,16 +41,26 @@ def _debug_llm(msg: str) -> None:
 
 
 adjectives = [
-    "thinking",
-    "reflecting",
-    "ruminating",
-    "pondering",
-    "concluding",
-    "contemplating",
-    "considering",
-    "evaluating",
-    "deciding",
-    "discombobulating",
+    "zazzing",
+    "derping",
+    "vibing",
+    "noodling",
+    "flummoxing",
+    "dawdling",
+    "frogging",
+    "borking",
+    "yeeting",
+    "memeing",
+    "futzing",
+    "lollygagging",
+    "booping",
+    "jazzercising",
+    "swooshing",
+    "blooping",
+    "bouncing",
+    "moseying",
+    "galumphing",
+    "schmoozing",
 ]
 
 
@@ -346,7 +357,6 @@ class LLMAgent(ABC):
 
         if task:
             task.messages_history.extend(it.get_response(include_reasoning=True))
-            task.tool_usage.extend(it.tool_use)
             if it.usage_summary:
                 for k, v in it.usage_summary.items():
                     task.usage[k] = task.usage.get(k, 0) + v

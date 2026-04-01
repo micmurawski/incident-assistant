@@ -1,6 +1,5 @@
-from typing import Annotated
+from typing import Annotated, Optional
 
-from agent.tasks.executor import TaskExecutor
 from agent.tasks.formatting import parse_markdown_checklist
 from agent.tasks.tasks import Task
 from agent.tooling.decorators import ToolResult
@@ -14,17 +13,32 @@ async def assign_task(
     assignee: Annotated[str, "The slug of an assignee to start the new task in (e.g., {available_agents})"],
     message: Annotated[str, "The initial user message or instructions for this new task."],
     todos: Annotated[str, "The initial todo list in markdown checklist format for the new task."],
+    session_id: Annotated[
+        Optional[str],
+        "Omit for a brand-new conversation. To continue the same thread with the same assignee, pass the exact UUID from the end of the previous assign_task tool result (the line \"session_id: <uuid>\"). That loads prior messages, then appends this message and todos. Wrong or unknown id returns an error.",
+    ] = None,
     depth: Hidden[int] = 0,
 ) -> ToolResult:
     """
-    This will let you create a new task instance in the chosen mode using your provided message and initial todo list.
-    Your are able only to assign tasks to the following agents: {available_agents}
-    Usage:
-    assign_task(assignee=<assignee_slug>, message="Implement user authentication", todos="[ ] Set up auth middleware\n[ ] Create login endpoint\n[ ] Add session management\n[ ] Write tests")
+    Delegate work to another agent: creates a child task with your `message` and `todos`, runs that agent, and returns their answer.
 
-    Example:
-    assign_task(assignee=<assignee_slug>, message="Implement user authentication", todos="[ ] Set up auth middleware\n[ ] Create login endpoint\n[ ] Add session management\n[ ] Write tests")
+    **Who you can assign:** only agents listed in `{available_agents}` — use each agent’s slug as `assignee`.
+
+    **Session / continuity**
+    - First time or fresh topic: leave `session_id` out. The result will end with `session_id: <uuid>` — save it if you need to continue later.
+    - Same assignee, same thread: pass that `session_id` so prior chat for this pair is restored before your new instructions and todo list.
+    - If you pass a `session_id` that does not exist, the tool fails with a clear error (do not invent ids).
+
+    **Todos:** full markdown checklist string; the assignee is guided to work through it and report back.
+
+    **Example — new subtask**
+    assign_task(assignee="devops_agent", message="List pods in namespace prod and summarize unhealthy ones.", todos="[ ] Query pods\\n[ ] Summarize issues")
+
+    **Example — continue session** (use uuid from your last assign_task result)
+    assign_task(assignee="devops_agent", message="Now check logs for the failing pods.", todos="[ ] Pull logs\\n[ ] Summarize errors", session_id="<paste-uuid-from-previous-result>")
     """
+    from agent.tasks.executor import TaskExecutor
+
     return await TaskExecutor.assign_and_run(
         parent_task=task,
         assigner=task.assignee,
@@ -33,6 +47,7 @@ async def assign_task(
         todos_str=todos,
         feedback_tools=FeedbackTools,
         depth=depth,
+        session_id=session_id,
     )
 
 
@@ -115,6 +130,8 @@ async def provide_feedback(
     provide_feedback(discard=True)
     provide_feedback(feedback="The task is not complete. Can you please try to make sure that second todo is finished?")
     """
+    if feedback is None and not discard and not approve:
+        return ToolResult(result=None, error="Please provide feedback, approve or discard the task.")
     return ToolResult(result={"feedback": feedback, "discard": discard, "approve": approve}, error=None)
 
 PlanningTools = Tools(tools=[assign_task, update_todo])

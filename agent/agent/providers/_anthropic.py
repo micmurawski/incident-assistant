@@ -365,9 +365,6 @@ class AnthropicHandler(ApiHandler):
         return ""
 
     async def count_tokens(self, content: List[AnthropicMessageParam], tools: List[dict] | None = None) -> int:
-        print("content: ", type(content[0]["content"]))
-        with open("debug_content.json", "w") as f:
-            f.write(json.dumps(content, indent=2))
         """
         Count tokens for the given messages using Anthropic's API.
 

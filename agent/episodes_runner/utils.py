@@ -23,7 +23,7 @@ def collect_meaningful_actions(goal: Task) -> tuple[list[str], set[str], bool]:
     meaningful_actions = []
     modified_files = set()
     for t in all_tasks:
-        for tu in t.tool_usage:
+        for tu in t.get_tool_usage():
             name = tu.get("name")
             if name in DEPLOY_TOOLS:
                 deploy_app_called = True

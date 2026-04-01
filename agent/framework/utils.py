@@ -3,9 +3,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable
 
-from pydantic import BaseModel, Field, create_model
-
 from framework import Node
+from pydantic import BaseModel, Field, create_model
 
 # JSON-serializable primitives; anything else (dict/list we recurse; iterators/models we materialize).
 _JSON_PRIMITIVES = (type(None), str, int, float, bool)

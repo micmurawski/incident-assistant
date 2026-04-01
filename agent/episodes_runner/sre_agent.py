@@ -26,6 +26,7 @@ from agent.tooling.kubectl import (KubectlReadTools, KubectlWriteTools,
                                    kubectl_get_resources)
 from agent.tooling.metrics import MetricsTools
 from agent.tooling.planning import PlanningTools
+from ace.playbook_core import Playbook
 
 JUDGE_SYSTEM_PROMPT = """
 You are a judge agent that evaluates the performance of the SRE Agent.
@@ -83,14 +84,21 @@ def configure_settings(project_name: str, provider: str = "minimax") -> None:
 @contextmanager
 def create_sre_agent(
     name: str,
-    playbooks: dict[str, str] = None,
+    enable_playbooks: bool = False,
     provider: str = "minimax",
     project_name: str = "sre-agent"
 ) -> LLMAgent:
 
     tracer = configure_settings(project_name, provider)
 
-    if playbooks is None:
+    if enable_playbooks:
+        playbooks = {
+            "incident_commander": "\n" + Playbook.load_last_revision_of("incident_commander").to_markdown(without_bullets_ids=True, positive_only=False, without_points=True),
+            "monitoring_agent": "\n" + Playbook.load_last_revision_of("monitoring_agent").to_markdown(without_bullets_ids=True, positive_only=False, without_points=True),
+            "devops_agent": "\n" + Playbook.load_last_revision_of("devops_agent").to_markdown(without_bullets_ids=True, positive_only=False, without_points=True),
+            "coder_agent": "\n" + Playbook.load_last_revision_of("coder_agent").to_markdown(without_bullets_ids=True, positive_only=False, without_points=True),
+        }
+    else:
         playbooks = {}
     api_key_path = Path("/Users/micmur/GITHUB/o8s/api_key.json")
     workspace_path = Path("/Users/micmur/GITHUB/o8s/workspace")
@@ -112,12 +120,12 @@ def create_sre_agent(
 
     incident_commander_tools = PlanningTools | deploy_app
     metrics_tools = MetricsTools | kubectl_get_resources | PlanningTools
-    
+
     devops_read_tools = CliTools | CodebaseReadTools | KubectlReadTools | EksReadTools | PlanningTools
-    devops_write_tools = CodebaseWriteTools | CliTools  | KubectlWriteTools | EksWriteTools | PlanningTools
-    
+    devops_write_tools = CodebaseWriteTools | CliTools | KubectlWriteTools | EksWriteTools | PlanningTools
+
     coder_tools = CodebaseReadTools | CodebaseWriteTools | CliTools | PlanningTools
-    
+
     devops_tools = devops_read_tools | devops_write_tools
 
     incident_commander = LLMAgent(
@@ -153,7 +161,7 @@ def create_sre_agent(
         }
     )
     devops_agent.register()
-    
+
     coder_agent = LLMAgent(
         name="coder_agent",
         system_prompt=SYSTEM_PROMPTS["coder_agent"] + "\n" + playbooks.get("coder_agent", ""),
@@ -164,7 +172,7 @@ def create_sre_agent(
         }
     )
     coder_agent.register()
-    
+
     incident_commander.get_flow_graph_png("incident_commander.png")
     # return incident_commander
     with tracer.start_as_current_span(name):
@@ -174,31 +182,24 @@ def create_sre_agent(
 if __name__ == "__main__":
     init_db()
 
-    
-
     async def main():
-       SESSION_ID = str(uuid.uuid4())
-       sre_agent: LLMAgent
-       with create_sre_agent(name="sre-agent-testing-" + SESSION_ID) as sre_agent:
-
-                goal = Task(
-                    id=SESSION_ID,
-                    assignee="incident_commander",
-                    assigner="human",
-                    conversation=[
-                        {
-                            "role": "user",
-                            "content": "Please ask coder_agent, monitoring_agent and devops_agent to list their tools and their capabilities. And show me the report about their capabilities. You may achieve this by assigning tasks to them."
-                        }
-                    ]
-                )
-                goal.save()
-                shared = {
-                    "task": goal,
-                    "messages": goal.conversation,
-                    "depth": 0
-                }
-                result = await sre_agent.call(shared)
-                goal.save()
-                print(result)
+        SESSION_ID = str(uuid.uuid4())
+        sre_agent: LLMAgent
+        with create_sre_agent(name="sre-agent-testing-" + SESSION_ID) as sre_agent:
+            goal = Task.create_root_task(
+                id=SESSION_ID,
+                assignee="incident_commander",
+                assigner="human",
+                content="Please ask coder_agent to give you list of tools and their capabilities, can you also make sure that coder_agent will ask devops_agent to give you list of tools and their capabilities? At the end I want you to use previous coder_agent session and ask him what was his last task."
+                #content="Please ask coder_agent, monitoring_agent and devops_agent to list their tools and their capabilities. And show me the report about their capabilities. You may achieve this by assigning tasks to them. Do not make list_metrics tool call."
+            )
+            goal.save()
+            shared = {
+                "task": goal,
+                "messages": goal.conversation,
+                "depth": 0
+            }
+            result = await sre_agent.call(shared)
+            goal.feedback({"role": "user", "content": "Task was completed. But your deputies also have deputies under them. And we are missing their list of tools."})
+            print(result)
     asyncio.run(main())

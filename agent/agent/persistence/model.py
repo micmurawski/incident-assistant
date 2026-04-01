@@ -16,8 +16,8 @@ class TaskModel(Model):
     root = TextField()
     assignee = TextField()
     assigner = TextField()
-    tool_usage = TextField()
     usage = TextField(default="{}")
+    total_usage = TextField(default="{}")
     iterations_count = IntegerField(default=0)
     iterations_limit = IntegerField(default=20)
     conversation = TextField()
@@ -29,3 +29,18 @@ class TaskModel(Model):
     class Meta:
         table_name = "tasks"
         primary_key = CompositeKey("root_id", "id")
+
+
+class SessionMessagesModel(Model):
+    """Snapshot of shared messages for an assign_task session."""
+
+    assigner = CharField()
+    assignee = CharField()
+    session_id = CharField()
+    messages_json = TextField()
+    created_at = DateTimeField(default=datetime.now)
+    updated_at = DateTimeField(default=datetime.now)
+
+    class Meta:
+        table_name = "session_messages"
+        primary_key = CompositeKey("assigner", "assignee", "session_id")

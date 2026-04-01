@@ -1,4 +1,5 @@
 import asyncio
+import io
 import socket
 import time
 from pathlib import Path
@@ -6,15 +7,22 @@ from typing import Dict, List
 
 import docker
 import httpx
+import pandas as pd
 
 _SANDBOX_SERVER = Path(__file__).resolve().parent / "sandbox_server.py"
 
 
 class ContainerRLMSandbox:
-    def __init__(self, container_name: str = "llm-sandbox", port: int | None = None):
+    def __init__(
+        self,
+        container_name: str = "llm-sandbox",
+        port: int | None = None,
+        image: str = "python:3.12-slim",
+    ):
         self.client: docker.DockerClient | None = None
         self.container_name = container_name
         self.port = port
+        self.image = image
         self._http_base: str = ""
         self.history: List[Dict[str, str]] = []
         self.container = None
@@ -74,7 +82,7 @@ class ContainerRLMSandbox:
         raise TimeoutError(f"Sandbox /health did not become ready within {timeout}s: {last_err}")
 
     def start(self) -> None:
-        print("Booting secure sandbox...")
+        print(f"Booting secure sandbox ({self.image})...")
 
         try:
             old_container = self._docker().containers.get(self.container_name)
@@ -97,14 +105,14 @@ class ContainerRLMSandbox:
         )
 
         self.container = self._docker().containers.run(
-            "python:3.13-alpine",
+            self.image,
             name=self.container_name,
             detach=True,
             volumes={str(_SANDBOX_SERVER): {"bind": "/app/sandbox_server.py", "mode": "ro"}},
             working_dir="/app",
             command=["sh", "-c", boot],
-            mem_limit="512m",
-            nano_cpus=500000000,
+            mem_limit="1g",  # Increased for DS tasks
+            nano_cpus=1000000000,  # Increased to 1 CPU
             network_mode="bridge",
             auto_remove=True,
             **port_kw,
@@ -134,24 +142,53 @@ class ContainerRLMSandbox:
             file_path = Path(file_path)
         if not file_path.is_file():
             raise FileNotFoundError(f"File not found: {file_path}")
-        if not file_path.suffix == ".py":
-            raise ValueError(f"File is not a Python file: {file_path}")
         with open(file_path, "r") as f:
             code = f.read()
         return await self.execute_code(code)
 
+    async def upload_file(self, content: str, filename: str) -> None:
+        """Upload a file to the sandbox."""
+        import base64
+        b64_content = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+        code = f"""
+import base64
+with open({repr(filename)}, "wb") as f:
+    f.write(base64.b64decode({repr(b64_content)}))
+"""
+        await self.execute_code(code)
+
+    async def upload_dataframe(self, df: 'pd.DataFrame', name: str) -> None:
+        """Upload a pandas DataFrame to the sandbox as a CSV variable."""
+        csv_data = df.to_csv(index=False)
+        code = f"""
+import pandas as pd
+import io
+{name} = pd.read_csv(io.StringIO({repr(csv_data)}))
+print(f"Loaded DataFrame '{name}' with {{len({name})}} rows.")
+"""
+        return await self.execute_code(code)
+
+    async def download_file(self, filename: str) -> str:
+        """Download a file from the sandbox."""
+        code = f"""
+with open({repr(filename)}, "r") as f:
+    print(f.read())
+"""
+        return await self.execute_code(code)
+
     async def pip_install(self, packages: list[str]) -> None:
         code = f"""
-        import subprocess, sys
-        packages = [{', '.join(packages)}]
-        subprocess.check_call([sys.executable, "-m", "pip", "install", *packages])
-        """
+import subprocess, sys
+packages = {repr(packages)}
+print(f"Installing {{', '.join(packages)}}...")
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", *packages])
+"""
         return await self.execute_code(code)
 
     async def execute_code(self, code: str) -> str:
         url = f"{self._http_base}/run"
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
                 r = await client.post(url, content=code.encode("utf-8"))
                 r.raise_for_status()
                 output = r.text
@@ -186,13 +223,41 @@ class ContainerRLMSandbox:
                 pass
 
 
+class DataScienceSandbox(ContainerRLMSandbox):
+    """
+    Specialized sandbox for data science tasks.
+    Pre-installs common libraries and supports state sharing.
+    """
+
+    def __init__(self, container_name: str = "ds-sandbox", **kwargs):
+        super().__init__(container_name=container_name, **kwargs)
+
+    async def prepare(self, packages: list[str] | None = None) -> None:
+        """Install data science stack."""
+        if packages is None:
+            packages = ["pandas", "numpy", "matplotlib", "seaborn", "scipy"]
+        await self.pip_install(packages)
+
+    async def export_dataframe(self, name: str) -> 'pd.DataFrame':
+        """Download a DataFrame from the sandbox."""
+        code = f"print({name}.to_csv(index=False))"
+        csv_output = await self.execute_code(code)
+        # Handle potential stdout noise before CSV
+        if "Loaded DataFrame" in csv_output:
+            csv_output = csv_output.split("\n", 1)[1]
+        return pd.read_csv(io.StringIO(csv_output))
+
+
 class ContainersResourceManager:
     containers: Dict[str, ContainerRLMSandbox] = {}
 
     @classmethod
-    def get_container(cls, id: str) -> ContainerRLMSandbox:
+    def get_container(cls, id: str, ds: bool = False) -> ContainerRLMSandbox:
         if id not in cls.containers:
-            cls.containers[id] = ContainerRLMSandbox(container_name=f"llm-sandbox-{id}")
+            if ds:
+                cls.containers[id] = DataScienceSandbox(container_name=f"ds-sandbox-{id}")
+            else:
+                cls.containers[id] = ContainerRLMSandbox(container_name=f"llm-sandbox-{id}")
             cls.containers[id].start()
         return cls.containers[id]
 

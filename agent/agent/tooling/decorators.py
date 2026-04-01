@@ -9,10 +9,11 @@ from typing import (Annotated, Any, Callable, Coroutine, GenericAlias, Literal,
                     Optional, TypedDict, TypeVar, Union, _AnnotatedAlias,
                     _TypedDictMeta, get_args, get_origin)
 
-from agent.types import AnthropicMessage
 from framework import AsyncNode
 from framework.generic_messages import select_tools_use
 from framework.utils import __reduce_shared as reduce_shared
+
+from agent.types import AnthropicMessage
 
 # Mapping from Python types to OpenAPI schema types
 CLASS_TO_TYPE = {
@@ -487,15 +488,27 @@ class Tools(AsyncNode):
             tool_result: ToolResult | Coroutine[Any, Any, ToolResult]
             # Hidden params: framework must supply via prep_res; failure is not recoverable by the agent.
             inject_params = getattr(tool, "_inject_params", [])
+            runtime_injected = {
+                "tool_use_id": tool_use_id,
+                "tool_name": name,
+                "tool_input": llm_input,
+            }
             injected = {}
-            missing_injected = [param_name for param_name in inject_params if param_name not in prep_res]
+            missing_injected = [
+                param_name
+                for param_name in inject_params
+                if param_name not in prep_res and param_name not in runtime_injected
+            ]
             if missing_injected:
                 raise Exception(
                     f"Tool {tool.name} is missing required injected fields: "
                     f"{', '.join(missing_injected)}"
                 )
             for param_name in inject_params:
-                injected[param_name] = prep_res[param_name]
+                if param_name in prep_res:
+                    injected[param_name] = prep_res[param_name]
+                else:
+                    injected[param_name] = runtime_injected[param_name]
 
             # Non-hidden required schema fields: agent omission → ToolResult error for the model to fix.
             missing_required = self._missing_required_fields(tool, llm_input)

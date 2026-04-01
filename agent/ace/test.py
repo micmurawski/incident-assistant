@@ -1,31 +1,13 @@
-from ace.playbook_core import Playbook, PlaybookSection, PlaybookSectionBullet
+
+
+from ace.playbook_core import Playbook
+
+data: dict[str, list[dict]] = {}
 
 
 async def _demo():
-    playbook = Playbook(
-        playbook_id="test",
-        sections=[PlaybookSection(id="test", bullets=[PlaybookSectionBullet(id="test", content="test")])],
-    )
-    playbook.to_file("test.json")
-    loaded = playbook.from_file("test.json")
-    print(loaded.to_dict())
-    print(loaded.to_markdown())
-    print(loaded.save_revision())
-    print(loaded.load_latest_revision())
-    loaded.apply_operations(
-        [
-            {
-                "action": "ADD",
-                "section": "test",
-                "bullet_id": "b2",
-                "content": "second bullet",
-            }
-        ]
-    )
-    print("after ADD:", loaded.to_dict())
-
-
+    playbook = Playbook.load_last_revision_of("incident_commander")
+    print(playbook.to_markdown(without_bullets_ids=True, positive_only=False, without_points=True))
 if __name__ == "__main__":
     import asyncio
-
     asyncio.run(_demo())
