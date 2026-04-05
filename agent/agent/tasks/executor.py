@@ -24,12 +24,10 @@ Current todos:
 """
 
 TODO_LIST_PROMPT = """
-Here is the todo list:
+Here is the todo list:\n
 {todos_str}
 
 Please work on the todo list. And report back when you are done. 
-Only last message will be considered as the final answer.
-If you will be ask to improve result, you should correct your previous answer.
 """
 
 

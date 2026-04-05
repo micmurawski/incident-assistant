@@ -23,7 +23,7 @@ async def main():
 
     print("\nTesting Loki query...")
     try:
-        df_loki = await pd_client.query_loki('{namespace="application"} |= "error"', from_time="now-15m", limit=10)
+        df_loki = await pd_client.query_loki('{namespace="application"} |= "error"', from_time="now-15m")
         print("\nLoki DataFrame:")
         print(df_loki.head())
         print(f"Columns: {df_loki.columns.tolist()}")

@@ -3,15 +3,15 @@ from contextlib import contextmanager
 from typing import Generator
 
 import yaml
+from openinference.instrumentation.anthropic import AnthropicInstrumentor
+from opentelemetry import trace
+from phoenix.otel import register
+
 from ace.playbook_core import Playbook
 from ace.prompts import (CURATOR_SYSTEM_PROMPT_TEMPLATE,
                          REFLECTOR_SYSTEM_PROMPT_TEMPLATE)
 from ace.tools import CuratorTools, ReflectorTools
 from ace.utils import create_details_for_reflector
-from openinference.instrumentation.anthropic import AnthropicInstrumentor
-from opentelemetry import trace
-from phoenix.otel import register
-
 from agent.llm import LLMAgent
 from agent.settings import SettingsManager
 from agent.tasks.tasks import Task

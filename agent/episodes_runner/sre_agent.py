@@ -3,19 +3,14 @@
 
 import asyncio
 import json
-import os
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from openinference.instrumentation.anthropic import AnthropicInstrumentor
-from opentelemetry import trace
-from phoenix.otel import register
-
+from ace.playbook_core import Playbook
 from agent.grafana_client.client import GrafanaClient
 from agent.llm import LLMAgent
 from agent.persistence.settings import init_db
-from agent.settings import SettingsManager
 from agent.tasks.tasks import Task
 from agent.tooling.cli import CliTools
 from agent.tooling.codebase_read import CodebaseReadTools
@@ -26,7 +21,7 @@ from agent.tooling.kubectl import (KubectlReadTools, KubectlWriteTools,
                                    kubectl_get_resources)
 from agent.tooling.metrics import MetricsTools
 from agent.tooling.planning import PlanningTools
-from ace.playbook_core import Playbook
+from episodes_runner.utils import configure_settings
 
 JUDGE_SYSTEM_PROMPT = """
 You are a judge agent that evaluates the performance of the SRE Agent.
@@ -70,15 +65,6 @@ SYSTEM_PROMPTS = {
     - devops_agent: is responsible for managing the cluster resources.
     """,
 }
-
-
-def configure_settings(project_name: str, provider: str = "minimax") -> None:
-    settings = SettingsManager.get_instance()
-    settings.set("api.provider", provider)
-    settings.set("api.api_key", os.environ["MINIMAX_API_KEY"])
-    tracer_provider = register(project_name=project_name)
-    AnthropicInstrumentor().instrument(tracer_provider=tracer_provider)
-    return trace.get_tracer(__name__)
 
 
 @contextmanager

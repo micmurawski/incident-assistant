@@ -30,7 +30,7 @@ async def count_error_logs(
     if pod_selector:
         labels += f", pod={pod_selector}"
     expr = f'{{{labels}}} |~ "(?i)error"'
-    logs = extract_loki_results(await client.query_loki(expr, from_time=from_time, to_time=to_time, limit=5000))
+    logs = extract_loki_results(await client.query_loki(expr, from_time=from_time, to_time=to_time))
     return len(logs)
 
 

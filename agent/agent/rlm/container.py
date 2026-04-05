@@ -18,11 +18,13 @@ class ContainerRLMSandbox:
         container_name: str = "llm-sandbox",
         port: int | None = None,
         image: str = "python:3.12-slim",
+        env: Dict[str, str] | None = None,
     ):
         self.client: docker.DockerClient | None = None
         self.container_name = container_name
         self.port = port
         self.image = image
+        self.env = env or {}
         self._http_base: str = ""
         self.history: List[Dict[str, str]] = []
         self.container = None
@@ -81,7 +83,7 @@ class ContainerRLMSandbox:
             time.sleep(0.5)
         raise TimeoutError(f"Sandbox /health did not become ready within {timeout}s: {last_err}")
 
-    def start(self) -> None:
+    def start(self, volumes: Dict[str, Dict[str, str]] | None = None) -> None:
         print(f"Booting secure sandbox ({self.image})...")
 
         try:
@@ -104,19 +106,34 @@ class ContainerRLMSandbox:
             "python -m uvicorn sandbox_server:app --host 0.0.0.0 --port 8000"
         )
 
+        container_volumes = {str(_SANDBOX_SERVER): {"bind": "/app/sandbox_server.py", "mode": "ro"}}
+        if volumes:
+            container_volumes.update(volumes)
+
         self.container = self._docker().containers.run(
             self.image,
             name=self.container_name,
             detach=True,
-            volumes={str(_SANDBOX_SERVER): {"bind": "/app/sandbox_server.py", "mode": "ro"}},
+            volumes=container_volumes,
+            environment=self.env,
             working_dir="/app",
             command=["sh", "-c", boot],
-            mem_limit="1g",  # Increased for DS tasks
-            nano_cpus=1000000000,  # Increased to 1 CPU
+            mem_limit="1g",
+            nano_cpus=1000000000,
             network_mode="bridge",
             auto_remove=True,
             **port_kw,
         )
+
+        if self.port is None:
+            self.port = self._resolve_host_port()
+        self._http_base = f"http://127.0.0.1:{self.port}"
+
+        self._wait_for_port()
+        self._wait_for_health()
+
+        short = getattr(self.container, "short_id", None) or (self.container.id or "")[:12]
+        self.history.append({"action": "SYSTEM", "content": f"Sandbox started (ID: {short})"})
 
         if self.port is None:
             self.port = self._resolve_host_port()
@@ -248,18 +265,34 @@ class DataScienceSandbox(ContainerRLMSandbox):
         return pd.read_csv(io.StringIO(csv_output))
 
 
+def dict_to_str(d: Dict[str, str | int | float | bool | dict]) -> str:
+    vals = []
+    for k, v in d.items():
+        if isinstance(v, dict):
+            vals.append(f"{k}={dict_to_str(v)}")
+        else:
+            vals.append(f"{k}={v}")
+    return "\n".join(vals)
+
+
 class ContainersResourceManager:
     containers: Dict[str, ContainerRLMSandbox] = {}
 
     @classmethod
-    def get_container(cls, id: str, ds: bool = False) -> ContainerRLMSandbox:
-        if id not in cls.containers:
+    def does_container_exist(cls, id: str, ds: bool = False, **kwargs) -> bool:
+        _id = dict_to_str({**kwargs, "id": id, "ds": ds})
+        return _id in cls.containers
+
+    @classmethod
+    def get_container(cls, id: str, ds: bool = False, **kwargs) -> ContainerRLMSandbox:
+        _id = dict_to_str({**kwargs, "id": id, "ds": ds})
+        if _id not in cls.containers:
             if ds:
-                cls.containers[id] = DataScienceSandbox(container_name=f"ds-sandbox-{id}")
+                cls.containers[_id] = DataScienceSandbox(container_name=id, **kwargs)
             else:
-                cls.containers[id] = ContainerRLMSandbox(container_name=f"llm-sandbox-{id}")
-            cls.containers[id].start()
-        return cls.containers[id]
+                cls.containers[_id] = ContainerRLMSandbox(container_name=id, **kwargs)
+            cls.containers[_id].start()
+        return cls.containers[_id]
 
     @classmethod
     def reset_container(cls, id: str) -> None:

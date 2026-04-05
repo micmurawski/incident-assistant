@@ -7,7 +7,10 @@ HOME_DIR = os.path.expanduser("~")
 
 DEFAULT_SETTINGS = {
     "code_index": {
-        "search": {"min_score": 0.4, "max_results": 50},
+        "search": {
+            "min_score": 0.4,
+            "max_results": 50
+        },
         "embedder": {
             "provider": "ollama",
             "model": "all-minilm",
@@ -36,7 +39,7 @@ DEFAULT_SETTINGS = {
         "path": os.getcwd(),
     },
     "features": {
-        "include_assigner_history": False,
+        "feedback_enabled": False,
     }
 }
 

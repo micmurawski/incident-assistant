@@ -15,7 +15,7 @@ Usage:
     print(report)
 """
 
-from .client import Datasource, GrafanaClient
+from .client import AsyncGrafanaClient, Datasource, GrafanaClient
 from .logs import (count_error_logs, fetch_error_logs, get_error_counts_by_app,
                    get_grouped_errors_by_app, group_by_similarity)
 from .metrics import (WINDOWS, get_cpu_usage, get_http_error_counts,
@@ -26,6 +26,7 @@ from .report import build_status_report, format_status_report
 
 __all__ = [
     "GrafanaClient",
+    "AsyncGrafanaClient",
     "GrafanaPandasClient",
     "Datasource",
     "get_latency_percentiles",

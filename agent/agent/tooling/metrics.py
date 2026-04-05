@@ -2,7 +2,8 @@ from typing import Annotated, List, Literal, Optional
 
 import yaml
 
-from agent.grafana_client.client import GrafanaBadRequestError, GrafanaClient
+from agent.grafana_client.client import (AsyncGrafanaClient,
+                                         GrafanaBadRequestError)
 from agent.grafana_client.parsers import (extract_labels, extract_loki_results,
                                           group_by_similarity, prase_to_table)
 from agent.grafana_client.report import build_status_report
@@ -70,7 +71,7 @@ def _ensure_namespace_in_query(query: str | None) -> str:
 
 
 async def _loki_label_validation_message(
-    grafana_client: GrafanaClient,
+    grafana_client: AsyncGrafanaClient,
     query: str,
     from_time: str,
     to_time: str,
@@ -93,7 +94,7 @@ async def _loki_label_validation_message(
 
 
 async def _prometheus_label_validation_message(
-    grafana_client: GrafanaClient,
+    grafana_client: AsyncGrafanaClient,
     query: str,
     from_time: str,
     to_time: str,
@@ -114,7 +115,7 @@ async def _prometheus_label_validation_message(
 
 @tool(tags=["metrics"])
 async def get_app_summary(
-    grafana_client: Hidden[GrafanaClient],
+    grafana_client: Hidden[AsyncGrafanaClient],
     apps: Annotated[Optional[AvailableApps], "The list of app names to get a summary for"] = APPS,
     window: Annotated[Optional[TimeWindow], "The apps summary from the last X minutes"] = "5m",
     env: Hidden[Optional[dict[str, str]]] = None,
@@ -132,7 +133,7 @@ async def get_app_summary(
 
 @tool(tags=["metrics", "logs"])
 async def list_loki_logs_labels(
-    grafana_client: Hidden[GrafanaClient],
+    grafana_client: Hidden[AsyncGrafanaClient],
     query: Annotated[str, "The query to execute"],
     time_window: Annotated[Optional[TimeWindow], "Get logs from the last X minutes"] = "5m",
 ) -> ToolResult:
@@ -154,7 +155,7 @@ async def list_loki_logs_labels(
 
 @tool(tags=["metrics", "logs"])
 async def list_loki_label_values(
-    grafana_client: Hidden[GrafanaClient],
+    grafana_client: Hidden[AsyncGrafanaClient],
     label_name: Annotated[str, "The name of the label to get the values for"],
     query: Annotated[Optional[str], "The query to execute"] = None,
     time_window: Annotated[Optional[TimeWindow], "Get logs from the last X minutes"] = "5m",
@@ -178,7 +179,7 @@ async def list_loki_label_values(
 
 @tool(tags=["metrics", "logs"])
 async def query_loki_logs(
-    grafana_client: Hidden[GrafanaClient],
+    grafana_client: Hidden[AsyncGrafanaClient],
     query: Annotated[str, "The query to execute"],
     time_window: Annotated[Optional[TimeWindow], "Get logs from the last X minutes"] = "5m"
 ) -> ToolResult:
@@ -203,7 +204,7 @@ async def query_loki_logs(
 
 @tool(tags=["metrics", "logs"])
 async def query_loki_groups(
-    grafana_client: Hidden[GrafanaClient],
+    grafana_client: Hidden[AsyncGrafanaClient],
     query: Annotated[str, "The query to execute"],
     time_window: Annotated[Optional[TimeWindow], "Get logs from the last X minutes"] = "5m",
     similarity_threshold: Annotated[Optional[float], "The similarity threshold for grouping logs (0-1)"] = 0.5,
@@ -227,7 +228,7 @@ async def query_loki_groups(
 
 @tool(tags=["metrics"])
 async def query_prometheus_metrics(
-    grafana_client: Hidden[GrafanaClient],
+    grafana_client: Hidden[AsyncGrafanaClient],
     query: Annotated[str, "The query to execute"],
     time_window: Annotated[Optional[TimeWindow], "Get metrics from the last X minutes"] = "5m",
     range_query: Annotated[Optional[bool], "If True, use range query"] = True,
@@ -287,7 +288,7 @@ async def get_resource_routes(
 
 @tool(tags=["metrics"])
 async def get_metric_metadata(
-    grafana_client: Hidden[GrafanaClient],
+    grafana_client: Hidden[AsyncGrafanaClient],
     metric_name: Annotated[str, "The name of the metric to get the metadata for"],
 ) -> ToolResult:
     """Get the metadata for a specific metric from the Grafana instance."""
@@ -303,7 +304,7 @@ async def get_metric_metadata(
 
 @tool(tags=["metrics"])
 async def list_prometheus_metric_labels(
-    grafana_client: Hidden[GrafanaClient],
+    grafana_client: Hidden[AsyncGrafanaClient],
     metric_name: Annotated[str, "The name of the metric to get the labels for"],
 ) -> ToolResult:
     """Get the labels for a specific metric from the Grafana instance.
@@ -321,7 +322,7 @@ async def list_prometheus_metric_labels(
 
 @tool(tags=["metrics"])
 async def list_prometheus_metric_label_values(
-    grafana_client: Hidden[GrafanaClient],
+    grafana_client: Hidden[AsyncGrafanaClient],
     label_name: Annotated[str, "The name of the label to get the values for"],
     metric_name: Annotated[str, "The name of the metric to get the values for"],
     time_window: Annotated[Optional[TimeWindow], "Get metrics from the last X minutes"] = "5m",
@@ -331,6 +332,7 @@ async def list_prometheus_metric_label_values(
     Examples:
        - list_prometheus_metric_label_values('dst_service', 'request_total') - get all values for the dst_service label for the request_total metric
     """
+    grafana_client: AsyncGrafanaClient
     from_time = f"now-{time_window}"
     to_time = "now"
     try:
@@ -345,7 +347,7 @@ async def list_prometheus_metric_label_values(
 
 @tool(tags=["metrics"])
 async def list_metrics(
-    grafana_client: Hidden[GrafanaClient],
+    grafana_client: Hidden[AsyncGrafanaClient],
 ) -> ToolResult:
     """List all metrics from the Grafana instance."""
     try:
@@ -386,7 +388,7 @@ if __name__ == "__main__":
     GRAFANA_API_KEY = os.environ.get("GRAFANA_API_KEY")
 
     async def main():
-        grafana_client = GrafanaClient(url=GRAFANA_URL, api_key=GRAFANA_API_KEY)
+        grafana_client = AsyncGrafanaClient(url=GRAFANA_URL, api_key=GRAFANA_API_KEY)
 
         
         result = await query_loki_logs(grafana_client=grafana_client, query='{app="shipping",bleh="bleh"}', time_window="1m")

@@ -1,12 +1,27 @@
 import json
+import os
 import time
 
+from openinference.instrumentation.anthropic import AnthropicInstrumentor
+from opentelemetry import trace
+from phoenix.otel import register
+
+from agent.settings import SettingsManager
 from agent.tasks.tasks import Task
 from agent.tooling.codebase_write import CodebaseWriteTools
 from agent.tooling.deploy import deploy_app
 
 WRITE_TOOLS = [f.name for f in CodebaseWriteTools.tools]
 DEPLOY_TOOLS = [deploy_app.name]
+
+
+def configure_settings(project_name: str, provider: str = "minimax") -> None:
+    settings = SettingsManager.get_instance()
+    settings.set("api.provider", provider)
+    settings.set("api.api_key", os.environ["MINIMAX_API_KEY"])
+    tracer_provider = register(project_name=project_name)
+    AnthropicInstrumentor().instrument(tracer_provider=tracer_provider)
+    return trace.get_tracer(__name__)
 
 
 def collect_tasks(t: Task) -> list[Task]:

@@ -9,8 +9,6 @@ from itertools import product
 from pathlib import Path
 from typing import Any
 
-from framework import AsyncFlow
-from framework.decorators import node
 from openinference.instrumentation import using_attributes
 from openinference.instrumentation.anthropic import AnthropicInstrumentor
 from opentelemetry import trace
@@ -23,6 +21,8 @@ from agent.settings import SettingsManager
 from agent.tooling import CodebaseReadTools, CodebaseWriteTools
 from agent.tracing import trace_flow
 from agent.worktree import WorkTreeService
+from framework import AsyncFlow
+from framework.decorators import node
 
 os.environ["PHOENIX_CLIENT_HEADERS"] = "Authorization=Bearer YOUR_API_KEY"
 os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:6006"
