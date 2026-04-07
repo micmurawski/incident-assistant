@@ -16,6 +16,7 @@ export AWS_ACCESS_KEY_ID=$(cat "$basedir/api_key.json" | jq -r ".[\"$scope\"][\"
 export AWS_SECRET_ACCESS_KEY=$(cat "$basedir/api_key.json" | jq -r ".[\"$scope\"][\"secret_access_key\"]")
 export GRAFANA_API_KEY=$(cat "$basedir/api_key.json" | jq -r '.["grafana_api_token"]')
 export GRAFANA_URL=$(cat "$basedir/api_key.json" | jq -r '.["grafana_url"]')
+export DOCKER_HOST="unix:///Users/$USER/.docker/run/docker.sock"
 export AWS_REGION="us-east-1"
 if [ "$params" = "robot" ]; then
     export AWS_PROFILE="dev"

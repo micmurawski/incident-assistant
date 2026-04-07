@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ace.playbook_core import Playbook
-from agent.grafana_client.client import GrafanaClient
+from agent.grafana_client.client import AsyncGrafanaClient
 from agent.llm import LLMAgent
 from agent.persistence.settings import init_db
 from agent.tasks.tasks import Task
@@ -63,10 +63,12 @@ def create_sre_agent(
         "AWS_ACCESS_KEY_ID": SRE_AGENT_AWS_ACCESS_KEY_ID,
         "AWS_SECRET_ACCESS_KEY": SRE_AGENT_AWS_SECRET_ACCESS_KEY,
         "AWS_REGION": SRE_AGENT_AWS_REGION,
+        "GRAFANA_API_KEY": GRAFANA_API_KEY,
+        "GRAFANA_URL": GRAFANA_URL,
     }
     shared_context = {
         "cwd": str(workspace_path),
-        "grafana_client": GrafanaClient(url=GRAFANA_URL, api_key=GRAFANA_API_KEY),
+        "grafana_client": AsyncGrafanaClient(url=GRAFANA_URL, api_key=GRAFANA_API_KEY),
         "env": SRE_AGENT_ENV,
     }
 

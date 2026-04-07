@@ -2,7 +2,7 @@
 
 **Title**: MySQL Service targetPort mismatch causes connection failures
 
-**Description**: In the Kubernetes manifest `k8s/robot-shop-eks.yaml`, the MySQL Service has an incorrect `targetPort` value. The Service exposes port 3306 and attempts to route to targetPort 3307, but the MySQL container only listens on port 3306. This is a port mismatch between the Service and the Deployment.
+**Description**: In the Kubernetes manifest `k8s/manifests/mysql.yaml`, the MySQL Service has an incorrect `targetPort` value. The Service exposes port 3306 and attempts to route to targetPort 3307, but the MySQL container only listens on port 3306. This is a port mismatch between the Service and the Deployment.
 
 **Symptom**: 
 - The shipping service and any other components that depend on MySQL will fail to connect to the database

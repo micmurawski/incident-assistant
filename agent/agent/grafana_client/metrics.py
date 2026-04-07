@@ -1,6 +1,6 @@
 from typing import Any
 
-from agent.grafana_client.client import GrafanaClient
+from agent.grafana_client.client import AsyncGrafanaClient as GrafanaClient
 from agent.grafana_client.parsers import extract_prometheus_results
 
 # Linkerd proxy metrics job name

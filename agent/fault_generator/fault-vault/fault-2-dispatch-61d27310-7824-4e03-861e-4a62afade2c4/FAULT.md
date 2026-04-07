@@ -1,7 +1,7 @@
 # Fault: Dispatch Service Port Mismatch
 
 ## Description
-The dispatch Service in `k8s/robot-shop-eks.yaml` has an incorrect `targetPort` configuration. The Service exposes port 80 but targets port 8080, while the dispatch container does not expose port 8080—it listens on port 80 by default.
+The dispatch Service in `k8s/manifests/dispatch.yaml` has an incorrect `targetPort` configuration. The Service exposes port 80 but targets port 8080, while the dispatch container does not expose port 8080—it listens on port 80 by default.
 
 ## Symptom
 When traffic is routed through the dispatch Service, connections will fail with connection refused errors. The Service will be unable to forward requests to the dispatch pods because the target port does not match the container's listening port.

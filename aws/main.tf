@@ -157,6 +157,7 @@ resource "aws_iam_user_policy_attachment" "incident_assistant_ecr_poweruser" {
 
 # EKS access_entries above grant Kubernetes API access; IAM still needs eks:* API
 # permissions for aws eks update-kubeconfig, SDK DescribeCluster, etc.
+# scale_node_group (agent/tooling/eks.py) calls update-nodegroup-config → eks:UpdateNodegroupConfig.
 resource "aws_iam_user_policy" "incident_assistant_eks_api_read" {
   name = "incident-assistant-eks-api-read"
   user = data.aws_iam_user.incident-assistant.user_name
@@ -184,6 +185,12 @@ resource "aws_iam_user_policy" "incident_assistant_eks_api_read" {
           "eks:ListNodegroups",
         ]
         Resource = "*"
+      },
+      {
+        Sid    = "EKSNodegroupScaleThisCluster"
+        Effect = "Allow"
+        Action = "eks:UpdateNodegroupConfig"
+        Resource = "arn:aws:eks:${var.region}:${data.aws_caller_identity.current.account_id}:nodegroup/${var.cluster_name}/*/*"
       }
     ]
   })

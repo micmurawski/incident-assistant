@@ -8,10 +8,11 @@ from agent.tasks.tasks import Task
 from agent.tasks.types import TaskStatus
 from agent.tooling.decorators import Tools
 from episodes_runner.episode_runner import (detect_differences,
+                                            ensure_load_gen_deployed,
                                             format_diff_status_report,
                                             get_metrics_summary, run_episode)
 from episodes_runner.sre_agent import configure_settings, create_sre_agent
-from episodes_runner.utils import collect_meaningful_actions, live_timer
+from episodes_runner.utils import collect_meaningful_actions, live_timer, clean_all_containers
 
 # Max wall time for the SRE agent flow; override with env SRE_AGENT_TIMEOUT_SEC.
 SRE_AGENT_CALL_TIMEOUT_SEC = float(os.environ.get("SRE_AGENT_TIMEOUT_SEC", "1800"))
@@ -52,18 +53,17 @@ def create_judge_agent(provider: str = "minimax"):
 async def run_experiment():
     init_db()
 
-    episode = await run_episode(selected_fault="fault-2-catalogue-4ec7ce7e-13e8-4297-9ee0-4944d617e35b")
-    goal = Task(
+    await ensure_load_gen_deployed()
+    episode = await run_episode(
+        #selected_fault="fault-3-catalogue-716cc0dd-5274-4884-88b3-33e0d0eb292e"
+    )
+    goal = Task.create_root_task(
         id=episode["fault_id"],
         assignee="incident_commander",
         assigner="judge_agent",
-        conversation=[
-            {
-                "role": "user",
-                "content": episode["agent_prompt"]
-            }
-        ]
+        content=episode["agent_prompt"]
     )
+    goal.save()
 
     shared = {
         "task": goal,
@@ -148,6 +148,8 @@ async def run_experiment():
         goal.usage = total_usage
         goal.attempt_complete(force=True)
         goal.save()
+
+    clean_all_containers()
 
 
 if __name__ == "__main__":

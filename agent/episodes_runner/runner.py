@@ -10,14 +10,14 @@ import yaml
 from agent.grafana_client.client import GrafanaClient
 from agent.grafana_client.report import build_status_report_dict
 from agent.tooling.metrics import APPS, NAMESPACE
+from episodes_runner.fault_scenario_picker import (pick_fault_scenario,
+                                                   record_episode_failure,
+                                                   record_episode_success)
 from episodes_runner.utils import detect_differences, live_timer
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 DEFAULT_SOURCE = BASE_DIR / "services" / "robot-shop"
 DEFAULT_WORKSPACE = BASE_DIR / "workspace"
-FAULT_SCENARIOS_DIR = Path(__file__).resolve().parent / "shuffled_scenarios.yaml"
-FAULT_HISTORY_DIR = Path(__file__).resolve().parent / "fault_history.yaml"
-
 FAULT_VAULT_DIR = BASE_DIR / "agent" / "fault_generator" / "fault-vault"
 
 API_KEY = json.load(open(BASE_DIR / "api_key.json"))
@@ -33,25 +33,6 @@ ENV = {
 
 
 GRAFANA_CLIENT = GrafanaClient(url=GRAFANA_URL, api_key=GRAFANA_API_KEY)
-
-
-def create_fault_scenario_history() -> None:
-    if not FAULT_HISTORY_DIR.exists():
-        FAULT_HISTORY_DIR.touch()
-        with open(FAULT_HISTORY_DIR, "w") as f:
-            yaml.dump({"history": []}, f)
-
-
-def pick_fault_scenario() -> dict:
-    with open(FAULT_HISTORY_DIR, "r") as f1, open(FAULT_SCENARIOS_DIR, "r") as f2:
-        history = yaml.safe_load(f1)
-        scenarios = yaml.safe_load(f2)["scenarios"]
-        idx = max(0, len(history["history"]) - 1)
-        history["history"].append(scenarios[idx])
-    with open(FAULT_HISTORY_DIR, "w") as f:
-        yaml.dump(history, f)
-    print(f"[2] Picked fault scenario: {scenarios[idx]['id']}")
-    return scenarios[idx]
 
 
 def create_workspace(source_dir: Path, workspace_dir: Path) -> None:
@@ -200,15 +181,18 @@ async def read_metrics_before() -> dict:
 
 async def main():
     metrics_before = await read_metrics_before()
-    create_fault_scenario_history()
     create_workspace(DEFAULT_SOURCE, DEFAULT_WORKSPACE)
     fault_scenario = pick_fault_scenario()
-    user_prompt = await apply_scenario(fault_scenario, metrics_before)
-    print(user_prompt)
-
-    delete_chaos_mesh_all_experiments(ENV)
-
-    await GRAFANA_CLIENT.aclose()
+    try:
+        user_prompt = await apply_scenario(fault_scenario, metrics_before)
+        print(user_prompt)
+        record_episode_success(fault_scenario)
+    except BaseException as e:
+        record_episode_failure(fault_scenario, str(e))
+        raise
+    finally:
+        delete_chaos_mesh_all_experiments(ENV)
+        await GRAFANA_CLIENT.aclose()
 
 
 

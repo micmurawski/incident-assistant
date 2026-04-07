@@ -69,3 +69,10 @@ def live_timer(seconds: int | float):
             time.sleep(0.5)  # Update frequently for a smooth look
     except KeyboardInterrupt:
         print("\nTimer stopped.")
+
+
+def clean_all_containers():
+    from agent.rlm.container import ContainersResourceManager
+    for sandbox in list(ContainersResourceManager.containers.values()):
+        sandbox.shutdown()
+    ContainersResourceManager.containers.clear()

@@ -577,7 +577,7 @@ async def kubectl_get_resources(
     Generic tool to list any Kubernetes resource type.
     Use this as a fallback when no specialized tool exists for the resource type you need.
     Examples:
-      - kubectl_get_resources("pod", "application", "app=web", "-c web")
+      - kubectl_get_resources(resource_type="pod", namespace="application", label_selector="app=web", additional_args="-c web")
     """
     args = ["get", resource_type, "-o", "wide"]
     if namespace:
@@ -613,7 +613,7 @@ async def kubectl_get_resource(
     Generic tool to get a specific Kubernetes resource type (including CRDs).
     Use this as a fallback when no specialized tool exists for the resource type you need.
     Examples:
-      - kubectl_get_resource("pod", "my-pod", "application", "app=web", "-c web")
+      - kubectl_get_resource(resource_type="pod", resource_name="my-pod", namespace="application", label_selector="app=web", additional_args="-c web")
     """
     args = ["get", resource_type, resource_name, "-o", "wide"]
     if namespace:
@@ -638,7 +638,7 @@ async def kubectl_get_resource(
 KubectlReadTools = Tools(tools=[
     # Cluster & Nodes
     # kubectl_cluster_info, - too big output
-    kubectl_get_nodes,  # replaced by kubectl_get_resource
+    # kubectl_get_nodes,  # replaced by kubectl_get_resources
     # kubectl_top_nodes,
     # Namespaces
     # kubectl_get_namespaces, # replaced by kubectl_get_resource

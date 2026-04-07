@@ -2,7 +2,7 @@
 
 **Title**: Redis container memory limit set too low causing OOMKilled
 
-**Description**: In the Kubernetes manifest `k8s/robot-shop-eks.yaml`, the Redis Deployment has an excessively low memory limit of 32Mi, down from the original 256Mi. The memory request remains at 128Mi, but the limit is now insufficient for Redis to function properly.
+**Description**: In the Kubernetes manifest `k8s/manifests/redis.yaml`, the Redis Deployment has an excessively low memory limit of 32Mi, down from the original 256Mi. The memory request remains at 128Mi, but the limit is now insufficient for Redis to function properly.
 
 **Symptom**:
 - Redis pod repeatedly crashes and restarts

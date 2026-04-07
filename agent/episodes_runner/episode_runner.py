@@ -1,24 +1,29 @@
 import asyncio
 import json
 import os
-import random
 import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from agent.grafana_client.client import GrafanaClient
+from agent.grafana_client.client import AsyncGrafanaClient
 from agent.grafana_client.report import (build_status_report_dict,
                                          detect_differences,
                                          format_diff_status_report)
 from agent.tooling._utils import run_cli_command
 from agent.tooling.decorators import ToolResult
 from agent.tooling.metrics import APPS, NAMESPACE
+from episodes_runner.fault_scenario_picker import (pick_fault_scenario,
+                                                   record_episode_failure,
+                                                   record_episode_success)
 from episodes_runner.utils import live_timer
 
-# Resolve repo root (parent of agent/)
+# Resolve repo root (o8s): episodes_runner -> agent -> o8s
 CUR_DIR = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+API_KEY_PATH = REPO_ROOT / "api_key.json"
+DEPLOY_LOAD_GEN_SCRIPT = REPO_ROOT / "eks" / "deploy-load-gen.sh"
 
 # Default paths (override with env or CLI)
 DEFAULT_SOURCE = Path("/Users/micmur/GITHUB/o8s/services/robot-shop")
@@ -40,21 +45,61 @@ def create_workspace(source_dir: Path, workspace_dir: Path) -> None:
     print(f"[1] Created workspace at {workspace_dir}")
 
 
-def select_fault(fault_vault_dir: Path) -> Path:
-    """Select a random fault from fault-vault (directory containing git.patch + INCIDENT.md)."""
-    if not fault_vault_dir.exists():
-        raise Exception(f"[2] Fault-vault not found: {fault_vault_dir}")
-    candidates = []
-    for d in fault_vault_dir.iterdir():
-        if not d.is_dir():
-            continue
-        if (d / "git.patch").exists() and (d / "INCIDENT.md").exists():
-            candidates.append(d)
-    if not candidates:
-        raise Exception("[2] No fault scenarios found in fault-vault (need git.patch + INCIDENT.md)")
-    chosen = random.choice(candidates)
-    print(f"[2] Selected fault: {chosen.name}")
-    return chosen
+def _kubectl_env() -> dict:
+    """Merge os.environ with AWS creds from api_key.json (same as episodes_runner/runner.py)."""
+    env = {**os.environ}
+    if API_KEY_PATH.exists():
+        with open(API_KEY_PATH) as f:
+            keys = json.load(f)
+        robot = keys.get("robot")
+        if robot:
+            env["AWS_ACCESS_KEY_ID"] = robot["access_key_id"]
+            env["AWS_SECRET_ACCESS_KEY"] = robot["secret_access_key"]
+            env.setdefault("AWS_REGION", "us-east-1")
+    return env
+
+
+def apply_chaos_mesh_fault(manifest_path: Path, env: dict) -> None:
+    cmd = ["kubectl", "apply", "-f", str(manifest_path)]
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"[3] kubectl apply chaos manifest failed: {result.stderr or result.stdout}"
+        )
+    print(f"[3] Applied chaos mesh fault from {manifest_path}")
+
+
+def delete_chaos_mesh_all_experiments(env: dict) -> None:
+    resources = "podchaos,networkchaos,stresschaos,iochaos,httpchaos"
+    cmd = ["kubectl", "delete", resources, "--all", "-A"]
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        print(
+            f"[cleanup] kubectl delete {resources} (exit {result.returncode}): "
+            f"{result.stderr or result.stdout or '(no output)'}"
+        )
+    else:
+        print(f"[cleanup] Deleted all chaos mesh resources: {resources}")
+
+
+async def ensure_load_gen_deployed() -> None:
+    """Run ``eks/deploy-load-gen.sh`` from repo root so the cluster has load each episode."""
+    if not DEPLOY_LOAD_GEN_SCRIPT.is_file():
+        raise FileNotFoundError(
+            f"Load-gen script not found (expected at {DEPLOY_LOAD_GEN_SCRIPT})"
+        )
+    env = _kubectl_env()
+    result: ToolResult = await run_cli_command(
+        ["bash", "-e", str(DEPLOY_LOAD_GEN_SCRIPT)],
+        timeout=300,
+        cwd=str(REPO_ROOT),
+        env=env,
+        stream=True,
+        tail_lines=20,
+    )
+    if result.error is not None:
+        raise RuntimeError(f"[load-gen] deploy-load-gen.sh failed: {result.error}")
+    print("[load-gen] deploy-load-gen.sh completed")
 
 
 async def get_metrics_summary(window: str = "5m") -> dict:
@@ -64,7 +109,7 @@ async def get_metrics_summary(window: str = "5m") -> dict:
     if not url or not api_key:
         raise ValueError("GRAFANA_URL and GRAFANA_API_KEY must be set")
     return await build_status_report_dict(
-        client=GrafanaClient(url=url, api_key=api_key),
+        client=AsyncGrafanaClient(url=url, api_key=api_key),
         namespace=NAMESPACE,
         apps=APPS,
         window=window,
@@ -72,7 +117,15 @@ async def get_metrics_summary(window: str = "5m") -> dict:
 
 
 async def apply_fault(workspace_dir: Path, fault_dir: Path) -> None:
-    """Apply git.patch in workspace. Returns True on success."""
+    """
+    If present, apply Chaos Mesh experiment.yaml, then apply git.patch in workspace
+    (same order as episodes_runner/runner.py).
+    """
+    env = _kubectl_env()
+    experiment_manifest = fault_dir / "experiment.yaml"
+    if experiment_manifest.exists():
+        apply_chaos_mesh_fault(experiment_manifest, env)
+
     patch_file = fault_dir / "git.patch"
     if not patch_file.exists():
         raise Exception(f"[3] No git.patch in fault directory: {fault_dir}")
@@ -201,49 +254,66 @@ async def run_episode(
     # 1. Create workspace
     create_workspace(source_dir, workspace_dir)
 
-    # 2. Select fault
+    # 2. Select fault (shuffled order + fault_history; failures are retried on next pick)
+    scenario_for_history: dict | None = None
     if selected_fault:
         fault_dir = Path(fault_vault_dir) / selected_fault
     else:
-        fault_dir = select_fault(fault_vault_dir)
+        scenario_for_history = pick_fault_scenario()
+        fault_dir = Path(fault_vault_dir) / scenario_for_history["id"]
+        if not fault_dir.is_dir():
+            raise FileNotFoundError(
+                f"[2] Fault from scenario list not found in fault-vault: {fault_dir}"
+            )
 
     out["fault_dir"] = str(fault_dir)
     out["fault_id"] = fault_dir.name
 
-    # 4. Metrics before
-    if Path(CUR_DIR / "metrics_before.json").exists():
-        with open(CUR_DIR / "metrics_before.json", "r") as f:
-            out["metrics_before"] = json.load(f)
-    else:
-        out["metrics_before"] = await get_metrics_summary()
-        with open(CUR_DIR / "metrics_before.json", "w") as f:
-            json.dump(out["metrics_before"], f)
+    kubectl_env = _kubectl_env()
+    try:
+        try:
+            # 3. Metrics before
+            if Path(CUR_DIR / "metrics_before.json").exists():
+                with open(CUR_DIR / "metrics_before.json", "r") as f:
+                    out["metrics_before"] = json.load(f)
+            else:
+                out["metrics_before"] = await get_metrics_summary()
+                with open(CUR_DIR / "metrics_before.json", "w") as f:
+                    json.dump(out["metrics_before"], f)
 
-    # 5. Apply fault
-    await apply_fault(workspace_dir, fault_dir)
+            # 4. Apply fault (chaos manifest if present, then patch)
+            await apply_fault(workspace_dir, fault_dir)
 
-    # 6. Deploy and wait
-    await deploy_and_wait(workspace_dir, wait_seconds)
+            # 5. Deploy and wait
+            await deploy_and_wait(workspace_dir, wait_seconds)
 
-    # 7. Metrics after
-    out["metrics_after"] = await get_metrics_summary()
+            # 6. Metrics after
+            out["metrics_after"] = await get_metrics_summary()
 
-    out["metrics_diff"] = detect_differences(out["metrics_before"], out["metrics_after"])
-    out["focused_metrics_report"] = format_diff_status_report(out["metrics_diff"], "incident")
+            out["metrics_diff"] = detect_differences(out["metrics_before"], out["metrics_after"])
+            out["focused_metrics_report"] = format_diff_status_report(out["metrics_diff"], "incident")
 
-    # 8. Incident (for team) — we just have the content
-    out["incident_md"] = incident_content(fault_dir)
-    out["fault_md"] = fault_content(fault_dir)
+            # 7. Incident (for team) — we just have the content
+            out["incident_md"] = incident_content(fault_dir)
+            out["fault_md"] = fault_content(fault_dir)
 
-    # 9. Agent prompt
-    out["agent_prompt"] = build_agent_prompt(
-        out["focused_metrics_report"],
-        out["incident_md"],
-    )
-    # Print agent prompt in pink color
-    print("\033[95m" + out["agent_prompt"] + "\033[0m")
+            # 8. Agent prompt
+            out["agent_prompt"] = build_agent_prompt(
+                out["focused_metrics_report"],
+                out["incident_md"],
+            )
+            # Print agent prompt in pink color
+            print("\033[95m" + out["agent_prompt"] + "\033[0m")
 
-    return out
+            if scenario_for_history:
+                record_episode_success(scenario_for_history)
+            return out
+        except BaseException as e:
+            if scenario_for_history:
+                record_episode_failure(scenario_for_history, str(e))
+            raise
+    finally:
+        delete_chaos_mesh_all_experiments(kubectl_env)
 
 
 async def main() -> int:

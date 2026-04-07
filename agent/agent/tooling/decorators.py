@@ -482,7 +482,35 @@ class Tools(AsyncNode):
             tool_use_id = tool_to_call["id"]
             tool = next((t for t in self.tools if t.name == name), None)
             if tool is None:
-                raise Exception(f"Tool {name} not found")
+                tool_result = ToolResult(
+                    result=None,
+                    error=f"Tool {name} not found",
+                )
+                if tool_result.error:
+                    print(f"Tool result error: {tool_result.error}")
+                if self.debug_mode:
+                    print(
+                        f"\033[95mResult of: {name}({', '.join(f'{k}={v}' for k, v in llm_input.items())})=\033[0m"
+                    )
+                    print(f"\033[95m{tool_result.result}\033[0m")
+                    if tool_result.error:
+                        print(f"\033[91mError: {tool_result.error}\033[0m")
+                messages.append(
+                    AnthropicMessage(
+                        role="user",
+                        content=[
+                            dict(
+                                type="tool_result",
+                                tool_use_id=tool_use_id,
+                                content=tool_result.result
+                                if tool_result.is_success
+                                else tool_result.error,
+                                is_error=not tool_result.is_success,
+                            )
+                        ],
+                    )
+                )
+                continue
 
             tool_result: ToolResult | Coroutine[Any, Any, ToolResult]
             # Hidden params: framework must supply via prep_res; failure is not recoverable by the agent.
