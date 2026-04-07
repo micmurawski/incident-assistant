@@ -380,6 +380,14 @@ MetricsTools = Tools(
     ]
 )
 
+MetricsSummaryTools = Tools(
+    tools=[
+        get_app_summary,
+        get_edges_summary,
+        get_resource_routes
+    ]
+)
+
 
 if __name__ == "__main__":
     import asyncio

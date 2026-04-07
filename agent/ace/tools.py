@@ -8,7 +8,7 @@ from .playbook_core import (BulletTag, Operation, Playbook,
 
 def _playbook_bullet_ids(playbook: Playbook) -> set[str]:
     bullet_ids: set[str] = set()
-    for section in playbook.sections:
+    for section in playbook.sections.values():
         for bullet in section.bullets:
             bullet_ids.add(bullet.id)
     return bullet_ids

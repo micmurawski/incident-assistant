@@ -1,4 +1,9 @@
-"""Playbook model and apply_operations — no agent.tooling imports (safe for lightweight tests)."""
+"""Playbook model and apply_operations — no agent.tooling imports (safe for lightweight tests).
+
+Canonical on-disk JSON for a saved revision: top-level playbook_id plus sections as an object
+mapping section title (unique id) to an array of bullets {id, content, harmful, helpful}.
+Reference example: ace/playbook_history/monitoring_agent-1775062139121067.json
+"""
 
 import glob
 import json
@@ -102,28 +107,33 @@ class PlaybookSection:
 @dataclass
 class Playbook:
     playbook_id: Annotated[str, "The id of the playbook"]
-    sections: Annotated[list[PlaybookSection], "The sections in the playbook"]
+    sections: Annotated[dict[str, PlaybookSection], "The sections in the playbook (key = unique section id)"]
     number_of_revisions: Annotated[int, "The number of revisions of the playbook"]
 
     def _non_empty_sections(self) -> list[PlaybookSection]:
-        return [section for section in self.sections if section.bullets]
+        return [section for section in self.sections.values() if section.bullets]
 
-    def _non_empty_section_data(self, without_bullets_ids: bool = False, positive_only: bool = False, without_points: bool = False) -> list[dict]:
-        sections = []
-        for section in self.sections:
+    def _non_empty_sections_payload(
+        self,
+        without_bullets_ids: bool = False,
+        positive_only: bool = False,
+        without_points: bool = False,
+    ) -> dict[str, list]:
+        """Section id -> bullet list (serialized). Omits empty sections."""
+        out: dict[str, list] = {}
+        for section in self.sections.values():
             section_data = section.to_dict(without_bullets_ids, positive_only, without_points)
             _key = next(iter(section_data.keys()), None)
             if not _key:
                 continue
             if section_data[_key]:
-                sections.append({_key: section_data[_key]})
-        return sections
+                out[_key] = section_data[_key]
+        return out
 
     def to_dict(self, without_bullets_ids: bool = False, positive_only: bool = False, without_points: bool = False) -> dict:
-        sections = self._non_empty_section_data(without_bullets_ids, positive_only, without_points)
         return {
             "playbook_id": self.playbook_id,
-            "sections": sections,
+            "sections": self._non_empty_sections_payload(without_bullets_ids, positive_only, without_points),
         }
 
     def to_file(self, file_path: str):
@@ -132,9 +142,21 @@ class Playbook:
 
     @classmethod
     def from_dict(cls, data: dict, rev_number: int = 0) -> "Playbook":
+        raw = data["sections"]
+        sections: dict[str, PlaybookSection] = {}
+        if isinstance(raw, dict):
+            for section_id, bullets in raw.items():
+                ps = PlaybookSection.from_dict({section_id: bullets})
+                sections[ps.id] = ps
+        elif isinstance(raw, list):
+            for section in raw:
+                ps = PlaybookSection.from_dict(section)
+                sections[ps.id] = ps
+        else:
+            raise ValueError(f"sections must be dict or list, got {type(raw).__name__}")
         return Playbook(
             playbook_id=data["playbook_id"],
-            sections=[PlaybookSection.from_dict(section) for section in data["sections"]],
+            sections=sections,
             number_of_revisions=rev_number,
         )
 
@@ -150,7 +172,7 @@ class Playbook:
         files = glob.glob(os.path.join(PLAYBOOK_HISTORY_DIR, f"{playbook_id}-*.json"))
         number_of_revs = len(files)
         if not files:
-            playbook = cls(playbook_id=playbook_id, sections=[], number_of_revisions=0)
+            playbook = cls(playbook_id=playbook_id, sections={}, number_of_revisions=0)
             playbook.save_revision()
             return playbook
         latest_file = max(files, key=lambda x: os.path.getctime(x))
@@ -164,37 +186,31 @@ class Playbook:
         return self.from_file(latest_file)
 
     def to_yaml(self, without_bullets_ids: bool = False, positive_only: bool = False, without_points: bool = False) -> str:
-        sections_data = self._non_empty_section_data(without_bullets_ids, positive_only, without_points)
+        sections_data = self._non_empty_sections_payload(without_bullets_ids, positive_only, without_points)
         return yaml.dump(sections_data, indent=4, sort_keys=False)
 
     def to_markdown(self, without_bullets_ids: bool = False, positive_only: bool = False, without_points: bool = False) -> str:
         result = f"# Playbook (revision {self.number_of_revisions})\n\n"
-        sections_data = self._non_empty_section_data(without_bullets_ids, positive_only, without_points)
+        sections_data = self._non_empty_sections_payload(without_bullets_ids, positive_only, without_points)
 
         if len(sections_data) > 0:
             result += "## Sections\n\n"
         else:
             result += "NOTE: Playbook is empty. Add some sections and bullets to get started.\n"
-        for section in sections_data:
-            section_id = next(iter(section.keys()), None)
-            if not section_id:
-                continue
+        for section_id, bullets in sections_data.items():
             result += f"### {section_id}\n\n"
-            bullets = section[section_id]
-            if without_bullets_ids:
-                bullets_yaml = yaml.dump(bullets, indent=4, sort_keys=False)
-                result += f"{bullets_yaml}\n"
-            else:
-                bullets_yaml = yaml.dump(bullets, indent=4, sort_keys=False)
-                result += f"{bullets_yaml}\n"
+            bullets_yaml = yaml.dump(bullets, indent=4, sort_keys=False)
+            result += f"{bullets_yaml}\n"
             result += "\n"
         return result
 
     def model_dump(self) -> dict:
-        sections = self._non_empty_sections()
+        merged: dict = {}
+        for section in self._non_empty_sections():
+            merged.update(section.model_dump())
         return {
             "playbook_id": self.playbook_id,
-            "sections": [section.model_dump() for section in sections],
+            "sections": merged,
         }
 
     @classmethod
@@ -203,17 +219,15 @@ class Playbook:
             return cls.from_dict(json.load(f), rev_number=rev_number)
 
     def _section_by_id(self, section_id: str) -> "PlaybookSection":
-        for s in self.sections:
-            if s.id == section_id:
-                return s
-        raise PlaybookOperationError(f"Unknown section: {section_id!r}")
+        if section_id not in self.sections:
+            raise PlaybookOperationError(f"Unknown section: {section_id!r}")
+        return self.sections[section_id]
 
     def _section_by_id_or_create(self, section_id: str) -> "PlaybookSection":
-        for s in self.sections:
-            if s.id == section_id:
-                return s
+        if section_id in self.sections:
+            return self.sections[section_id]
         section = PlaybookSection(id=section_id, bullets=[])
-        self.sections.append(section)
+        self.sections[section_id] = section
         return section
 
     def _bullet_index(self, section: "PlaybookSection", bullet_id: str) -> int:
@@ -225,7 +239,7 @@ class Playbook:
     def apply_bullet_tags(self, bullet_tags: list[BulletTag]):
         bullet_by_id = {
             bullet.id: bullet
-            for section in self.sections
+            for section in self.sections.values()
             for bullet in section.bullets
         }
         for bullet_tag in bullet_tags:
@@ -271,7 +285,19 @@ class Playbook:
                 i = self._bullet_index(section, bid)
                 section.bullets.pop(i)
                 if not section.bullets:
-                    self.sections = [s for s in self.sections if s.id != section.id]
+                    del self.sections[section.id]
             else:
                 raise PlaybookOperationError(f"Invalid action: {action!r}")
         self.save_revision()
+
+
+
+if __name__ == "__main__":
+    playbook = Playbook.load_last_revision_of("incident_commander")
+    print(playbook.to_markdown(without_bullets_ids=True, positive_only=False, without_points=True))
+    playbook = Playbook.load_last_revision_of("monitoring_agent")
+    print(playbook.to_markdown(without_bullets_ids=True, positive_only=False, without_points=True))
+    playbook = Playbook.load_last_revision_of("devops_agent")
+    print(playbook.to_markdown(without_bullets_ids=True, positive_only=False, without_points=True))
+    playbook = Playbook.load_last_revision_of("coder_agent")
+    print(playbook.to_markdown(without_bullets_ids=True, positive_only=False, without_points=True))

@@ -39,7 +39,7 @@ Your goal is to "fish" for root causes in the cluster.
 # Example of what the Agent should write:
 df_logs = pd_client.query_loki('{app="payment"} |= "error"', from_time="now-10m")
 # Group by normalized message (remove digits/IDs)
-patterns = df_logs['message'].str.replace(r'\d+', 'N', regex=True).value_counts().head(10)
+patterns = df_logs['message'].str.replace(r'\\d+', 'N', regex=True).value_counts().head(10)
 print("Top 10 Error Patterns for 'payment':")
 print(patterns)
 ```
@@ -95,6 +95,7 @@ async def main():
             "messages": goal.conversation
         }
         result = await agent.call(shared=shared)
+        goal.conversation.append(shared["messages"][-1])
         print(result)
         goal.save()
 

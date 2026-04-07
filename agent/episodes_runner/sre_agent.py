@@ -19,8 +19,9 @@ from agent.tooling.deploy import deploy_app
 from agent.tooling.eks import EksReadTools, EksWriteTools
 from agent.tooling.kubectl import (KubectlReadTools, KubectlWriteTools,
                                    kubectl_get_resources)
-from agent.tooling.metrics import MetricsTools
+from agent.tooling.metrics import MetricsSummaryTools
 from agent.tooling.planning import PlanningTools
+from agent.tooling.rlm_metrics import REPLTools
 from episodes_runner.utils import configure_settings
 
 JUDGE_SYSTEM_PROMPT = """
@@ -28,64 +29,29 @@ You are a judge agent that evaluates the performance of the SRE Agent.
 """
 
 
-SYSTEM_PROMPTS = {
-    "incident_commander": """
-    You are a incident commander.
-    You are responsible for commanding the incident response team.
-    You are allowed to delegate tasks to your deputies, that are experts in their respective domains.
-    You are responsible running deploy_app tool once fix is ready to be deployed.
-    Your deputies are:
-    - coder_agent: is responsible for coding the application.
-    - monitoring_agent: is responsible for collecting/interpreting logs/metrics from the cluster.
-    - devops_agent: is responsible for managing the cluster resources.
-    """,
-    "monitoring_agent": """
-    You are a monitoring agent. You are responsible for collecting logs/metrics from the kubernetes cluster.
-    You are allowed to delegate tasks/subtasks if assign_task tool is present in the tools list.
-    You are able to delegate tasks/subtasks to the following agents:
-    - coder_agent: is responsible for coding the application.
-    - monitoring_agent: - you (you may call yourself recursively)
-    - devops_agent: is responsible for managing the cluster resources.
-    """,
-    "devops_agent": """
-    You are a devops agent. You are responsible for managing the kubernetes cluster.
-    You are allowed to delegate tasks/subtasks if assign_task tool is present in the tools list.
-    You are able to delegate tasks/subtasks to the following agents:
-    
-    Focus on application namespace where the application is running.
-    - monitoring_agent: is responsible for collecting/interpreting logs/metrics from the cluster.
-    - devops_agent: - you (you may call yourself recursively)
-    """,
-    "coder_agent": """
-    You are a coder agent. You are responsible for coding the application.
-    You are allowed to delegate tasks/subtasks if assign_task tool is present in the tools list.
-    You are able to delegate tasks/subtasks to the following agents:
-    - coder_agent: - you (you may call yourself recursively)
-    - monitoring_agent: is responsible for collecting/interpreting logs/metrics from the cluster.
-    - devops_agent: is responsible for managing the cluster resources.
-    """,
-}
-
-
 @contextmanager
 def create_sre_agent(
     name: str,
-    enable_playbooks: bool = False,
     provider: str = "minimax",
     project_name: str = "sre-agent"
 ) -> LLMAgent:
 
     tracer = configure_settings(project_name, provider)
 
-    if enable_playbooks:
-        playbooks = {
-            "incident_commander": "\n" + Playbook.load_last_revision_of("incident_commander").to_markdown(without_bullets_ids=True, positive_only=False, without_points=True),
-            "monitoring_agent": "\n" + Playbook.load_last_revision_of("monitoring_agent").to_markdown(without_bullets_ids=True, positive_only=False, without_points=True),
-            "devops_agent": "\n" + Playbook.load_last_revision_of("devops_agent").to_markdown(without_bullets_ids=True, positive_only=False, without_points=True),
-            "coder_agent": "\n" + Playbook.load_last_revision_of("coder_agent").to_markdown(without_bullets_ids=True, positive_only=False, without_points=True),
-        }
-    else:
-        playbooks = {}
+    playbooks = {
+        "incident_commander": Playbook.load_last_revision_of("incident_commander").to_markdown(
+            without_bullets_ids=True, positive_only=False, without_points=True
+        ),
+        "monitoring_agent": Playbook.load_last_revision_of("monitoring_agent").to_markdown(
+            without_bullets_ids=True, positive_only=False, without_points=True
+        ),
+        "devops_agent": Playbook.load_last_revision_of("devops_agent").to_markdown(
+            without_bullets_ids=True, positive_only=False, without_points=True
+        ),
+        "coder_agent": Playbook.load_last_revision_of("coder_agent").to_markdown(
+            without_bullets_ids=True, positive_only=False, without_points=True
+        ),
+    }
     api_key_path = Path("/Users/micmur/GITHUB/o8s/api_key.json")
     workspace_path = Path("/Users/micmur/GITHUB/o8s/workspace")
     GRAFANA_API_KEY = json.load(open(api_key_path))["grafana_api_token"]
@@ -105,7 +71,7 @@ def create_sre_agent(
     }
 
     incident_commander_tools = PlanningTools | deploy_app
-    metrics_tools = MetricsTools | kubectl_get_resources | PlanningTools
+    metrics_tools = REPLTools | PlanningTools | MetricsSummaryTools | kubectl_get_resources
 
     devops_read_tools = CliTools | CodebaseReadTools | KubectlReadTools | EksReadTools | PlanningTools
     devops_write_tools = CodebaseWriteTools | CliTools | KubectlWriteTools | EksWriteTools | PlanningTools
@@ -116,7 +82,7 @@ def create_sre_agent(
 
     incident_commander = LLMAgent(
         name="incident_commander",
-        system_prompt=SYSTEM_PROMPTS["incident_commander"] + "\n" + playbooks.get("incident_commander", ""),
+        system_prompt=playbooks["incident_commander"],
         tools=incident_commander_tools,
         shared_context={
             **shared_context,
@@ -128,7 +94,7 @@ def create_sre_agent(
 
     monitoring_agent = LLMAgent(
         name="monitoring_agent",
-        system_prompt=SYSTEM_PROMPTS["monitoring_agent"] + "\n" + playbooks.get("monitoring_agent", ""),
+        system_prompt=playbooks["monitoring_agent"],
         tools=metrics_tools,
         shared_context={
             **shared_context,
@@ -139,7 +105,7 @@ def create_sre_agent(
 
     devops_agent = LLMAgent(
         name="devops_agent",
-        system_prompt=SYSTEM_PROMPTS["devops_agent"] + "\n" + playbooks.get("devops_agent", ""),
+        system_prompt=playbooks["devops_agent"],
         tools=devops_tools,
         shared_context={
             **shared_context,
@@ -150,7 +116,7 @@ def create_sre_agent(
 
     coder_agent = LLMAgent(
         name="coder_agent",
-        system_prompt=SYSTEM_PROMPTS["coder_agent"] + "\n" + playbooks.get("coder_agent", ""),
+        system_prompt=playbooks["coder_agent"],
         tools=coder_tools,
         shared_context={
             **shared_context,
@@ -176,8 +142,8 @@ if __name__ == "__main__":
                 id=SESSION_ID,
                 assignee="incident_commander",
                 assigner="human",
-                content="Please ask coder_agent to give you list of tools and their capabilities, can you also make sure that coder_agent will ask devops_agent to give you list of tools and their capabilities? At the end I want you to use previous coder_agent session and ask him what was his last task."
-                #content="Please ask coder_agent, monitoring_agent and devops_agent to list their tools and their capabilities. And show me the report about their capabilities. You may achieve this by assigning tasks to them. Do not make list_metrics tool call."
+                #content="Please ask coder_agent to give you list of tools and their capabilities, can you also make sure that coder_agent will ask devops_agent to give you list of tools and their capabilities? At the end I want you to use previous coder_agent session and ask him what was his last task."
+                content="Please ask your deputies to list their tools and their capabilities. And show me the report about their capabilities. You may achieve this by assigning tasks to them. Do not make list_metrics tool call."
             )
             goal.save()
             shared = {
@@ -186,6 +152,7 @@ if __name__ == "__main__":
                 "depth": 0
             }
             result = await sre_agent.call(shared)
-            goal.feedback({"role": "user", "content": "Task was completed. But your deputies also have deputies under them. And we are missing their list of tools."})
+            goal.feedback(
+                {"role": "user", "content": "Task was completed. But your deputies also have deputies under them. And we are missing their list of tools."})
             print(result)
     asyncio.run(main())

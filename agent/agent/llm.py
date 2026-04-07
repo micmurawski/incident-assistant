@@ -349,6 +349,7 @@ class LLMAgent(ABC):
         it: ChunkProxyIterator = await self.create_message(
             messages=messages,
             metadata=metadata,
+            task=task,
             **call_kwargs,
         )
         async for _ in it:
@@ -529,6 +530,7 @@ class LLMAgent(ABC):
         _id = kwargs.pop("id", str(uuid4()))
         conversation_id = kwargs.pop("conversation_id", None)
         conversation_version = kwargs.pop("conversation_version", 1)
+
         task_id = kwargs.pop("task_id", None)
         session_id = kwargs.pop("session_id", None)
 
@@ -542,8 +544,16 @@ class LLMAgent(ABC):
             ]
             _debug_llm("create_message: empty after sanitize → placeholder user message")
 
+        system_prompt = kwargs.pop("system_prompt", self.system_prompt)
+        task: Task | None = kwargs.pop("task", None)
+        if task:
+            iterations_count = task.iterations_count
+            iterations_limit = task.iterations_limit
+            system_prompt = system_prompt + "\n\n" + \
+                f"You have {iterations_count} iterations left out of {iterations_limit}."
+
         _iterator = self.api_handler.create_message(
-            system_prompt=kwargs.pop("system_prompt", self.system_prompt),
+            system_prompt=system_prompt,
             messages=safe_messages,
             metadata=metadata,
             tools=kwargs.pop("tools", self.tools_definitions),

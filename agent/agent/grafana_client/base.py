@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 
 
-
 @dataclass
 class Datasource:
     """Grafana datasource info."""
