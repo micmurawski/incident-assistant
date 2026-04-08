@@ -20,31 +20,34 @@ _history_lock = asyncio.Lock()
 _MAX_HISTORY_ENTRIES = 2000
 
 
-def _run_code(code: str) -> str:
+def _run_code(code: str) -> tuple[str, str | None]:
     buf_out, buf_err = io.StringIO(), io.StringIO()
+    error = None
     try:
         with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
             exec(compile(code, "<sandbox>", "exec"), _globals)
     except Exception:
-        buf_err.write(traceback.format_exc())
-    return buf_out.getvalue() + buf_err.getvalue()
+        error = traceback.format_exc()
+    return buf_out.getvalue() + buf_err.getvalue(), error
 
 
 async def health(_: Request) -> PlainTextResponse:
     return PlainTextResponse("ok")
 
 
-async def run_code(request: Request) -> PlainTextResponse:
+async def run_code(request: Request) -> JSONResponse:
     body = await request.body()
     code = body.decode("utf-8", errors="replace")
-    out = _run_code(code)
+    out, err = _run_code(code)
     async with _history_lock:
         _history.append({"action": "CODE_INPUT", "content": code})
+        if err:
+            _history.append({"action": "CODE_ERROR", "content": err})
         _history.append({"action": "CODE_OUTPUT", "content": out})
         overflow = len(_history) - _MAX_HISTORY_ENTRIES
         if overflow > 0:
             del _history[:overflow]
-    return PlainTextResponse(out)
+    return JSONResponse({"output": out, "error": err})
 
 
 async def get_history(_: Request) -> JSONResponse:

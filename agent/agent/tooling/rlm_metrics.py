@@ -99,11 +99,13 @@ async def execute_code(
     """
 
     container: ContainerRLMSandbox = await ensure_container_running(env, task.id, task.root.id, cwd)
-    result = await container.execute_code(code)
+    result, error = await container.execute_code(code)
     print("--------------------------------")
-    print(result)
+    print(f"RESULT: {result}")
+    if error:
+        print(f"ERROR: {error}")
     print("--------------------------------")
-    return ToolResult(result=result, error=None)
+    return ToolResult(result=result, error=error)
 
 
 @tool(tags=["rlm_metrics"])

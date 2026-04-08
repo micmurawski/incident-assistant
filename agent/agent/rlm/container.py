@@ -183,7 +183,10 @@ import io
 {name} = pd.read_csv(io.StringIO({repr(csv_data)}))
 print(f"Loaded DataFrame '{name}' with {{len({name})}} rows.")
 """
-        return await self.execute_code(code)
+        out, err = await self.execute_code(code)
+        if err:
+            return f"Error loading dataframe: {err}"
+        return out
 
     async def download_file(self, filename: str) -> str:
         """Download a file from the sandbox."""
@@ -191,7 +194,10 @@ print(f"Loaded DataFrame '{name}' with {{len({name})}} rows.")
 with open({repr(filename)}, "r") as f:
     print(f.read())
 """
-        return await self.execute_code(code)
+        out, err = await self.execute_code(code)
+        if err:
+            return f"Error downloading file: {err}"
+        return out
 
     async def pip_install(self, packages: list[str]) -> None:
         code = f"""
@@ -200,20 +206,26 @@ packages = {repr(packages)}
 print(f"Installing {{', '.join(packages)}}...")
 subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", *packages])
 """
-        return await self.execute_code(code)
+        out, err = await self.execute_code(code)
+        if err:
+            raise Exception(f"Pip install failed: {err}")
 
-    async def execute_code(self, code: str) -> str:
+    async def execute_code(self, code: str) -> tuple[str, str | None]:
         url = f"{self._http_base}/run"
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
                 r = await client.post(url, content=code.encode("utf-8"))
                 r.raise_for_status()
-                output = r.text
+                data = r.json()
+                output = data.get("output", "")
+                error = data.get("error")
 
             self.history.append({"action": "CODE_INPUT", "content": code})
+            if error:
+                self.history.append({"action": "CODE_ERROR", "content": error})
             self.history.append({"action": "CODE_OUTPUT", "content": output})
 
-            return output
+            return output, error
 
         except Exception as e:
             error_msg = f"Network/Execution Error: {str(e)}"
@@ -221,10 +233,10 @@ subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", *packages])
             if self.container:
                 try:
                     logs = self.container.logs(tail=40).decode(errors="replace")
-                    return f"{error_msg}\n--- container logs (tail) ---\n{logs}"
+                    error_msg = f"{error_msg}\n--- container logs (tail) ---\n{logs}"
                 except Exception:
                     pass
-            return error_msg
+            return "", error_msg
 
     def reset_history(self) -> None:
         self.history = []
