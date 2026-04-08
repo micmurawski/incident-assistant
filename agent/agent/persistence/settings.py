@@ -27,7 +27,25 @@ def init_db() -> SqliteDatabase:
         model.bind(database)
     database.connect()
     database.create_tables(models, safe=True)
+    #_migrate_tasks_resolved_at(database)
     return database
+
+
+def _migrate_tasks_resolved_at(database: SqliteDatabase) -> None:
+    """Add ``resolved_at`` if missing; backfill DONE rows with ``updated_at``."""
+    cursor = database.execute_sql("PRAGMA table_info(tasks)")
+    columns = {row[1] for row in cursor.fetchall()}
+    if "resolved_at" not in columns:
+        database.execute_sql(
+            "ALTER TABLE tasks ADD COLUMN resolved_at DATETIME NULL"
+        )
+    database.execute_sql(
+        """
+        UPDATE tasks
+        SET resolved_at = updated_at
+        WHERE resolved_at IS NULL AND status = 'DONE'
+        """
+    )
 
 
 if __name__ == "__main__":

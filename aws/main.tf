@@ -124,7 +124,8 @@ module "eks" {
       }
     }
 
-    # Incident assistant: namespace-scoped edit in application + cluster-scoped view (e.g. list nodes)
+    # Incident assistant: namespace-scoped edit in application + cluster-scoped view (e.g. list nodes).
+    # Amazon-managed policies do not include AWS LB Controller CRDs; extend eks/incident-assistant-rbac.yml for those.
     incident_assistant = {
       principal_arn = data.aws_iam_user.incident-assistant.arn
       policy_associations = {

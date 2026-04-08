@@ -33,6 +33,8 @@ def _row_to_dict(row: TaskModel) -> dict:
         "total_usage": _loads(row.total_usage, {}),
         "usage": _loads(row.usage, {}),
         "created_at": row.created_at,
+        "updated_at": row.updated_at,
+        "resolved_at": row.resolved_at,
     }
 
 

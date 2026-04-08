@@ -7,6 +7,12 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from episodes_runner.fault_scenario_picker import (pick_fault_scenario,
+                                                   record_episode_failure,
+                                                   record_episode_success)
+from episodes_runner.utils import (get_kubectl_env, live_timer,
+                                   restore_eks_node_group)
+
 from agent.grafana_client.client import AsyncGrafanaClient
 from agent.grafana_client.report import (build_status_report_dict,
                                          detect_differences,
@@ -14,15 +20,10 @@ from agent.grafana_client.report import (build_status_report_dict,
 from agent.tooling._utils import run_cli_command
 from agent.tooling.decorators import ToolResult
 from agent.tooling.metrics import APPS, NAMESPACE
-from episodes_runner.fault_scenario_picker import (pick_fault_scenario,
-                                                   record_episode_failure,
-                                                   record_episode_success)
-from episodes_runner.utils import live_timer
 
 # Resolve repo root (o8s): episodes_runner -> agent -> o8s
 CUR_DIR = Path(__file__).resolve().parent
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-API_KEY_PATH = REPO_ROOT / "api_key.json"
 DEPLOY_LOAD_GEN_SCRIPT = REPO_ROOT / "eks" / "deploy-load-gen.sh"
 
 # Default paths (override with env or CLI)
@@ -31,7 +32,7 @@ DEFAULT_WORKSPACE = Path("/Users/micmur/GITHUB/o8s/workspace")
 FAULT_VAULT_DIR = Path("/Users/micmur/GITHUB/o8s/agent/fault_generator/fault-vault")
 
 # Wait after deploy for symptoms to appear (seconds)
-DEFAULT_WAIT_SECONDS = 180
+DEFAULT_WAIT_SECONDS = 300
 
 
 def create_workspace(source_dir: Path, workspace_dir: Path) -> None:
@@ -45,20 +46,6 @@ def create_workspace(source_dir: Path, workspace_dir: Path) -> None:
     print(f"[1] Created workspace at {workspace_dir}")
 
 
-def _kubectl_env() -> dict:
-    """Merge os.environ with AWS creds from api_key.json (same as episodes_runner/runner.py)."""
-    env = {**os.environ}
-    if API_KEY_PATH.exists():
-        with open(API_KEY_PATH) as f:
-            keys = json.load(f)
-        robot = keys.get("robot")
-        if robot:
-            env["AWS_ACCESS_KEY_ID"] = robot["access_key_id"]
-            env["AWS_SECRET_ACCESS_KEY"] = robot["secret_access_key"]
-            env.setdefault("AWS_REGION", "us-east-1")
-    return env
-
-
 def apply_chaos_mesh_fault(manifest_path: Path, env: dict) -> None:
     cmd = ["kubectl", "apply", "-f", str(manifest_path)]
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
@@ -70,16 +57,13 @@ def apply_chaos_mesh_fault(manifest_path: Path, env: dict) -> None:
 
 
 def delete_chaos_mesh_all_experiments(env: dict) -> None:
-    resources = "podchaos,networkchaos,stresschaos,iochaos,httpchaos"
-    cmd = ["kubectl", "delete", resources, "--all", "-A"]
+    # run ./eks/cleanup-chaos-experiments.sh from repo root
+    cmd = ["bash", "-e", str(REPO_ROOT / "eks" / "cleanup-chaos-experiments.sh")]
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if result.returncode != 0:
-        print(
-            f"[cleanup] kubectl delete {resources} (exit {result.returncode}): "
-            f"{result.stderr or result.stdout or '(no output)'}"
-        )
+        print(f"[cleanup] cleanup-chaos-experiments.sh failed: {result.stderr or result.stdout}")
     else:
-        print(f"[cleanup] Deleted all chaos mesh resources: {resources}")
+        print(f"[cleanup] cleanup-chaos-experiments.sh completed")
 
 
 async def ensure_load_gen_deployed() -> None:
@@ -88,7 +72,7 @@ async def ensure_load_gen_deployed() -> None:
         raise FileNotFoundError(
             f"Load-gen script not found (expected at {DEPLOY_LOAD_GEN_SCRIPT})"
         )
-    env = _kubectl_env()
+    env = get_kubectl_env()
     result: ToolResult = await run_cli_command(
         ["bash", "-e", str(DEPLOY_LOAD_GEN_SCRIPT)],
         timeout=300,
@@ -121,7 +105,7 @@ async def apply_fault(workspace_dir: Path, fault_dir: Path) -> None:
     If present, apply Chaos Mesh experiment.yaml, then apply git.patch in workspace
     (same order as episodes_runner/runner.py).
     """
-    env = _kubectl_env()
+    env = get_kubectl_env()
     experiment_manifest = fault_dir / "experiment.yaml"
     if experiment_manifest.exists():
         apply_chaos_mesh_fault(experiment_manifest, env)
@@ -193,6 +177,7 @@ def incident_content(fault_dir: Path) -> str:
 def build_agent_prompt(
     focused_metrics_report: str,
     incident_md: str,
+    wait_seconds: int = DEFAULT_WAIT_SECONDS,
 ) -> str:
     """Build the prompt for the agent to fix the fault."""
 # """
@@ -203,7 +188,7 @@ def build_agent_prompt(
 # ---
 # """
     print(f"\033[33mfocused_metrics_report: {focused_metrics_report}\033[0m")
-    incident_start_time = datetime.now() - timedelta(minutes=5)
+    incident_start_time = datetime.now() - timedelta(seconds=wait_seconds)
     return f"""
 ## Incident announcement
 Current time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -240,6 +225,8 @@ async def run_episode(
     source_dir = Path(os.environ.get("EPISODE_SOURCE", str(DEFAULT_SOURCE)))
     workspace_dir = Path(os.environ.get("EPISODE_WORKSPACE", str(DEFAULT_WORKSPACE)))
     fault_vault_dir = FAULT_VAULT_DIR
+    kubectl_env = get_kubectl_env()
+    delete_chaos_mesh_all_experiments(kubectl_env)
 
     out = {
         "workspace_dir": str(workspace_dir),
@@ -269,7 +256,7 @@ async def run_episode(
     out["fault_dir"] = str(fault_dir)
     out["fault_id"] = fault_dir.name
 
-    kubectl_env = _kubectl_env()
+    kubectl_env = get_kubectl_env()
     try:
         try:
             # 3. Metrics before
@@ -309,11 +296,13 @@ async def run_episode(
                 record_episode_success(scenario_for_history)
             return out
         except BaseException as e:
+            delete_chaos_mesh_all_experiments(kubectl_env)
+            await restore_eks_node_group()
             if scenario_for_history:
                 record_episode_failure(scenario_for_history, str(e))
             raise
     finally:
-        delete_chaos_mesh_all_experiments(kubectl_env)
+        pass
 
 
 async def main() -> int:

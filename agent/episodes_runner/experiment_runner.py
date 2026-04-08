@@ -2,20 +2,23 @@ import asyncio
 import os
 import uuid
 
-from agent.llm import LLMAgent
-from agent.persistence.settings import init_db
-from agent.tasks.tasks import Task
-from agent.tasks.types import TaskStatus
-from agent.tooling.decorators import Tools
 from episodes_runner.episode_runner import (detect_differences,
                                             ensure_load_gen_deployed,
                                             format_diff_status_report,
                                             get_metrics_summary, run_episode)
 from episodes_runner.sre_agent import configure_settings, create_sre_agent
-from episodes_runner.utils import collect_meaningful_actions, live_timer, clean_all_containers
+from episodes_runner.utils import (clean_all_containers,
+                                   collect_meaningful_actions, live_timer,
+                                   restore_eks_node_group)
+
+from agent.llm import LLMAgent
+from agent.persistence.settings import init_db
+from agent.tasks.tasks import Task
+from agent.tasks.types import TaskStatus
+from agent.tooling.decorators import Tools
 
 # Max wall time for the SRE agent flow; override with env SRE_AGENT_TIMEOUT_SEC.
-SRE_AGENT_CALL_TIMEOUT_SEC = float(os.environ.get("SRE_AGENT_TIMEOUT_SEC", "1800"))
+SRE_AGENT_CALL_TIMEOUT_SEC = float(os.environ.get("SRE_AGENT_TIMEOUT_SEC", "3600"))
 
 JUDGE_SYSTEM_PROMPT = """
 You are a Senior SRE Judge. Your role is to evaluate if an SRE Agent successfully resolved an incident.
@@ -55,7 +58,7 @@ async def run_experiment():
 
     await ensure_load_gen_deployed()
     episode = await run_episode(
-        #selected_fault="fault-3-catalogue-716cc0dd-5274-4884-88b3-33e0d0eb292e"
+        # selected_fault="fault-3-catalogue-716cc0dd-5274-4884-88b3-33e0d0eb292e"
     )
     goal = Task.create_root_task(
         id=episode["fault_id"],
@@ -85,9 +88,9 @@ async def run_experiment():
             goal.status = TaskStatus.DISCARDED
             goal.save()
             return
-
+        goal.attempt_complete(force=True)
         # Wait for recovery
-        live_timer(4*60)
+        live_timer(5*60)
         metrics_after_fixing = await get_metrics_summary()
         diff = detect_differences(episode["metrics_after"], metrics_after_fixing)
         focused_metrics_report = format_diff_status_report(diff, "recovery attempt")
@@ -109,8 +112,8 @@ async def run_experiment():
             evidence_report += "- No file modification tools were detected in the execution logs.\n"
 
         # 3. Prepare the Judge's input
-        # Use include_actions=True to let the judge see the placeholders in history
-        rich_history = goal.get_conversation_with_swapped_roles()
+        # Use include_actions=True so the judge sees tool names/args (ground truth for claims vs evidence).
+        rich_history = goal.get_conversation_with_swapped_roles(include_actions=False)
 
         assessment_request = (
             "Please assess the SRE Agent's performance based on the following data.\n\n"
@@ -129,9 +132,13 @@ async def run_experiment():
 
         judge_messages = rich_history + [{"role": "user", "content": assessment_request}]
 
+        # Do not pass the root `goal` as `task`: incident_commander already exhausted
+        # goal.iterations_count against goal.iterations_limit. Reusing the same Task makes
+        # call_llm hit the iteration hard-stop immediately and return a stub message instead
+        # of real judge output.
         shared_judge = {
             "messages": judge_messages,
-            "task": goal  # Allow judge to see task context if needed
+            # "task": goal  # Allow judge to see task context if needed
         }
 
         # 4. Run the Judge Agent
@@ -139,17 +146,22 @@ async def run_experiment():
         await judge_agent.call(shared_judge)
 
         # Final save
-        goal.conversation.append(shared_judge["messages"][-1])
+        goal.conversation.append(
+            {
+                "role": "user",
+                "content": shared_judge["messages"][-1]["content"]
+            }
+        )
         # print final judgement
         print(f"Final judgement: {goal.conversation[-1]['content']}")
         total_usage = goal.get_total_usage()
         print("Total usage:")
         print(total_usage)
         goal.usage = total_usage
-        goal.attempt_complete(force=True)
         goal.save()
 
     clean_all_containers()
+    await restore_eks_node_group()
 
 
 if __name__ == "__main__":

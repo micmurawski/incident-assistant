@@ -428,7 +428,7 @@ async def kubectl_describe(
     cwd: Hidden[str],
     resource_type: Annotated[str, "Resource type, e.g. 'pod', 'deployment', 'node', 'service', 'pvc'"],
     resource_name: Annotated[str, "Name of the resource"],
-    namespace: Annotated[Optional[str], "Namespace (omit for cluster-scoped resources like nodes)"] = None,
+    namespace: Annotated[Optional[str], "Namespace (default: application namespace)"] = APP_NAMESPACE,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
@@ -570,7 +570,7 @@ async def kubectl_get_resources(
                               "Field selector filter, e.g. 'status.phase=Failed' or 'status.phase!=Running'"] = None,
     sort_by: Annotated[Optional[str],
                        "JSONPath to sort by, e.g. '.status.startTime' or '.metadata.creationTimestamp'"] = None,
-    additional_args: Annotated[str, "Additional arguments to pass to the kubectl command"] = None,
+    additional_args: Annotated[Optional[str], "Additional arguments to pass to the kubectl command"] = None,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
@@ -606,7 +606,7 @@ async def kubectl_get_resource(
                               "Field selector filter, e.g. 'status.phase=Failed' or 'status.phase!=Running'"] = None,
     sort_by: Annotated[Optional[str],
                        "JSONPath to sort by, e.g. '.status.startTime' or '.metadata.creationTimestamp'"] = None,
-    additional_args: Annotated[str, "Additional arguments to pass to the kubectl command"] = None,
+    additional_args: Annotated[Optional[str], "Additional arguments to pass to the kubectl command"] = None,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """

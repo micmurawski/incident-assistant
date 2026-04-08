@@ -508,7 +508,7 @@ async def build_status_report_yaml(
     return yaml.dump(data, sort_keys=False)
 
 
-def detect_differences(metrics_before: dict, metrics_after: dict, threshold: float = 10.0) -> dict:
+def detect_differences(metrics_before: dict, metrics_after: dict, threshold: float = 5.0) -> dict:
     """
     Compare before/after service metrics and return a focused diff payload.
 

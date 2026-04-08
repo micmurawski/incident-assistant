@@ -25,6 +25,7 @@ class TaskModel(Model):
     last_message_ts = IntegerField()
     created_at = DateTimeField(default=datetime.now)
     updated_at = DateTimeField(default=datetime.now)
+    resolved_at = DateTimeField(default=None)
 
     class Meta:
         table_name = "tasks"

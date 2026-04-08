@@ -6,14 +6,14 @@ import subprocess
 from pathlib import Path
 
 import yaml
-
-from agent.grafana_client.client import GrafanaClient
-from agent.grafana_client.report import build_status_report_dict
-from agent.tooling.metrics import APPS, NAMESPACE
 from episodes_runner.fault_scenario_picker import (pick_fault_scenario,
                                                    record_episode_failure,
                                                    record_episode_success)
 from episodes_runner.utils import detect_differences, live_timer
+
+from agent.grafana_client.client import GrafanaClient
+from agent.grafana_client.report import build_status_report_dict
+from agent.tooling.metrics import APPS, NAMESPACE
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 DEFAULT_SOURCE = BASE_DIR / "services" / "robot-shop"
@@ -152,7 +152,7 @@ async def apply_scenario(fault_scenario: dict, metrics_before: dict) -> None:
     apply_patch(fault_dir)
     await deploy_async(DEFAULT_WORKSPACE, ENV)
     print("[3] Waiting for 5 minutes to let the fault take effect...")
-    live_timer(60*6)
+    live_timer(60*5)
     metrics_after = await build_status_report_dict(
         GRAFANA_CLIENT, NAMESPACE, APPS,
         window="5m",

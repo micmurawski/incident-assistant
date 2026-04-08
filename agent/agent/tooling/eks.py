@@ -11,6 +11,19 @@ CLUSTER_NAME = os.environ.get("CLUSTER_NAME", "1-node-default-vpc")
 
 
 @tool(tags=["eks"])
+async def list_node_groups(
+    env: Hidden[Optional[dict[str, str]]] = None,
+) -> ToolResult:
+    """List all node groups in the EKS cluster."""
+    result = await run_cli_command(
+        ["aws", "eks", "list-nodegroups", "--cluster-name", CLUSTER_NAME, "--output", "json"],
+        env=env,
+    )
+    data = yaml.dump(json.loads(result.result))
+    return ToolResult(result=data, error=None)
+
+
+@tool(tags=["eks"])
 async def scale_node_group(
     node_group: Annotated[str, "The name of the node group to scale"],
     desired_size: Annotated[int, "The desired size of the node group"],
@@ -34,6 +47,7 @@ async def scale_node_group(
             "--cluster-name", CLUSTER_NAME,
             "--nodegroup-name", node_group,
             "--scaling-config", scaling_config,
+            "--output", "json",
         ],
         env=env,
     )
@@ -46,7 +60,8 @@ async def get_node_group_status(
 ) -> ToolResult:
     """Get the status of a node group."""
     return await run_cli_command(
-        ["aws", "eks", "describe-nodegroup", "--cluster-name", CLUSTER_NAME, "--nodegroup-name", node_group],
+        ["aws", "eks", "describe-nodegroup", "--cluster-name", CLUSTER_NAME,
+            "--nodegroup-name", node_group, "--output", "json"],
         env=env,
     )
 
@@ -57,7 +72,7 @@ async def get_cluster_info(
 ) -> ToolResult:
     """Get information about the EKS cluster."""
     result = await run_cli_command(
-        ["aws", "eks", "describe-cluster", "--name", CLUSTER_NAME],
+        ["aws", "eks", "describe-cluster", "--name", CLUSTER_NAME, "--output", "json"],
         env=env,
     )
     data = yaml.dump(json.loads(result.result))
@@ -66,6 +81,7 @@ async def get_cluster_info(
 EksReadTools = Tools(tools=[
     get_node_group_status,
     get_cluster_info,
+    list_node_groups,
 ])
 
 EksWriteTools = Tools(tools=[

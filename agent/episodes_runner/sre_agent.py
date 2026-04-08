@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ace.playbook_core import Playbook
+from episodes_runner.utils import configure_settings
+
 from agent.grafana_client.client import AsyncGrafanaClient
 from agent.llm import LLMAgent
 from agent.persistence.settings import init_db
@@ -22,7 +24,6 @@ from agent.tooling.kubectl import (KubectlReadTools, KubectlWriteTools,
 from agent.tooling.metrics import MetricsSummaryTools
 from agent.tooling.planning import PlanningTools
 from agent.tooling.rlm_metrics import REPLTools
-from episodes_runner.utils import configure_settings
 
 JUDGE_SYSTEM_PROMPT = """
 You are a judge agent that evaluates the performance of the SRE Agent.
@@ -72,7 +73,7 @@ def create_sre_agent(
         "env": SRE_AGENT_ENV,
     }
 
-    incident_commander_tools = PlanningTools | deploy_app
+    incident_commander_tools = PlanningTools | deploy_app # |CliTools
     metrics_tools = REPLTools | PlanningTools | MetricsSummaryTools | kubectl_get_resources
 
     devops_read_tools = CliTools | CodebaseReadTools | KubectlReadTools | EksReadTools | PlanningTools

@@ -5,6 +5,10 @@ from abc import ABC
 from typing import Any, AsyncIterator, List, Optional, TypeVar
 from uuid import uuid4
 
+from framework import AsyncFlow
+from framework.decorators import end, node
+from framework.viz import build_mermaid, to_png
+
 from agent.context_ops import SummarizeResponse, summarize_conversation
 from agent.providers import build_api_handler
 from agent.providers.base import ApiHandler
@@ -13,9 +17,6 @@ from agent.tasks.tasks import Task
 from agent.tracing import trace_flow
 from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
                          StreamChunk)
-from framework import AsyncFlow
-from framework.decorators import end, node
-from framework.viz import build_mermaid, to_png
 
 T = TypeVar('T')
 
@@ -547,10 +548,10 @@ class LLMAgent(ABC):
         system_prompt = kwargs.pop("system_prompt", self.system_prompt)
         task: Task | None = kwargs.pop("task", None)
         if task:
-            iterations_count = task.iterations_count
+            left_iterations = task.iterations_limit - task.iterations_count
             iterations_limit = task.iterations_limit
             system_prompt = system_prompt + "\n\n" + \
-                f"You have {iterations_count} iterations left out of {iterations_limit}."
+                f"You have {left_iterations} iterations left out of {iterations_limit}."
 
         _iterator = self.api_handler.create_message(
             system_prompt=system_prompt,

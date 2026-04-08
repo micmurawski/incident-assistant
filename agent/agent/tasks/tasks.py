@@ -39,6 +39,7 @@ class Task:
     usage: dict = field(default_factory=dict)
     total_usage: dict = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now())
+    updated_at: datetime = field(default_factory=lambda: datetime.now())
     resolved_at: datetime | None = None
 
     def get_tool_usage(self) -> list[ToolUsage]:
@@ -92,6 +93,7 @@ class Task:
             "usage": self.usage,
             "total_usage": self.get_total_usage(),
             "created_at": self.created_at,
+            "updated_at": self.updated_at,
             "resolved_at": self.resolved_at,
         }
 
@@ -144,6 +146,7 @@ class Task:
             self.status = TaskStatus.DONE
             self.resolved_at = datetime.now()
             return True
+        
         if not force:
             raise ValueError("Task is not done. It still has dependencies that are not done.")
         else:  # force is True
@@ -218,6 +221,8 @@ class Task:
             "conversation": conv,
             "messages_history": messages_history,
             "last_message_ts": 0,
+            "created_at": self.created_at,
+            "resolved_at": self.resolved_at,
         }
         TaskModel.insert(row).on_conflict(
             conflict_target=[TaskModel.root_id, TaskModel.id],
