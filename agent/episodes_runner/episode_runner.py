@@ -42,7 +42,10 @@ def create_workspace(source_dir: Path, workspace_dir: Path) -> None:
     shutil.copytree(source_dir, workspace_dir, symlinks=False)
     git_dir = workspace_dir / ".git"
     if git_dir.exists():
-        shutil.rmtree(git_dir)
+        if git_dir.is_dir():
+            shutil.rmtree(git_dir)
+        else:
+            os.remove(git_dir)
     print(f"[1] Created workspace at {workspace_dir}")
 
 
