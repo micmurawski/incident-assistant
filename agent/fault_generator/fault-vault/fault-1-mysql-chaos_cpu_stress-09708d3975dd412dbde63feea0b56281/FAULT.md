@@ -12,8 +12,8 @@ Modified the shipping service to amplify the impact of MySQL CPU stress:
    - Added `@EnableScheduling` annotation
    - Created `DataSyncTask` component that queries MySQL every 5 seconds
 
-3. **Added app label** to `k8s/manifests/mysql.yaml`:
-   - Added `app: mysql` label to the pod template to ensure the Chaos Mesh experiment can target the MySQL pod
+3. **`k8s/manifests/mysql.yaml`**
+   - The pod template already includes `app: mysql` in upstream `robot-shop` (for Chaos Mesh to target MySQL). The fault patch does not edit this file.
 
 ## Symptom
 - Shipping service experiences slow database queries and timeouts

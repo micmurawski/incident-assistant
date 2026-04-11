@@ -120,7 +120,8 @@ async def apply_fault(workspace_dir: Path, fault_dir: Path) -> None:
     print("patch_file:", patch_file)
 
     try:
-        cmd = ["patch", "-p1"]
+        # -f: non-interactive; without it, patch can prompt on the TTY and block forever
+        cmd = ["patch", "-p1", "-f"]
         with patch_file.open("rb") as stdin:
             print("stdin:", stdin)
             result = subprocess.run(cmd, cwd=workspace_dir, stdin=stdin, check=True)
