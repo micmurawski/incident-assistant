@@ -15,6 +15,7 @@ from phoenix.otel import register
 
 from agent.grafana_client.client import GrafanaClient
 from agent.llm import LLMAgent
+from agent.repo_paths import robot_shop_dir
 from agent.settings import SettingsManager
 from agent.tasks.tasks import Task
 from agent.tooling import CodebaseReadTools, CodebaseWriteTools
@@ -81,7 +82,7 @@ class Agent(LLMAgent):
 async def main():
     with tracer.start_as_current_span("agent-execution-flow-session-" + SESSION_ID):
         with using_attributes(session_id=SESSION_ID):
-            cwd = "/Users/micmur/GITHUB/o8s/services/robot-shop"
+            cwd = str(robot_shop_dir())
             update_todo_tools = PlanningTools.select({"update_todo"})
 
             manager_tools = PlanningTools | MetricsTools
@@ -143,7 +144,7 @@ async def main():
             )
 
             shared = {
-                "cwd": "/Users/micmur/GITHUB/o8s/services/robot-shop",
+                "cwd": cwd,
                 "session_id": SESSION_ID,
                 "messages": goal.conversation,
                 "task": goal,

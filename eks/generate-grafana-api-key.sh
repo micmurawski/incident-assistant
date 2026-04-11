@@ -1,5 +1,9 @@
 #!/bin/bash
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+: "${O8S_ROOT:=$REPO_ROOT}"
+
 NAMESPACE="bastion"
 SVC_NAME="loki-grafana"
 ADMIN_USER="admin"
@@ -43,9 +47,9 @@ TOKEN=$(echo $TOKEN_RESPONSE | jq -r .key)
 #  --from-literal=token=$TOKEN \
 #  -n $NAMESPACE \
 #  --dry-run=client -o yaml | kubectl apply -f -
-# add grafana_api_token to /Users/micmur/GITHUB/o8s/api_key.json
+# add grafana_api_token to ${O8S_ROOT}/api_key.json
 
-JSON_FILE="/Users/micmur/GITHUB/o8s/api_key.json"
+JSON_FILE="${O8S_ROOT}/api_key.json"
 jq '. += {"grafana_api_token": "'$TOKEN'"}' $JSON_FILE > $JSON_FILE.tmp && mv $JSON_FILE.tmp $JSON_FILE
 jq '. += {"grafana_url": "'$GRAFANA_URL'"}' $JSON_FILE > $JSON_FILE.tmp && mv $JSON_FILE.tmp $JSON_FILE
 echo "Done! The API token is securely stored."

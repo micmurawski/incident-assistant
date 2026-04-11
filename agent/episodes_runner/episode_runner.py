@@ -19,17 +19,17 @@ from agent.grafana_client.report import (build_status_report_dict,
                                          format_diff_status_report)
 from agent.tooling._utils import run_cli_command
 from agent.tooling.decorators import ToolResult
+from agent.repo_paths import fault_vault_dir, get_repo_root
 from agent.tooling.metrics import APPS, NAMESPACE
 
-# Resolve repo root (o8s): episodes_runner -> agent -> o8s
 CUR_DIR = Path(__file__).resolve().parent
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+REPO_ROOT = get_repo_root()
 DEPLOY_LOAD_GEN_SCRIPT = REPO_ROOT / "eks" / "deploy-load-gen.sh"
 
 # Default paths (override with env or CLI)
-DEFAULT_SOURCE = Path("/Users/micmur/GITHUB/o8s/services/robot-shop")
-DEFAULT_WORKSPACE = Path("/Users/micmur/GITHUB/o8s/workspace")
-FAULT_VAULT_DIR = Path("/Users/micmur/GITHUB/o8s/agent/fault_generator/fault-vault")
+DEFAULT_SOURCE = REPO_ROOT / "services" / "robot-shop"
+DEFAULT_WORKSPACE = REPO_ROOT / "workspace"
+FAULT_VAULT_DIR = fault_vault_dir()
 
 # Wait after deploy for symptoms to appear (seconds)
 DEFAULT_WAIT_SECONDS = 300

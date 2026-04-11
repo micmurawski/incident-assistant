@@ -21,8 +21,10 @@ async def deploy_app(
 if __name__ == "__main__":
     import asyncio
 
+    from agent.repo_paths import robot_shop_dir
+
     async def main():
-        result = await deploy_app(deploy_script_path="/Users/micmur/GITHUB/o8s/services/robot-shop/k8s/deploy.sh")
+        result = await deploy_app(deploy_script_path=str(robot_shop_dir() / "k8s" / "deploy.sh"))
         print(result.result)
         print(result.error)
     asyncio.run(main())

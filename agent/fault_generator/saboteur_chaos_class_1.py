@@ -20,6 +20,7 @@ from phoenix.otel import register
 from agent.llm import LLMAgent
 from agent.providers import build_api_handler
 from agent.providers.base import ApiHandler
+from agent.repo_paths import robot_shop_dir
 from agent.settings import SettingsManager
 from agent.tooling import CodebaseReadTools, CodebaseWriteTools
 from agent.tracing import trace_flow
@@ -30,7 +31,7 @@ os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:6006"
 
 tracer_provider = register(project_name="fault-generator-1-tracing")
 
-REPO_ROOT = Path("/Users/micmur/GITHUB/o8s/services/robot-shop")
+REPO_ROOT = robot_shop_dir()
 LOAD_GEN_SCRIPT = REPO_ROOT / "load-gen" / "robot-shop.py"
 WORKTREES_DIR = REPO_ROOT.parent / "robot-shop-worktrees"
 CURRENT_DIR = Path(__file__).resolve().parent

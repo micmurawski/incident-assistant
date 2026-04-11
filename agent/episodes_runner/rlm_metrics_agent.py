@@ -7,6 +7,7 @@ from pathlib import Path
 from episodes_runner.utils import configure_settings
 
 from agent.llm import LLMAgent
+from agent.repo_paths import get_repo_root
 from agent.persistence.settings import init_db
 from agent.tasks.tasks import Task
 from agent.tooling.rlm_metrics import REPLTools
@@ -55,8 +56,9 @@ def create_rlm_metrics_agent(
     project_name: str = "rlm-metrics-agent"
 ) -> LLMAgent:
     tracer = configure_settings(project_name, provider)
-    workspace_path = Path("/Users/micmur/GITHUB/o8s/workspace")
-    api_key_path = Path("/Users/micmur/GITHUB/o8s/api_key.json")
+    repo_root = get_repo_root()
+    workspace_path = repo_root / "workspace"
+    api_key_path = repo_root / "api_key.json"
     with open(api_key_path) as f:
         data = json.load(f)
         GRAFANA_URL = data["grafana_url"]

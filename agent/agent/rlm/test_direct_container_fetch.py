@@ -2,9 +2,10 @@ import asyncio
 import json
 from pathlib import Path
 
+from agent.repo_paths import api_key_path
 from agent.rlm.container import ContainerRLMSandbox, ContainersResourceManager
 
-PATH_TO_KEYS = Path("/Users/micmur/GITHUB/o8s/api_key.json")
+PATH_TO_KEYS = api_key_path()
 KEYS = json.load(open(PATH_TO_KEYS))
 # Connection details
 GRAFANA_URL = KEYS["grafana_url"]

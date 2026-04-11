@@ -1,6 +1,8 @@
 export NAMESPACE="application"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-JSON_FILE="/Users/micmur/GITHUB/o8s/api_key.json"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+: "${O8S_ROOT:=$REPO_ROOT}"
+JSON_FILE="${O8S_ROOT}/api_key.json"
 
 bash -e "${SCRIPT_DIR}/../services/robot-shop/k8s/build-and-push.sh"
 bash -e "${SCRIPT_DIR}/../services/robot-shop/k8s/deploy-eks-manifests.sh"

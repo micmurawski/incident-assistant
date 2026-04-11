@@ -8,6 +8,7 @@ from openinference.instrumentation.anthropic import AnthropicInstrumentor
 from opentelemetry import trace
 from phoenix.otel import register
 
+from agent.repo_paths import api_key_path
 from agent.settings import SettingsManager
 from agent.tasks.tasks import Task
 from agent.tooling.codebase_write import CodebaseWriteTools
@@ -15,7 +16,7 @@ from agent.tooling.deploy import deploy_app
 
 WRITE_TOOLS = [f.name for f in CodebaseWriteTools.tools]
 DEPLOY_TOOLS = [deploy_app.name]
-API_KEY_PATH = Path("/Users/micmur/GITHUB/o8s/api_key.json")
+API_KEY_PATH = api_key_path()
 
 
 def configure_settings(project_name: str, provider: str = "minimax") -> None:

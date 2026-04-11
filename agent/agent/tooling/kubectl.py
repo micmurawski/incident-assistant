@@ -1287,8 +1287,10 @@ KubectlTools = KubectlReadTools | KubectlWriteTools
 
 
 if __name__ == "__main__":
+    from agent.repo_paths import get_repo_root
+
     async def main():
-        cwd = "/Users/micmur/GITHUB/o8s"
+        cwd = str(get_repo_root())
         print("Testing pods...")
         result = await kubectl_api_resources(cwd=cwd)
         print(result.result)

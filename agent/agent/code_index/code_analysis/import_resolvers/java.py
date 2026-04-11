@@ -260,10 +260,21 @@ if __name__ == "__main__":
     from sme_agent.dependencies_analyzer.code_extractor import CodeExtractor
     from sme_agent.dependencies_analyzer.import_parser import ImportParser
 
-    file_content = open(
-        "/Users/micmur/GITHUB/o8s/services/robot-shop/shipping/src/main/java/com/instana/robotshop/shipping/ShippingServiceApplication.java",
-        "r",
-    ).read()
+    from agent.repo_paths import robot_shop_dir
+
+    sample = (
+        robot_shop_dir()
+        / "shipping"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "instana"
+        / "robotshop"
+        / "shipping"
+        / "ShippingServiceApplication.java"
+    )
+    file_content = open(sample, "r").read()
     for imp in ImportParser().parse_imports(file_content, "java"):
         name = imp["name"]
         res = resolve_java_import(name, "../services/robot-shop/shipping")

@@ -23,6 +23,7 @@ from agent.tooling.kubectl import (KubectlReadTools, KubectlWriteTools,
                                    kubectl_get_resources)
 from agent.tooling.metrics import MetricsSummaryTools
 from agent.tooling.planning import PlanningTools
+from agent.repo_paths import get_repo_root
 from agent.tooling.rlm_metrics import REPLTools
 
 JUDGE_SYSTEM_PROMPT = """
@@ -53,8 +54,9 @@ def create_sre_agent(
             without_bullets_ids=True, positive_only=False, without_points=True
         ),
     }
-    api_key_path = Path("/Users/micmur/GITHUB/o8s/api_key.json")
-    workspace_path = Path("/Users/micmur/GITHUB/o8s/workspace")
+    repo_root = get_repo_root()
+    api_key_path = repo_root / "api_key.json"
+    workspace_path = repo_root / "workspace"
     GRAFANA_API_KEY = json.load(open(api_key_path))["grafana_api_token"]
     GRAFANA_URL = json.load(open(api_key_path))["grafana_url"]
     SRE_AGENT_AWS_ACCESS_KEY_ID = json.load(open(api_key_path))["incident-assistant"]["access_key_id"]
@@ -89,7 +91,7 @@ def create_sre_agent(
         tools=incident_commander_tools,
         shared_context={
             **shared_context,
-            "deploy_script_path": "/Users/micmur/GITHUB/o8s/workspace/k8s/deploy.sh",
+            "deploy_script_path": str(workspace_path / "k8s" / "deploy.sh"),
             "available_agents": "devops_agent,monitoring_agent,coder_agent",
         }
     )

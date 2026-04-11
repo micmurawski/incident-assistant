@@ -218,9 +218,11 @@ class GrafanaPandasClient:
 
 def main():
     import json
-    from pathlib import Path
-    api_key_path = Path("/Users/micmur/GITHUB/o8s/api_key.json")
-    with open(api_key_path) as f:
+
+    from agent.repo_paths import api_key_path
+
+    key_path = api_key_path()
+    with open(key_path) as f:
         data = json.load(f)
         GRAFANA_URL = data["grafana_url"]
         GRAFANA_API_KEY = data["grafana_api_token"]
