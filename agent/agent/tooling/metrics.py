@@ -398,10 +398,14 @@ if __name__ == "__main__":
     async def main():
         grafana_client = AsyncGrafanaClient(url=GRAFANA_URL, api_key=GRAFANA_API_KEY)
 
-        
-        result = await query_loki_logs(grafana_client=grafana_client, query='{app="shipping",bleh="bleh"}', time_window="1m")
-        print(result.result)
+        result = await get_edges_summary(resource="deployments")
+        if result.error:
+            print(result.error, flush=True)
+        print(result.result or "", flush=True)
         exit()
+        #result = await query_loki_logs(grafana_client=grafana_client, query='{app="shipping",bleh="bleh"}', time_window="1m")
+        #print(result.result)
+        #exit()
 
         print("Testing list_metric_labels...")
         result = await list_prometheus_metric_labels(grafana_client=grafana_client, metric_name="request_total")

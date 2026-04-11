@@ -4,10 +4,12 @@ from typing import Annotated, Literal, Optional
 
 from agent.tooling._utils import run_cli_command
 from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
+import json
+import yaml
 
 
-def _run_kubectl(args: list[str], cwd: str, timeout: int = 30, env: Optional[dict[str, str]] = None) -> ToolResult:
-    return run_cli_command(["kubectl"] + args, None, timeout=timeout, cwd=cwd, env=env)
+def _run_kubectl(args: list[str], cwd: str, timeout: int = 30, env: Optional[dict[str, str]] = None, trim_result: bool = True) -> ToolResult:
+    return run_cli_command(["kubectl"] + args, None, timeout=timeout, cwd=cwd, env=env, trim_result=trim_result)
 
 
 K8sResourceTypes = Literal["nodes", "pods", "namespaces", "services", "endpoints", "ingresses",
@@ -557,8 +559,16 @@ async def kubectl_api_resources(
     Use when you need to discover what resource types are installed,
     e.g. to check for Prometheus, Istio, or cert-manager CRDs.
     """
-    return await _run_kubectl(["api-resources", "--sort-by=name"], env=env, cwd=cwd)
-
+    result = await _run_kubectl(["api-resources", "--sort-by=name"], env=env, cwd=cwd)
+    if result.is_success:
+        lines = result.result.split("\n")
+        selected_lines = []
+        for line in lines:
+            if "chaos-mesh.org" not in line:
+                selected_lines.append(line)
+        result = ToolResult(result="\n".join(selected_lines), error=result.error, trim_result=result.trim_result)
+    return result
+  
 
 @tool(tags=["kubectl"])
 async def kubectl_get_resources(
@@ -643,7 +653,7 @@ KubectlReadTools = Tools(tools=[
     # Namespaces
     # kubectl_get_namespaces, # replaced by kubectl_get_resource
     # Pods
-    kubectl_get_pods,  # replaced by kubectl_get_resource
+    # kubectl_get_pods,  # replaced by kubectl_get_resource
     kubectl_get_pod_logs,
     # kubectl_top_pods,
     kubectl_get_pod_containers,
@@ -1280,9 +1290,10 @@ if __name__ == "__main__":
     async def main():
         cwd = "/Users/micmur/GITHUB/o8s"
         print("Testing pods...")
-        result = await kubectl(cwd=cwd, cmd="get pods -n application")
+        result = await kubectl_api_resources(cwd=cwd)
         print(result.result)
         print(result.error)
+        exit()
         print("Testing pods resources...")
         result = await kubectl_get_resources(cwd=cwd, resource_type="pod", namespace="application")
         print(result.result)

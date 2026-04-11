@@ -9,10 +9,9 @@ import yaml
 from episodes_runner.fault_scenario_picker import (pick_fault_scenario,
                                                    record_episode_failure,
                                                    record_episode_success)
-from episodes_runner.utils import detect_differences, live_timer
-
+from episodes_runner.utils import get_kubectl_env, live_timer
 from agent.grafana_client.client import GrafanaClient
-from agent.grafana_client.report import build_status_report_dict
+from agent.grafana_client.report import build_status_report_dict, detect_differences
 from agent.tooling.metrics import APPS, NAMESPACE
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -47,6 +46,7 @@ def create_workspace(source_dir: Path, workspace_dir: Path) -> None:
 
 
 def build_agent_prompt(metrics_before: dict, metrics_after: dict, incident_md: str, secret_info: str) -> str:
+    
     diff = detect_differences(metrics_before, metrics_after)
     metrics_diff = yaml.dump(diff, indent=4)
 
@@ -131,7 +131,8 @@ def apply_chaos_mesh_fault(manifest_path: Path, env: dict) -> None:
     print(f"[3] Applied chaos mesh fault from {manifest_path}")
 
 
-def delete_chaos_mesh_all_experiments(env: dict) -> None:
+def delete_chaos_mesh_all_experiments() -> None:
+    env = get_kubectl_env()
     resources = "podchaos,networkchaos,stresschaos,iochaos,httpchaos"
     cmd = ["kubectl", "delete", resources, "--all", "-A"]
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
@@ -193,7 +194,6 @@ async def main():
     finally:
         delete_chaos_mesh_all_experiments(ENV)
         await GRAFANA_CLIENT.aclose()
-
 
 
 if __name__ == "__main__":

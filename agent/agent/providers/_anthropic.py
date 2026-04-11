@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from anthropic import Anthropic, AsyncAnthropic
@@ -12,6 +13,20 @@ from agent.providers.params import get_model_params
 from agent.providers.settings import AnthropicSettings, ModelInfo
 from agent.providers.utils.cost import calculate_api_cost_anthropic
 from agent.types import StreamChunk
+
+
+def _client_max_retries(explicit: Optional[int]) -> int:
+    """
+    Pass-through to AsyncAnthropic(..., max_retries=...). The SDK already retries
+    transient failures (408/409/429 and 5xx including 529) with backoff; default
+    anthropic.DEFAULT_MAX_RETRIES is low, so we raise the cap via env or argument.
+    """
+    if explicit is not None:
+        return max(0, min(int(explicit), 25))
+    try:
+        return max(0, min(int(os.environ.get("ANTHROPIC_MAX_RETRIES", "10")), 25))
+    except ValueError:
+        return 10
 
 
 def _plain_chunk(typ: str, **kwargs: Any) -> Dict[str, Any]:
@@ -61,6 +76,7 @@ class AnthropicHandler(ApiHandler):
         use_auth_token: bool = False,
         enable_1m_context: bool = False,
         enable_reasoning: bool = False,
+        max_retries: Optional[int] = None,
         **kwargs,
     ):
         """
@@ -75,7 +91,8 @@ class AnthropicHandler(ApiHandler):
             use_auth_token: Use auth token instead of API key
             enable_1m_context: Enable 1M context window for Sonnet 4
             enable_reasoning: Enable extended thinking for supported models
-            **kwargs: Additional options
+            max_retries: Passed to Anthropic client (SDK retries; default via ANTHROPIC_MAX_RETRIES).
+            **kwargs: Additional options (may include max_retries for build_api_handler configs)
         """
         self.model_id = model_id or ANTHROPIC_DEFAULT_MODEL_ID
         self.max_tokens = max_tokens
@@ -83,6 +100,12 @@ class AnthropicHandler(ApiHandler):
         self.enable_1m_context = enable_1m_context
         self.enable_reasoning = enable_reasoning
         self.kwargs = kwargs
+
+        if "max_retries" in kwargs:
+            _mr_kw = kwargs.pop("max_retries")
+            if max_retries is None:
+                max_retries = _mr_kw
+        mr = _client_max_retries(max_retries)
 
         # Initialize client with appropriate authentication
         client_kwargs = {}
@@ -94,8 +117,8 @@ class AnthropicHandler(ApiHandler):
         else:
             client_kwargs["api_key"] = api_key
 
-        self.client = AsyncAnthropic(**client_kwargs)
-        self.sync_client = Anthropic(**client_kwargs)
+        self.client = AsyncAnthropic(**client_kwargs, max_retries=mr)
+        self.sync_client = Anthropic(**client_kwargs, max_retries=mr)
 
     def _add_cache_control(
         self,
@@ -197,7 +220,7 @@ class AnthropicHandler(ApiHandler):
             "messages": messages,
             "stream": True,
             "tools": kwargs.pop("tools", []),
-            "thinking": config.pop("reasoning", None),
+            "thinking": kwargs.pop("reasoning", None),
         }
 
         if config.get("temperature") is not None:
@@ -208,7 +231,6 @@ class AnthropicHandler(ApiHandler):
         
         # Add beta headers if needed
         extra_headers = {}
-        # Create streaming response
         stream: AsyncMessagesWithStreamingResponse[RawMessageStreamEvent]
         try:
             stream = await self.client.messages.create(
@@ -218,7 +240,7 @@ class AnthropicHandler(ApiHandler):
             )
         except Exception as e:
             print(f"Anthropic error: {e}", request_params)
-            raise e
+            raise
 
         # Track token usage
         input_tokens = 0

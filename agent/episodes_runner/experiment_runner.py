@@ -10,7 +10,7 @@ from episodes_runner.sre_agent import configure_settings, create_sre_agent
 from episodes_runner.utils import (clean_all_containers,
                                    collect_meaningful_actions, live_timer,
                                    restore_eks_node_group)
-
+from episodes_runner.runner import delete_chaos_mesh_all_experiments
 from agent.llm import LLMAgent
 from agent.persistence.settings import init_db
 from agent.tasks.tasks import Task
@@ -162,6 +162,7 @@ async def run_experiment():
 
     clean_all_containers()
     await restore_eks_node_group()
+    delete_chaos_mesh_all_experiments()
 
 
 if __name__ == "__main__":

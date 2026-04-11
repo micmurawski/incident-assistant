@@ -65,8 +65,9 @@ def add_line_numbers(content: list[str], start_line: int = 1, separator: str = "
 class FileOpsManager:
     """
     File operations scoped to a single CWD. All path arguments are resolved and must
-    lie under the CWD; paths outside it (e.g. absolute paths like /Users/other or
-    relative like ../../etc) raise PathNotAllowedError and are forbidden.
+    lie under the CWD. Paths outside it (e.g. absolute paths outside the workspace or
+    relative escapes like ../../etc) are returned as ``FileOpsResult`` with ``error``
+    set (typically ``PathNotAllowedError``), not raised from async entrypoints.
     """
     _instances = {}
 
@@ -115,8 +116,18 @@ class FileOpsManager:
             raise PathNotAllowedError(path, self.cwd)
         return resolved_path
 
+    def _resolve_within_cwd_or_error(self, path: str) -> tuple[str, PathNotAllowedError | None]:
+        """Resolve path under CWD, or return ``FileOpsResult`` with ``error`` set on ``PathNotAllowedError``."""
+        try:
+            return self._resolve_within_cwd(path), None
+        except PathNotAllowedError as e:
+            return None, e
+
     async def list_code_definitions_names_descriptions(self, path: str) -> FileOpsResult:
-        full_path = self._resolve_within_cwd(path)
+        resolved, error = self._resolve_within_cwd_or_error(path)
+        if error is not None:
+            return FileOpsResult(path=path, content=None, error=error)
+        full_path = resolved
         try:
             content = parse_source_code_definitions(full_path)
         except FileNotFoundError as e:
@@ -130,7 +141,10 @@ class FileOpsManager:
         end_line: str | None = None,
         number_lines: bool = True,
     ) -> FileOpsResult:
-        full_path = self._resolve_within_cwd(path)
+        resolved, error = self._resolve_within_cwd_or_error(path)
+        if error is not None:
+            return FileOpsResult(path=path, content=None, error=error)
+        full_path = resolved
         path_exists = os.path.exists(full_path)
         is_file = os.path.isfile(full_path)
         if not path_exists:
@@ -162,6 +176,11 @@ class FileOpsManager:
         for file in files:
             try:
                 result = await self.read_file(file["path"], file.get("start_line"), file.get("end_line"))
+                if result.error is not None:
+                    return FileOpsResult(
+                        path=file.get("path", self.cwd),
+                        error=result.error,
+                    )
                 content += f"# {file['path']}\n {result.content}\n ----\n"
             except FileOpsError as e:
                 return FileOpsResult(
@@ -174,8 +193,11 @@ class FileOpsManager:
         )
 
     async def list_files_tool(self, path: str, recursive: bool) -> FileOpsResult:
-        full_path = self._resolve_within_cwd(path)
-        
+        resolved, error = self._resolve_within_cwd_or_error(path)
+        if error is not None:
+            return FileOpsResult(path=path, content=None, error=error)
+        full_path = resolved
+
         if not os.path.exists(full_path):
             return FileOpsResult(
                 path=path,
@@ -235,7 +257,10 @@ class FileOpsManager:
         start_line: int | None = None,
         end_line: int | None = None,
     ) -> FileOpsResult:
-        full_path = self._resolve_within_cwd(path)
+        resolved, error = self._resolve_within_cwd_or_error(path)
+        if error is not None:
+            return FileOpsResult(path=path, content=None, error=error)
+        full_path = resolved
         path_exists = os.path.exists(full_path)
         is_file = os.path.isfile(full_path)
 
@@ -314,7 +339,10 @@ class FileOpsManager:
         new_content: str,
         create_if_not_exists: bool = True,
     ) -> FileOpsResult:
-        full_path = self._resolve_within_cwd(path)
+        resolved, error = self._resolve_within_cwd_or_error(path)
+        if error is not None:
+            return FileOpsResult(path=path, content=None, error=error)
+        full_path = resolved
 
         if new_content.startswith("```"):
             new_content = "\n".join(new_content.split("\n")[1:])
@@ -352,7 +380,10 @@ class FileOpsManager:
         content: str,
         line: int,
     ) -> FileOpsResult:
-        full_path = self._resolve_within_cwd(path)
+        resolved, error = self._resolve_within_cwd_or_error(path)
+        if error is not None:
+            return FileOpsResult(path=path, content=None, error=error)
+        full_path = resolved
         path_exists = os.path.exists(full_path)
         is_file = os.path.isfile(full_path)
         if not path_exists:
@@ -396,11 +427,22 @@ class FileOpsManager:
 
     async def search_file(self, path: str, regex: str, file_pattern: str | None = None) -> FileOpsResult:
         # Restrict search to a path under CWD (forbids e.g. path=/Users/micmur)
+        resolved, error = self._resolve_within_cwd_or_error(path)
+        if error is not None:
+            return FileOpsResult(path=path, content=None, error=error)
+        full_path = resolved
         try:
-            full_path = self._resolve_within_cwd(path)
+            if not os.path.exists(full_path):
+                msg = f"The path {full_path} does not exist."
+                return FileOpsResult(
+                    path=path,
+                    content=msg,
+                    error=Exception(msg),
+                )
             result = await regex_search_files(self.cwd, full_path, regex, file_pattern)
             return FileOpsResult(path=path, content=result)
-        except PathNotAllowedError as e:
+        except RuntimeError as e:
+            # e.g. ripgrep exit code 2 (path/permission/IO errors); --no-messages hides stderr
             return FileOpsResult(path=path, content=None, error=e)
 
 

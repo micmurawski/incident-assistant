@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import glob
 import os
 import random
@@ -351,19 +352,21 @@ def chaos_http_abort(
     mode: str,
     duration: str,
 ) -> str:
+    # replace.body is []byte in the CRD; Chaos Mesh webhook expects base64.
+    _body_b64 = base64.b64encode(b"Service is currently unavailable").decode("ascii")
     return f"""apiVersion: chaos-mesh.org/v1alpha1
 kind: HTTPChaos
 metadata:
   name: chaos-http-abort-{namespace}
   namespace: {namespace}
 spec:
-  action: abort
   mode: {mode}
-{_selector_yaml(namespace, label_selector)}  port: {port}
+{_selector_yaml(namespace, label_selector)}  target: Response
+  port: {port}
   duration: "{duration}"
   replace:
     code: {code}
-    body: "Service is currently unavailable"
+    body: {_body_b64}
 """
 
 

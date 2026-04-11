@@ -15,6 +15,7 @@ async def run_cli_command(
     cwd: Optional[str] = None,
     stream: bool = False,
     tail_lines: int = 5,
+    trim_result: bool = True,
 ) -> ToolResult:
     if cwd is None or (isinstance(cwd, str) and cwd.strip() == ""):
         cwd = os.getcwd()
@@ -72,7 +73,7 @@ async def run_cli_command(
 
             stdout_decoded = "".join(full_output)
             error_msg = None if process.returncode == 0 else f"Process exited with code {process.returncode}"
-            return ToolResult(result=stdout_decoded, error=error_msg)
+            return ToolResult(result=stdout_decoded, error=error_msg, trim_result=trim_result)
         else:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(), timeout=timeout
@@ -81,9 +82,9 @@ async def run_cli_command(
             stderr_decoded = stderr.decode("utf-8")
             error_msg = stderr_decoded if process.returncode != 0 else None
 
-            return ToolResult(result=stdout_decoded, error=error_msg)
+            return ToolResult(result=stdout_decoded, error=error_msg, trim_result=trim_result)
 
     except asyncio.TimeoutError:
-        return ToolResult(result=None, error=f"Command timed out after {timeout}s: {' '.join(cmd)}")
+        return ToolResult(result=None, error=f"Command timed out after {timeout}s: {' '.join(cmd)}", trim_result=trim_result)
     except Exception as e:
-        return ToolResult(result=None, error=str(e))
+        return ToolResult(result=None, error=str(e), trim_result=trim_result)

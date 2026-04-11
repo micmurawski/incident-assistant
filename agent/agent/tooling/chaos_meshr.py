@@ -1,3 +1,4 @@
+import base64
 from typing import Annotated, Optional
 
 from agent.tooling._utils import run_cli_command
@@ -425,19 +426,21 @@ async def chaos_http_abort(
     simulate service errors (5xx) or maintenance (503). Injects connection abort on the target port.
     """
     name = experiment_name or f"chaos-http-abort-{namespace}"
+    # replace.body is []byte in the CRD; webhook decodes base64.
+    _body_b64 = base64.b64encode(b"Service is currently unavailable").decode("ascii")
     spec = f"""apiVersion: chaos-mesh.org/v1alpha1
 kind: HTTPChaos
 metadata:
   name: {name}
   namespace: {namespace}
 spec:
-  action: abort
   mode: {mode}
-{_selector_yaml(namespace, label_selector)}  port: {port}
+{_selector_yaml(namespace, label_selector)}  target: Response
+  port: {port}
   duration: "{duration}"
   replace:
     code: {code}
-    body: "Service is currently unavailable"
+    body: {_body_b64}
 """
     return await _run_kubectl(["apply", "-f", "-"], stdin=spec.strip(), timeout=30)
 

@@ -105,9 +105,10 @@ QUERY = """
   (namespace_use_clause
     (qualified_name) @name.definition.use)) @definition.use
 
-; Anonymous classes
+; Anonymous classes (declaration_list is under anonymous_class, not object_creation_expression)
 (object_creation_expression
-  (declaration_list)) @definition.anonymous_class
+  (anonymous_class
+    (declaration_list))) @definition.anonymous_class
 
 ; Attributes (PHP 8.0+)
 (attribute_group
