@@ -1,5 +1,4 @@
 import asyncio
-import json
 
 from ace.agents import create_curator_agent, create_reflector_agent
 from ace.playbook_core import Playbook
@@ -11,7 +10,7 @@ from framework.decorators import node
 
 
 @node
-async def gather_tasks(n: int = 5, last: bool = False):
+async def gather_tasks(n: int = 5, last: bool = True):
     tasks_map = fetch_tasks_by_assignee(n, last)
     items = []
     for assignee, tasks in tasks_map.items():
@@ -30,14 +29,15 @@ async def gather_tasks(n: int = 5, last: bool = False):
 async def reflect_on_tasks(assignee: str, tasks: list[Task]):
     reflections: list[dict] = []
     playbook = Playbook.load_last_revision_of(assignee)
-    shared = {
-        "messages": [{"role": "user", "content": "proceed with reflection on task"}],
-        "playbook": playbook
-    }
-    with create_reflector_agent(assignee, tasks, playbook) as reflector_agent:
-        await reflector_agent.call(shared)
-    reflections.extend(get_reflections(shared["messages"]))
-    #for task in tasks:
+
+    for task in tasks:
+        shared = {
+            "messages": [{"role": "user", "content": "proceed with reflection on task"}],
+            "playbook": playbook
+        }
+        with create_reflector_agent(assignee, task, playbook) as reflector_agent:
+            await reflector_agent.call(shared)
+        reflections.extend(get_reflections(shared["messages"]))
 
     return {
         "assignee": assignee,
@@ -50,8 +50,6 @@ async def create_curator_prompt(results: list[dict] | None = None):
     for r in results or []:
         assignee = r["assignee"]
         reflections = r["reflections"]
-        for reflection in reflections:
-            print(json.dumps(reflection, indent=4))
         playbook = Playbook.load_last_revision_of(assignee)
         with create_curator_agent(assignee, reflections, playbook) as curator_agent:
             shared = {
@@ -73,7 +71,4 @@ async def run_ace_pipeline(n: int = 5, last: bool = False):
     })
 
 if __name__ == "__main__":
-    tasks_map = fetch_tasks_by_assignee(n=5, last=True)
-    print(json.dumps(tasks_map["incident_commander"][0].conversation, indent=4))
-    exit()
     asyncio.run(run_ace_pipeline())

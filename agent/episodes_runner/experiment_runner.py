@@ -16,7 +16,8 @@ from episodes_runner.sre_agent import configure_settings, create_sre_agent
 from episodes_runner.utils import (clean_all_containers,
                                    collect_meaningful_actions, live_timer,
                                    restore_eks_node_group)
-
+import yaml
+from ace.pipeline import run_ace_pipeline
 # Max wall time for the SRE agent flow; override with env SRE_AGENT_TIMEOUT_SEC.
 SRE_AGENT_CALL_TIMEOUT_SEC = float(os.environ.get("SRE_AGENT_TIMEOUT_SEC", "3600"))
 
@@ -53,13 +54,26 @@ def create_judge_agent(provider: str = "minimax"):
     return judge_agent
 
 
+def get_episode_count():
+    FAULT_HISTORY_PATH = "agent/episodes_runner/fault_history.yaml"
+    with open(FAULT_HISTORY_PATH, "r") as f:
+        fault_history = yaml.safe_load(f)
+        history = fault_history.get("history", [])
+    return len(history)
+
+
 async def run_experiment():
     init_db()
+    # Every 5 episodes, run ACE pipeline based on number in fault_history.yaml
+    episode_count = get_episode_count()
+    if episode_count % 5 == 0 and episode_count > 0:
+        print(f"Running ACE pipeline for episode {episode_count}")
+        await run_ace_pipeline()
+    else:
+        print(f"Skipping ACE pipeline for episode {episode_count}")
 
     await ensure_load_gen_deployed()
-    episode = await run_episode(
-        # selected_fault="fault-3-catalogue-716cc0dd-5274-4884-88b3-33e0d0eb292e"
-    )
+    episode = await run_episode()
     goal = Task.create_root_task(
         id=episode["fault_id"],
         assignee="incident_commander",
