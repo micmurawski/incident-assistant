@@ -9,11 +9,10 @@ from typing import (Annotated, Any, Callable, Coroutine, GenericAlias, Literal,
                     Optional, TypedDict, TypeVar, Union, _AnnotatedAlias,
                     _TypedDictMeta, get_args, get_origin)
 
+from agent.types import AnthropicMessage
 from framework import AsyncNode
 from framework.generic_messages import select_tools_use
 from framework.utils import __reduce_shared as reduce_shared
-
-from agent.types import AnthropicMessage
 
 # Mapping from Python types to OpenAPI schema types
 CLASS_TO_TYPE = {

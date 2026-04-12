@@ -2,20 +2,20 @@ import asyncio
 import os
 import uuid
 
-from episodes_runner.episode_runner import (detect_differences,
-                                            ensure_load_gen_deployed,
-                                            format_diff_status_report,
-                                            get_metrics_summary, run_episode)
-from episodes_runner.sre_agent import configure_settings, create_sre_agent
-from episodes_runner.utils import (clean_all_containers,
-                                   collect_meaningful_actions, live_timer,
-                                   restore_eks_node_group)
-from episodes_runner.runner import delete_chaos_mesh_all_experiments
 from agent.llm import LLMAgent
 from agent.persistence.settings import init_db
 from agent.tasks.tasks import Task
 from agent.tasks.types import TaskStatus
 from agent.tooling.decorators import Tools
+from episodes_runner.episode_runner import (detect_differences,
+                                            ensure_load_gen_deployed,
+                                            format_diff_status_report,
+                                            get_metrics_summary, run_episode)
+from episodes_runner.runner import delete_chaos_mesh_all_experiments
+from episodes_runner.sre_agent import configure_settings, create_sre_agent
+from episodes_runner.utils import (clean_all_containers,
+                                   collect_meaningful_actions, live_timer,
+                                   restore_eks_node_group)
 
 # Max wall time for the SRE agent flow; override with env SRE_AGENT_TIMEOUT_SEC.
 SRE_AGENT_CALL_TIMEOUT_SEC = float(os.environ.get("SRE_AGENT_TIMEOUT_SEC", "3600"))
@@ -88,6 +88,7 @@ async def run_experiment():
             goal.status = TaskStatus.DISCARDED
             goal.save()
             return
+        goal.conversation = shared["messages"]
         goal.attempt_complete(force=True)
         # Wait for recovery
         live_timer(5*60)

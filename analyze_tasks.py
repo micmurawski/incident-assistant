@@ -170,6 +170,7 @@ def analyze():
 
     root_metrics.sort(key=lambda x: x['created_at_dt'] if x['created_at_dt'] else datetime.min)
     n = len(root_metrics)
+    print(f"n: {n}")
     fig, ax = plt.subplots(figsize=(max(10, n * 0.5), 4))
     indices = np.arange(n)
     colors = [get_color(t['score']) for t in root_metrics]
@@ -267,8 +268,35 @@ def analyze():
         axs[5, 0].set_title('Top 10 Failing Tools (Total Errors)')
         axs[5, 0].invert_yaxis()
 
-    # (5, 1) is empty
-    axs[5, 1].axis('off')
+    # (5, 1) - Success Metrics per Incident Category
+    categories = ['1', '2', '3', '4']
+    metrics_by_cat = {cat: {'rca': [], 'fix': [], 'rec': []} for cat in categories}
+    
+    for m in root_metrics:
+        cat = m['incident_type']
+        if cat in metrics_by_cat:
+            metrics_by_cat[cat]['rca'].append(m.get('root_cause_analysis', 0))
+            metrics_by_cat[cat]['fix'].append(m.get('successful_fix', 0))
+            metrics_by_cat[cat]['rec'].append(m.get('system_recovery_visible', 0))
+            
+    cat_averages = {
+        'rca': [np.mean(metrics_by_cat[cat]['rca']) * 100 if metrics_by_cat[cat]['rca'] else 0 for cat in categories],
+        'fix': [np.mean(metrics_by_cat[cat]['fix']) * 100 if metrics_by_cat[cat]['fix'] else 0 for cat in categories],
+        'rec': [np.mean(metrics_by_cat[cat]['rec']) * 100 if metrics_by_cat[cat]['rec'] else 0 for cat in categories]
+    }
+
+    x = np.arange(len(categories))
+    width = 0.25
+    
+    axs[5, 1].bar(x - width, cat_averages['rca'], width, label='Root Cause', color='#66b3ff')
+    axs[5, 1].bar(x, cat_averages['fix'], width, label='Successful Fix', color='#99ff99')
+    axs[5, 1].bar(x + width, cat_averages['rec'], width, label='Recovery Visible', color='#ffcc99')
+    
+    axs[5, 1].set_title('Success Metrics % by Incident Type')
+    axs[5, 1].set_xticks(x)
+    axs[5, 1].set_xticklabels([f"Type {c}" for c in categories])
+    axs[5, 1].set_ylim(0, 110)
+    axs[5, 1].legend(fontsize='small')
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.savefig('task_metrics.png')

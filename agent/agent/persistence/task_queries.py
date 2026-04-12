@@ -46,6 +46,33 @@ def _build_task_dict(task_id: str, rows_by_id: dict[str, TaskModel]) -> dict:
     return d
 
 
+def fetch_first_root_tasks(first_n: int = 2) -> list[Task]:
+    """
+    Return the ``first_n`` **root** task trees (full hierarchies), **not** child rows.
+    """
+    if first_n <= 0:
+        return []
+
+    init_db()
+    
+    roots = (
+        TaskModel.select()
+        .where(TaskModel.id == TaskModel.root_id)
+        .order_by(TaskModel.created_at.asc())
+        .limit(first_n)
+    )
+
+    result: list[Task] = []
+    for root in roots:
+        all_rows = TaskModel.select().where(TaskModel.root_id == root.root_id)
+        rows_by_id = {r.id: r for r in all_rows}
+        if root.id not in rows_by_id:
+            continue
+        payload = _build_task_dict(root.id, rows_by_id)
+        result.append(Task.from_dict(payload))
+    return result
+
+
 def fetch_last_root_tasks(last_n: int = 2) -> list[Task]:
     """
     Return the ``last_n`` **root** task trees (full hierarchies), **not** child rows.
@@ -76,3 +103,54 @@ def fetch_last_root_tasks(last_n: int = 2) -> list[Task]:
         result.append(Task.from_dict(payload))
 
     return result
+
+
+def fetch_tasks_by_assignee(n: int = 2, last: bool = True) -> dict[str, list[Task]]:
+    """
+    Fetch all tasks for the n recent or oldest root_ids (root tasks), and map tasks to each assignee.
+    This gives {"incident_commander": [Task, ...], "sre_agent": [Task, ...], ...}, 
+    where each list includes *all tasks* (root and child) for the selected root_ids, 
+    and each Task object is built with its full child hierarchy.
+    """
+    init_db()
+
+    # Step 1: Fetch n root-ids (most recent or oldest roots)
+    root_qs = TaskModel.select(TaskModel.root_id).where(TaskModel.id == TaskModel.root_id)
+    if last:
+        root_qs = root_qs.order_by(TaskModel.updated_at.desc()).limit(n)
+    else:
+        root_qs = root_qs.order_by(TaskModel.created_at.asc()).limit(n)
+    root_ids = [row.root_id for row in root_qs]
+    if not root_ids:
+        return {}
+
+    # Step 2: Get all TaskModel rows for these root_ids
+    all_task_rows = list(TaskModel.select().where(TaskModel.root_id << root_ids))
+
+    # Step 3: Organize all rows by root, then by id
+    rows_by_root: dict[str, dict[str, TaskModel]] = {}
+    for row in all_task_rows:
+        rows_by_root.setdefault(row.root_id, {})[row.id] = row
+
+    # Step 4: Build each root+hierarchy, distributing to each assignee's list
+    result: dict[str, list[Task]] = {}
+    for root_id in root_ids:
+        # Find the actual root row, skip if broken
+        root_row = rows_by_root.get(root_id, {}).get(root_id)
+        if not root_row:
+            continue
+        task_dict = _build_task_dict(root_id, rows_by_root[root_id])
+        root_task = Task.from_dict(task_dict)
+        # Walk the full task hierarchy to collect all assignees
+        stack = [root_task]
+        while stack:
+            task = stack.pop()
+            assignee = getattr(task, "assignee", None)
+            if assignee:
+                result.setdefault(assignee, []).append(task)
+            # Support both .children and list of children as attribute
+            children = getattr(task, "children", [])
+            if children:
+                stack.extend(children)
+    return result
+ 

@@ -2,10 +2,9 @@ import asyncio
 import shlex
 from typing import Annotated, Literal, Optional
 
+
 from agent.tooling._utils import run_cli_command
 from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
-import json
-import yaml
 
 
 def _run_kubectl(args: list[str], cwd: str, timeout: int = 30, env: Optional[dict[str, str]] = None, trim_result: bool = True) -> ToolResult:

@@ -5,10 +5,6 @@ from abc import ABC
 from typing import Any, AsyncIterator, List, Optional, TypeVar
 from uuid import uuid4
 
-from framework import AsyncFlow
-from framework.decorators import end, node
-from framework.viz import build_mermaid, to_png
-
 from agent.context_ops import SummarizeResponse, summarize_conversation
 from agent.providers import build_api_handler
 from agent.providers.base import ApiHandler
@@ -17,6 +13,9 @@ from agent.tasks.tasks import Task
 from agent.tracing import trace_flow
 from agent.types import (AnthropicMessage, ApiHandlerCreateMessageMetadata,
                          StreamChunk)
+from framework import AsyncFlow
+from framework.decorators import end, node
+from framework.viz import build_mermaid, to_png
 
 T = TypeVar('T')
 

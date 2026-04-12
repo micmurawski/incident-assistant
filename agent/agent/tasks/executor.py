@@ -105,7 +105,7 @@ class TaskExecutor:
 
         shared = TaskExecutor._build_assignee_shared(current_task, depth)
         await assignee_agent.call(shared=shared)
-        current_task.conversation = list(shared["messages"])
+        current_task.conversation = shared["messages"]
         upsert_session_messages(assigner, assignee, sid, list(shared["messages"]))
 
         if not feedback_enabled:

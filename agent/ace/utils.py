@@ -1,6 +1,7 @@
-import yaml
-from ace.playbook_core import Playbook
+from collections.abc import Sequence
 
+from ace.playbook_core import Playbook
+from ace.yaml_dump import dump_yaml_multiline
 from agent.persistence.task_queries import Task
 
 MAX_TOOL_RESULT_LENGTH = 1000
@@ -97,23 +98,35 @@ def parse_trajectory(messages: list[dict]) -> list[dict]:
 
 
 def get_reflections(messages: list[dict]) -> list[dict]:
-    reflections = []
-    for message in messages:
+    """Collect inputs from successful ``reflect`` tool calls only.
+
+    Raw transcripts keep ``tool_result`` on separate user messages; without
+    :func:`merge_tool_uses`, assistant ``tool_use`` blocks have no ``result``,
+    so ``is_error`` is missing and failed reflects were wrongly included.
+    """
+    merged = merge_tool_uses(messages)
+    reflections: list[dict] = []
+    for message in merged:
         content = message.get("content")
         if not isinstance(content, list):
             continue
         for item in content:
-            if (
-                item.get("type") == "tool_use"
-                and item.get("name") == "reflect"
-                and item.get("result", {}).get("is_error") is not True
-            ):
-                reflections.append(item.get("input"))
+            if item.get("type") != "tool_use" or item.get("name") != "reflect":
+                continue
+            result = item.get("result")
+            if not isinstance(result, dict):
+                continue
+            if result.get("is_error") is True:
+                continue
+            inp = item.get("input")
+            if inp is not None:
+                reflections.append(inp)
     return reflections
 
 
-def create_details_for_reflector(task: Task, playbook: Playbook) -> str:
-    query = task.messages_history[0]["content"]
+def _reflector_task_section(task: Task) -> str:
+    """Query, assessment, and trajectory for one task (no playbook)."""
+    query = task.conversation[0]["content"]
 
     assessment_msg = task.messages_history[-1]
     assessment = ""
@@ -125,17 +138,47 @@ def create_details_for_reflector(task: Task, playbook: Playbook) -> str:
                 assessment = content.get("text")
                 break
 
-    trajectory_yaml = yaml.dump(merge_tool_uses(task.messages_history[1:-1]), indent=4, sort_keys=False)
+    trajectory_yaml = dump_yaml_multiline(
+        merge_tool_uses(task.messages_history[1:-1])
+    )
 
-    res = "## Task\n\n"
+    res = f"## Task: {task.id}\n\n"
     res += f"{query}\n\n"
-    res += "## Assessment\n\n"
-    res += f"{assessment}\n\n"
-    res += "## Trajectory\n\n"
+
+    if assessment != "":
+        res += "### Assessment\n\n"
+        res += f"{assessment}\n\n"
+
+    res += "### Trajectory\n\n"
     res += f"{trajectory_yaml}\n\n"
-    res += "## Playbook\n\n"
-    res += f"{playbook.to_markdown(without_points=True)}\n\n"
     return res
+
+
+def _playbook_appendix(playbook: Playbook) -> str:
+    return f"## Playbook\n\n{playbook.to_markdown(without_points=True)}\n\n"
+
+
+def format_reflector_details_for_task(task: Task, playbook: Playbook) -> str:
+    """Build reflector prompt text: one task trajectory plus the playbook."""
+    return _reflector_task_section(task) + _playbook_appendix(playbook)
+
+
+def format_reflector_details_for_tasks(tasks: Sequence[Task], playbook: Playbook) -> str:
+    """Build reflector prompt text: multiple task trajectories, then the playbook once."""
+    sections = [_reflector_task_section(t) for t in tasks]
+    body = "\n".join(sections) if sections else ""
+    return body + _playbook_appendix(playbook)
+
+
+def format_reflector_task_data_for_task(task: Task) -> str:
+    """Task trace and assessment only (for V2 prompts where playbook is a separate block)."""
+    return _reflector_task_section(task)
+
+
+def format_reflector_task_data_for_tasks(tasks: Sequence[Task]) -> str:
+    """Multiple task traces only (for V2 prompts where playbook is a separate block)."""
+    sections = [_reflector_task_section(t) for t in tasks]
+    return "\n".join(sections) if sections else ""
 
 
 if __name__ == "__main__":

@@ -4,50 +4,56 @@ import json
 from ace.agents import create_curator_agent, create_reflector_agent
 from ace.playbook_core import Playbook
 from ace.utils import get_reflections
+from agent.persistence.task_queries import fetch_tasks_by_assignee
+from agent.tasks.tasks import Task
 from framework import AsyncFlow
 from framework.decorators import node
 
-from agent.persistence.task_queries import fetch_last_root_tasks
-from agent.tasks.tasks import Task
-
 
 @node
-async def gather_tasks(number_of_tasks: int, agent_name: str):
-    last_tasks: list[Task] = fetch_last_root_tasks(number_of_tasks)
+async def gather_tasks(n: int = 5, last: bool = False):
+    tasks_map = fetch_tasks_by_assignee(n, last)
+    items = []
+    for assignee, tasks in tasks_map.items():
+        if assignee != "incident_commander":
+            continue
+        print(f"Assignee: {assignee}")
+        for task in tasks:
+            print(f"Task: {task.id}")
+        items.append({"assignee": assignee, "tasks": tasks})
     return {
-        "tasks": last_tasks,
-        "agent_name": agent_name
+        "items": items[:1]
     }
 
 
-@node
-async def reflect_on_tasks(tasks: list[Task], agent_name: str):
-    reflections: dict[str, list[dict]] = {}
-    for task in tasks:
-        playbook = Playbook.load_last_revision_of(agent_name)
-        shared = {
-            "messages": [{"role": "user", "content": "proceed with reflection on task"}],
-            "playbook": playbook
-        }
-        with create_reflector_agent(agent_name, task, playbook) as reflector_agent:
-            await reflector_agent.call(shared)
+@node(batch=True)
+async def reflect_on_tasks(assignee: str, tasks: list[Task]):
+    reflections: list[dict] = []
+    playbook = Playbook.load_last_revision_of(assignee)
+    shared = {
+        "messages": [{"role": "user", "content": "proceed with reflection on task"}],
+        "playbook": playbook
+    }
+    with create_reflector_agent(assignee, tasks, playbook) as reflector_agent:
+        await reflector_agent.call(shared)
+    reflections.extend(get_reflections(shared["messages"]))
+    #for task in tasks:
 
-        reflections[task.id] = get_reflections(shared["messages"])
     return {
+        "assignee": assignee,
         "reflections": reflections
     }
 
 
 @node
-async def create_curator_prompt(reflections: dict[str, list[dict]], agent_name: str):
-    print("These are reflections:")
-    for task_id, task_reflections in reflections.items():
-        for reflection in task_reflections:
+async def create_curator_prompt(results: list[dict] | None = None):
+    for r in results or []:
+        assignee = r["assignee"]
+        reflections = r["reflections"]
+        for reflection in reflections:
             print(json.dumps(reflection, indent=4))
-        print({"task_id": task_id, "reflections": task_reflections})
-    playbook = Playbook.load_last_revision_of(agent_name)
-    for task_id, task_reflections in reflections.items():
-        with create_curator_agent(agent_name, task_reflections, playbook) as curator_agent:
+        playbook = Playbook.load_last_revision_of(assignee)
+        with create_curator_agent(assignee, reflections, playbook) as curator_agent:
             shared = {
                 "messages": [{"role": "user", "content": "proceed with curation of reflections"}],
                 "playbook": playbook,
@@ -60,16 +66,14 @@ gather_tasks >> reflect_on_tasks >> create_curator_prompt
 ACEPipeline = AsyncFlow(start=gather_tasks)
 
 
-async def run_ace_pipeline(number_of_tasks: int, agent_name: str):
+async def run_ace_pipeline(n: int = 5, last: bool = False):
     return await ACEPipeline.run_async({
-        "number_of_tasks": number_of_tasks,
-        "agent_name": agent_name
+        "n": n,
+        "last": last
     })
 
 if __name__ == "__main__":
-    playbook = Playbook.load_last_revision_of("incident_commander")
-    data = playbook.model_dump()
-    print(json.dumps(data, indent=4))
-    Playbook.from_dict(data)
-    print(playbook.to_markdown(without_bullets_ids=False, positive_only=False, without_points=False))
-    asyncio.run(run_ace_pipeline(1, "incident_commander"))
+    tasks_map = fetch_tasks_by_assignee(n=5, last=True)
+    print(json.dumps(tasks_map["incident_commander"][0].conversation, indent=4))
+    exit()
+    asyncio.run(run_ace_pipeline())

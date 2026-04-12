@@ -5,14 +5,12 @@ import asyncio
 import json
 import uuid
 from contextlib import contextmanager
-from pathlib import Path
 
 from ace.playbook_core import Playbook
-from episodes_runner.utils import configure_settings
-
 from agent.grafana_client.client import AsyncGrafanaClient
 from agent.llm import LLMAgent
 from agent.persistence.settings import init_db
+from agent.repo_paths import get_repo_root
 from agent.tasks.tasks import Task
 from agent.tooling.cli import CliTools
 from agent.tooling.codebase_read import CodebaseReadTools
@@ -23,8 +21,8 @@ from agent.tooling.kubectl import (KubectlReadTools, KubectlWriteTools,
                                    kubectl_get_resources)
 from agent.tooling.metrics import MetricsSummaryTools
 from agent.tooling.planning import PlanningTools
-from agent.repo_paths import get_repo_root
 from agent.tooling.rlm_metrics import REPLTools
+from episodes_runner.utils import configure_settings
 
 JUDGE_SYSTEM_PROMPT = """
 You are a judge agent that evaluates the performance of the SRE Agent.
@@ -157,6 +155,7 @@ if __name__ == "__main__":
                 "depth": 0
             }
             result = await sre_agent.call(shared)
+            goal.conversation = shared["messages"]
             goal.feedback(
                 {"role": "user", "content": "Task was completed. But your deputies also have deputies under them. And we are missing their list of tools."})
             print(result)

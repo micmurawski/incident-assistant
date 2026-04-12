@@ -155,6 +155,7 @@ async def main():
             print(agent_manager.get_flow_graph())
             agent_manager.get_flow_graph_png("agent_manager.png")
             await agent_manager.call(shared)
+            goal.conversation = shared["messages"]
             # span.set_status(StatusCode.OK)
 
 if __name__ == "__main__":

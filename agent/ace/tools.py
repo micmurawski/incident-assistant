@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Optional
 
 from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
 
@@ -36,6 +36,14 @@ async def reflect(
     correct_approach: Annotated[str, "What should the model have done instead?"],
     key_insight: Annotated[str, "What strategy, formula, or principle should be remembered to avoid this error?"],
     bullet_tags: Annotated[list[BulletTag], "The tags for the bulletpoints"],
+    useful_facts: Annotated[
+        Optional[list[str]],
+        "A list of verified, reusable facts about the app's architecture/config discovered in this trace",
+    ] = None,
+    playbook_amendment: Annotated[
+        Optional[str],
+        "One NEW heuristic bullet that would have prevented this failure (for curator synthesis)",
+    ] = None,
 ) -> ToolResult:
 
     existing_bullet_ids = _playbook_bullet_ids(playbook)
@@ -46,10 +54,16 @@ async def reflect(
             missing_bullet_ids.append(bullet_id)
     if missing_bullet_ids:
         missing_ids = ", ".join(repr(bullet_id) for bullet_id in sorted(set(missing_bullet_ids)))
+        available_ids = ", ".join(repr(bullet_id) for bullet_id in sorted(existing_bullet_ids))
         return ToolResult(
             result=None,
-            error=f"Unknown bullet ids: {missing_ids}. Please only tag bullets that exist in playbook.",
+            error=(
+                f"Unknown bullet ids: {missing_ids}. "
+                f"Please only tag bullets that exist in playbook. "
+                f"Available bullet ids: {available_ids}."
+            ),
         )
+   
 
     try:
         playbook.apply_bullet_tags(bullet_tags)

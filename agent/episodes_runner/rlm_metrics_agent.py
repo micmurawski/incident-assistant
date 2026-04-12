@@ -2,15 +2,13 @@ import asyncio
 import json
 import uuid
 from contextlib import contextmanager
-from pathlib import Path
-
-from episodes_runner.utils import configure_settings
 
 from agent.llm import LLMAgent
-from agent.repo_paths import get_repo_root
 from agent.persistence.settings import init_db
+from agent.repo_paths import get_repo_root
 from agent.tasks.tasks import Task
 from agent.tooling.rlm_metrics import REPLTools
+from episodes_runner.utils import configure_settings
 
 SYSTEM_PROMPT = """
 You are in a Python 3 environment where a `pd_client` (of type `GrafanaPandasClient`) is already initialized and available in your global context. 
@@ -98,7 +96,7 @@ async def main():
             "messages": goal.conversation
         }
         result = await agent.call(shared=shared)
-        goal.conversation.append(shared["messages"][-1])
+        goal.conversation = shared["messages"]
         print(result)
         goal.save()
 

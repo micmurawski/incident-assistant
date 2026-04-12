@@ -1,7 +1,6 @@
 import json
 import os
 import time
-from pathlib import Path
 
 import yaml
 from openinference.instrumentation.anthropic import AnthropicInstrumentor

@@ -8,6 +8,7 @@ Reference example: ace/playbook_history/monitoring_agent-1775062139121067.json
 import glob
 import json
 import os
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal, Optional, TypedDict
@@ -81,7 +82,7 @@ class PlaybookSection:
 
     def to_dict(self, without_bullets_ids: bool = False, positive_only: bool = False, without_points: bool = False) -> dict:
         if positive_only:
-            selected_bullets = list(filter(lambda b: (b.harmful - b.helpful) > 0, self.bullets))
+            selected_bullets = list(filter(lambda b: (b.helpful - b.harmful) > 0, self.bullets))
         else:
             selected_bullets = self.bullets
         bullets_data = [bullet.to_dict(without_id=without_bullets_ids, without_points=without_points)
@@ -250,7 +251,7 @@ class Playbook:
             if tag == "helpful":
                 bullet_by_id[bullet_id].helpful += 1
             elif tag == "harmful":
-                bullet_by_id[bullet_id].helpful -= 1
+                bullet_by_id[bullet_id].harmful += 1
             elif tag == "neutral":
                 continue
             else:
@@ -267,6 +268,8 @@ class Playbook:
                 bid = operation.get("bullet_id")
                 if not bid:
                     raise PlaybookOperationError("ADD requires bullet_id")
+                # add random short suffix to the bullet id to avoid collisions
+                bid = f"{bid}-{uuid.uuid4().hex[:4]}"
                 section.bullets.append(
                     PlaybookSectionBullet(id=bid, content=operation["content"])
                 )

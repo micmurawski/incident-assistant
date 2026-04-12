@@ -156,31 +156,31 @@ fi
 ###############################################################################
 # Delete unattached EBS volumes tagged for the cluster
 ###############################################################################
-echo
-echo "Fetching unattached EBS volumes tagged kubernetes.io/cluster/1-node-default-vpc=owned..."
-VOLUME_IDS=$(aws ec2 describe-volumes \
-  ${AWS_REGION:+--region "${AWS_REGION}"} \
-  --filters \
-    "Name=status,Values=available" \
-    "Name=tag:kubernetes.io/cluster/1-node-default-vpc,Values=owned" \
-  --query 'Volumes[].VolumeId' \
-  --output text || true)
-
-if [ -z "${VOLUME_IDS}" ] || [ "${VOLUME_IDS}" = "None" ]; then
-  echo "No matching unattached EBS volumes found."
-else
-  echo "EBS volumes to delete:"
-  for vol in ${VOLUME_IDS}; do
-    echo "  - ${vol}"
-  done
-
-  for vol in ${VOLUME_IDS}; do
-    echo "Deleting EBS volume: ${vol}"
-    aws ec2 delete-volume \
-      ${AWS_REGION:+--region "${AWS_REGION}"} \
-      --volume-id "${vol}" || echo "WARNING: Failed to delete EBS volume ${vol}"
-  done
-fi
+#echo
+#echo "Fetching unattached EBS volumes tagged kubernetes.io/cluster/1-node-default-vpc=owned..."
+#VOLUME_IDS=$(aws ec2 describe-volumes \
+#  ${AWS_REGION:+--region "${AWS_REGION}"} \
+#  --filters \
+#    "Name=status,Values=available" \
+#    "Name=tag:kubernetes.io/cluster/1-node-default-vpc,Values=owned" \
+#  --query 'Volumes[].VolumeId' \
+#  --output text || true)
+#
+#if [ -z "${VOLUME_IDS}" ] || [ "${VOLUME_IDS}" = "None" ]; then
+#  echo "No matching unattached EBS volumes found."
+#else
+#  echo "EBS volumes to delete:"
+#  for vol in ${VOLUME_IDS}; do
+#    echo "  - ${vol}"
+#  done
+#
+#  for vol in ${VOLUME_IDS}; do
+#    echo "Deleting EBS volume: ${vol}"
+#    aws ec2 delete-volume \
+#      ${AWS_REGION:+--region "${AWS_REGION}"} \
+#      --volume-id "${vol}" || echo "WARNING: Failed to delete EBS volume ${vol}"
+#  done
+#fi
 
 ###############################################################################
 # Delete CloudWatch Logs log group for EKS cluster

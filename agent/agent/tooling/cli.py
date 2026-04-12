@@ -1,4 +1,3 @@
-import shlex
 from typing import Annotated, Optional
 
 from agent.tooling._utils import run_cli_command
@@ -28,9 +27,11 @@ async def bash(
     **Examples:**  
     bash(command='npm run dev')  
     """
-    args = shlex.split(command.strip())
+    cmd = command.strip()
+    if not cmd:
+        return await run_cli_command(cmd=["bash", "-c", ":"], cwd=cwd, env=env, timeout=300)
     return await run_cli_command(
-        cmd=args,
+        cmd=["bash", "-c", cmd],
         cwd=cwd,
         env=env,
         timeout=300,  # Increased default timeout for potentially streamed long commands

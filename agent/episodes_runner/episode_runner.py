@@ -7,20 +7,19 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from agent.grafana_client.client import AsyncGrafanaClient
+from agent.grafana_client.report import (build_status_report_dict,
+                                         detect_differences,
+                                         format_diff_status_report)
+from agent.repo_paths import fault_vault_dir, get_repo_root
+from agent.tooling._utils import run_cli_command
+from agent.tooling.decorators import ToolResult
+from agent.tooling.metrics import APPS, NAMESPACE
 from episodes_runner.fault_scenario_picker import (pick_fault_scenario,
                                                    record_episode_failure,
                                                    record_episode_success)
 from episodes_runner.utils import (get_kubectl_env, live_timer,
                                    restore_eks_node_group)
-
-from agent.grafana_client.client import AsyncGrafanaClient
-from agent.grafana_client.report import (build_status_report_dict,
-                                         detect_differences,
-                                         format_diff_status_report)
-from agent.tooling._utils import run_cli_command
-from agent.tooling.decorators import ToolResult
-from agent.repo_paths import fault_vault_dir, get_repo_root
-from agent.tooling.metrics import APPS, NAMESPACE
 
 CUR_DIR = Path(__file__).resolve().parent
 REPO_ROOT = get_repo_root()
@@ -66,7 +65,7 @@ def delete_chaos_mesh_all_experiments(env: dict) -> None:
     if result.returncode != 0:
         print(f"[cleanup] cleanup-chaos-experiments.sh failed: {result.stderr or result.stdout}")
     else:
-        print(f"[cleanup] cleanup-chaos-experiments.sh completed")
+        print("[cleanup] cleanup-chaos-experiments.sh completed")
 
 
 async def ensure_load_gen_deployed() -> None:
