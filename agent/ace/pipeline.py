@@ -14,8 +14,6 @@ async def gather_tasks(n: int = 5, last: bool = True):
     tasks_map = fetch_tasks_by_assignee(n, last)
     items = []
     for assignee, tasks in tasks_map.items():
-        if assignee != "incident_commander":
-            continue
         print(f"Assignee: {assignee}")
         for task in tasks:
             print(f"Task: {task.id}")
