@@ -4,8 +4,6 @@ from ace.playbook_core import Playbook
 from ace.yaml_dump import dump_yaml_multiline
 from agent.persistence.task_queries import Task
 
-MAX_TOOL_RESULT_LENGTH = 1000
-
 
 def collect_data_on_task(root: Task, data: dict):
     if root.assignee not in data:
@@ -19,14 +17,6 @@ def collect_data_on_task(root: Task, data: dict):
     )
     for child_task in root.children:
         collect_data_on_task(child_task, data)
-
-
-def trim_content(content: str) -> str:
-    if len(content) > MAX_TOOL_RESULT_LENGTH:
-        head = content[:MAX_TOOL_RESULT_LENGTH // 2]
-        tail = content[-MAX_TOOL_RESULT_LENGTH // 2:]
-        return f"{head}...[trimmed {len(content) - MAX_TOOL_RESULT_LENGTH} characters]...{tail}"
-    return content
 
 
 def merge_tool_uses(messages: list[dict]) -> list[dict]:
@@ -71,25 +61,6 @@ def merge_tool_uses(messages: list[dict]) -> list[dict]:
             continue
         merged.append({**message, "content": new_content})
     return merged
-
-
-def trim_trajectory(messages: list[dict]) -> list[dict]:
-    for message in messages:
-        content = message.get("content")
-        if not isinstance(content, list):
-            continue
-        for item in content:
-            if item.get("type") == "tool_use":
-                if item.get("name") == "assign_task":
-                    continue
-                else:
-                    # trim result.content
-                    content_length = len(item["result"]["content"])
-                    if content_length > MAX_TOOL_RESULT_LENGTH:
-                        item["result"]["content"] = trim_content(
-                            item["result"]["content"]
-                        )
-    return messages
 
 
 def parse_trajectory(messages: list[dict]) -> list[dict]:

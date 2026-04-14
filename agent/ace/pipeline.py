@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any
 
 from ace.agents import create_curator_agent, create_reflector_agent
 from ace.playbook_core import Playbook
@@ -19,7 +20,7 @@ async def gather_tasks(n: int = 5, last: bool = True):
             print(f"Task: {task.id}")
         items.append({"assignee": assignee, "tasks": tasks})
     return {
-        "items": items[:1]
+        "items": items
     }
 
 
@@ -27,6 +28,7 @@ async def gather_tasks(n: int = 5, last: bool = True):
 async def reflect_on_tasks(assignee: str, tasks: list[Task]):
     reflections: list[dict] = []
     playbook = Playbook.load_last_revision_of(assignee)
+    playbook.auto_save = False
 
     for task in tasks:
         shared = {
@@ -39,22 +41,29 @@ async def reflect_on_tasks(assignee: str, tasks: list[Task]):
 
     return {
         "assignee": assignee,
-        "reflections": reflections
+        "reflections": reflections,
+        "playbook_snapshot": playbook.to_dict(),
+        "rev_number": playbook.number_of_revisions,
     }
 
 
 @node
-async def create_curator_prompt(results: list[dict] | None = None):
+async def create_curator_prompt(results: list[dict[str, Any]] | None = None):
     for r in results or []:
         assignee = r["assignee"]
         reflections = r["reflections"]
-        playbook = Playbook.load_last_revision_of(assignee)
+        playbook = Playbook.from_dict(
+            r["playbook_snapshot"],
+            rev_number=r["rev_number"],
+            auto_save=False,
+        )
         with create_curator_agent(assignee, reflections, playbook) as curator_agent:
             shared = {
                 "messages": [{"role": "user", "content": "proceed with curation of reflections"}],
                 "playbook": playbook,
             }
             await curator_agent.call(shared)
+        playbook.commit()
     return {}
 
 
@@ -62,7 +71,7 @@ gather_tasks >> reflect_on_tasks >> create_curator_prompt
 ACEPipeline = AsyncFlow(start=gather_tasks)
 
 
-async def run_ace_pipeline(n: int = 5, last: bool = False):
+async def run_ace_pipeline(n: int = 5, last: bool = True):
     return await ACEPipeline.run_async({
         "n": n,
         "last": last

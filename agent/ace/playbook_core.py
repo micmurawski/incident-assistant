@@ -110,6 +110,8 @@ class Playbook:
     playbook_id: Annotated[str, "The id of the playbook"]
     sections: Annotated[dict[str, PlaybookSection], "The sections in the playbook (key = unique section id)"]
     number_of_revisions: Annotated[int, "The number of revisions of the playbook"]
+    # When False, apply_bullet_tags / apply_operations mutate in memory only until commit().
+    auto_save: bool = True
 
     def _non_empty_sections(self) -> list[PlaybookSection]:
         return [section for section in self.sections.values() if section.bullets]
@@ -142,7 +144,7 @@ class Playbook:
             json.dump(self.to_dict(), f, indent=4)
 
     @classmethod
-    def from_dict(cls, data: dict, rev_number: int = 0) -> "Playbook":
+    def from_dict(cls, data: dict, rev_number: int = 0, auto_save: bool = True) -> "Playbook":
         raw = data["sections"]
         sections: dict[str, PlaybookSection] = {}
         if isinstance(raw, dict):
@@ -159,6 +161,7 @@ class Playbook:
             playbook_id=data["playbook_id"],
             sections=sections,
             number_of_revisions=rev_number,
+            auto_save=auto_save,
         )
 
     def save_revision(self):
@@ -167,6 +170,17 @@ class Playbook:
         file_path = os.path.join(PLAYBOOK_HISTORY_DIR, file_name)
         self.to_file(file_path)
         return file_path
+
+    def commit(self) -> str:
+        """Write the current in-memory playbook to disk as a new revision.
+
+        If the curator or pipeline exits before commit(), draft mutations are not persisted.
+        """
+        path = self.save_revision()
+        self.auto_save = True
+        files = glob.glob(os.path.join(PLAYBOOK_HISTORY_DIR, f"{self.playbook_id}-*.json"))
+        self.number_of_revisions = len(files)
+        return path
 
     @classmethod
     def load_last_revision_of(cls, playbook_id: str):
@@ -215,9 +229,9 @@ class Playbook:
         }
 
     @classmethod
-    def from_file(cls, file_path: str, rev_number: int = 0) -> "Playbook":
+    def from_file(cls, file_path: str, rev_number: int = 0, auto_save: bool = True) -> "Playbook":
         with open(file_path, "r") as f:
-            return cls.from_dict(json.load(f), rev_number=rev_number)
+            return cls.from_dict(json.load(f), rev_number=rev_number, auto_save=auto_save)
 
     def _section_by_id(self, section_id: str) -> "PlaybookSection":
         if section_id not in self.sections:
@@ -256,7 +270,8 @@ class Playbook:
                 continue
             else:
                 raise PlaybookOperationError(f"Invalid bullet tag: {tag!r}")
-        self.save_revision()
+        if self.auto_save:
+            self.save_revision()
 
     def apply_operations(self, operations: list[Operation]):
         for operation in operations:
@@ -291,7 +306,8 @@ class Playbook:
                     del self.sections[section.id]
             else:
                 raise PlaybookOperationError(f"Invalid action: {action!r}")
-        self.save_revision()
+        if self.auto_save:
+            self.save_revision()
 
 
 
