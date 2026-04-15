@@ -2,9 +2,7 @@ import os
 from contextlib import contextmanager
 from typing import Generator
 
-from openinference.instrumentation.anthropic import AnthropicInstrumentor
 from opentelemetry import trace
-from phoenix.otel import register
 
 from ace.playbook_core import Playbook
 from ace.prompts import (CURATOR_SYSTEM_PROMPT_TEMPLATE_V2,
@@ -15,6 +13,7 @@ from ace.utils import (format_reflector_task_data_for_task,
                        format_reflector_task_data_for_tasks)
 from ace.yaml_dump import dump_yaml_multiline
 from agent.llm import LLMAgent
+from agent.repo_paths import get_repo_root
 from agent.settings import SettingsManager
 from agent.tasks.tasks import Task
 from agent.tooling.cli import CliTools
@@ -27,6 +26,8 @@ from agent.tooling.kubectl import (KubectlReadTools, KubectlWriteTools,
 from agent.tooling.metrics import MetricsSummaryTools
 from agent.tooling.planning import PlanningTools
 from agent.tooling.rlm_metrics import REPLTools
+from agent.tracing import (ensure_anthropic_instrumentation,
+                           ensure_tracer_provider)
 
 incident_commander_tools = PlanningTools | deploy_app  # |CliTools
 metrics_tools = REPLTools | PlanningTools | MetricsSummaryTools | kubectl_get_resources
@@ -37,6 +38,9 @@ devops_write_tools = CodebaseWriteTools | CliTools | KubectlWriteTools | EksWrit
 coder_tools = CodebaseReadTools | CodebaseWriteTools | CliTools | PlanningTools
 
 devops_tools = devops_read_tools | devops_write_tools
+
+ReflectorTools = ReflectorTools | CodebaseReadTools
+CuratorTools = CuratorTools | CodebaseWriteTools
 
 TOOLS_MAP = {
     "incident_commander": incident_commander_tools,
@@ -50,8 +54,8 @@ def configure_settings(project_name: str, provider: str = "minimax") -> trace.Tr
     settings = SettingsManager.get_instance()
     settings.set("api.provider", provider)
     settings.set("api.api_key", os.environ["MINIMAX_API_KEY"])
-    tracer_provider = register(project_name=project_name)
-    AnthropicInstrumentor().instrument(tracer_provider=tracer_provider)
+    tracer_provider = ensure_tracer_provider(project_name=project_name)
+    ensure_anthropic_instrumentation(tracer_provider=tracer_provider)
     return trace.get_tracer(__name__)
 
 
@@ -59,11 +63,13 @@ def configure_settings(project_name: str, provider: str = "minimax") -> trace.Tr
 def create_reflector_agent(
     agent_name: str,
     tasks: list[Task] | Task,
-    playbook: Playbook,
+    playbooks: dict[str, Playbook],
     user_message: str = "proceed with reflection on task",
 ) -> Generator[LLMAgent, None, None]:
     name = f"{agent_name}-reflector"
     tracer = configure_settings(project_name=name)
+    repo_root = get_repo_root()
+    codebase_path = repo_root / "services" / "robot-shop"
     if isinstance(tasks, list):
         details = format_reflector_task_data_for_tasks(tasks)
     else:
@@ -72,15 +78,26 @@ def create_reflector_agent(
     system_prompt = REFLECTOR_SYSTEM_PROMPT_TEMPLATE_V2.format(
         details=details,
         agent_name=agent_name,
-        playbook=playbook.to_markdown(without_points=True),
+        playbook=playbooks[agent_name].to_markdown(without_points=True),
         agent_tools=format_tools_for_prompt(TOOLS_MAP[agent_name]),
     )
-    save_execution_prompt("reflector", agent_name, system_prompt, user_message)
+    save_execution_prompt(
+        "reflector",
+        agent_name,
+        playbooks[agent_name].number_of_revisions,
+        system_prompt,
+        user_message,
+    )
 
     agent = LLMAgent(
         name=name,
         system_prompt=system_prompt,
         tools=ReflectorTools,
+        shared_context={
+            "cwd": str(codebase_path),
+            "playbooks": playbooks,
+            "reflector_assignee": agent_name,
+        },
     )
 
     with tracer.start_as_current_span(name):
@@ -96,6 +113,8 @@ def create_curator_agent(
 ) -> Generator[LLMAgent, None, None]:
     name = f"{agent_name}-curator"
     tracer = configure_settings(project_name=name)
+    repo_root = get_repo_root()
+    codebase_path = repo_root / "services" / "robot-shop"
     reflections_yaml = dump_yaml_multiline(reflections, indent=4, sort_keys=False)
     system_prompt = CURATOR_SYSTEM_PROMPT_TEMPLATE_V2.format(
         reflections=reflections_yaml,
@@ -103,14 +122,21 @@ def create_curator_agent(
         agent_name=agent_name,
         agent_tools=format_tools_for_prompt(TOOLS_MAP[agent_name]),
     )
-    save_execution_prompt("curator", agent_name, system_prompt, user_message)
-    print("SYSTEM PROMPT:")
-    print(system_prompt)
-    print("--------------------------------")
+    save_execution_prompt(
+        "curator",
+        agent_name,
+        playbook.number_of_revisions,
+        system_prompt,
+        user_message,
+    )
     agent = LLMAgent(
         name=f"{agent_name}-curator",
         system_prompt=system_prompt,
         tools=CuratorTools,
+        shared_context={
+            "cwd": str(codebase_path),
+            "playbook": playbook,
+        },
     )
     with tracer.start_as_current_span(name):
         yield agent

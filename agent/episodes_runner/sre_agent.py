@@ -73,7 +73,7 @@ def create_sre_agent(
         "env": SRE_AGENT_ENV,
     }
 
-    incident_commander_tools = PlanningTools | deploy_app # |CliTools
+    incident_commander_tools = PlanningTools | deploy_app | CodebaseReadTools
     metrics_tools = REPLTools | PlanningTools | MetricsSummaryTools | kubectl_get_resources
 
     devops_read_tools = CliTools | CodebaseReadTools | KubectlReadTools | EksReadTools | PlanningTools
@@ -145,8 +145,9 @@ if __name__ == "__main__":
                 id=SESSION_ID,
                 assignee="incident_commander",
                 assigner="human",
-                #content="Please ask coder_agent to give you list of tools and their capabilities, can you also make sure that coder_agent will ask devops_agent to give you list of tools and their capabilities? At the end I want you to use previous coder_agent session and ask him what was his last task."
-                content="Please ask your deputies to list their tools and their capabilities. And show me the report about their capabilities. You may achieve this by assigning tasks to them. Do not make list_metrics tool call."
+                #content="hello how are you?"
+                content="Please ask coder_agent to give you list of tools and their capabilities, can you also make sure that coder_agent will ask devops_agent to give you list of tools and their capabilities? At the end I want you to use previous coder_agent session and ask him what was his last task."
+                #content="Please ask your deputies to list their tools and their capabilities. And show me the report about their capabilities. You may achieve this by assigning tasks to them. Do not make list_metrics tool call."
             )
             goal.save()
             shared = {

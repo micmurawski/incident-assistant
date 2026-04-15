@@ -8,6 +8,7 @@ Reference example: ace/playbook_history/monitoring_agent-1775062139121067.json
 import glob
 import json
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -251,6 +252,13 @@ class Playbook:
                 return i
         raise PlaybookOperationError(f"Unknown bullet id: {bullet_id!r} in section {section.id!r}")
 
+    def _next_added_bullet_id(self, requested_id: str) -> str:
+        """Generate a stable bullet id with exactly one random short suffix."""
+        # Curator-provided ADD ids may already include an old short suffix (e.g., "...-e4f1").
+        # Normalize first so repeated ADD/curation loops do not produce doubled suffixes.
+        base_id = re.sub(r"-[0-9a-f]{4}$", "", requested_id)
+        return f"{base_id}-{uuid.uuid4().hex[:4]}"
+
     def apply_bullet_tags(self, bullet_tags: list[BulletTag]):
         bullet_by_id = {
             bullet.id: bullet
@@ -283,8 +291,7 @@ class Playbook:
                 bid = operation.get("bullet_id")
                 if not bid:
                     raise PlaybookOperationError("ADD requires bullet_id")
-                # add random short suffix to the bullet id to avoid collisions
-                bid = f"{bid}-{uuid.uuid4().hex[:4]}"
+                bid = self._next_added_bullet_id(bid)
                 section.bullets.append(
                     PlaybookSectionBullet(id=bid, content=operation["content"])
                 )

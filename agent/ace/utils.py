@@ -5,7 +5,7 @@ from ace.yaml_dump import dump_yaml_multiline
 from agent.persistence.task_queries import Task
 
 
-def collect_data_on_task(root: Task, data: dict):
+def collect_data_on_task(root: Task, data: dict[str, list[dict]]):
     if root.assignee not in data:
         data[root.assignee] = []
 
@@ -26,6 +26,7 @@ def merge_tool_uses(messages: list[dict]) -> list[dict]:
         content = message.get("content")
         if not isinstance(content, list):
             continue
+        item: dict
         for item in content:
             if item.get("type") == "tool_use":
                 tool_use_by_id[item["id"]] = item
@@ -51,6 +52,7 @@ def merge_tool_uses(messages: list[dict]) -> list[dict]:
             merged.append(message)
             continue
         new_content = []
+        b: dict
         for b in content:
             if b.get("type") == "tool_result":
                 continue
@@ -69,7 +71,7 @@ def parse_trajectory(messages: list[dict]) -> list[dict]:
 
 
 def get_reflections(messages: list[dict]) -> list[dict]:
-    """Collect inputs from successful ``reflect`` tool calls only.
+    """Collect inputs from successful reflector tool calls only.
 
     Raw transcripts keep ``tool_result`` on separate user messages; without
     :func:`merge_tool_uses`, assistant ``tool_use`` blocks have no ``result``,
@@ -81,8 +83,9 @@ def get_reflections(messages: list[dict]) -> list[dict]:
         content = message.get("content")
         if not isinstance(content, list):
             continue
+        item: dict
         for item in content:
-            if item.get("type") != "tool_use" or item.get("name") != "reflect":
+            if item.get("type") != "tool_use" or item.get("name") not in {"reflect", "reflect_on_assignment"}:
                 continue
             result = item.get("result")
             if not isinstance(result, dict):
@@ -99,16 +102,6 @@ def _reflector_task_section(task: Task) -> str:
     """Query, assessment, and trajectory for one task (no playbook)."""
     query = task.conversation[0]["content"]
 
-    assessment_msg = task.messages_history[-1]
-    assessment = ""
-    if isinstance(assessment_msg["content"], str):
-        assessment = assessment_msg["content"]
-    else:
-        for content in assessment_msg["content"]:
-            if content.get("type") == "text":
-                assessment = content.get("text")
-                break
-
     trajectory_yaml = dump_yaml_multiline(
         merge_tool_uses(task.messages_history[1:-1])
     )
@@ -116,10 +109,14 @@ def _reflector_task_section(task: Task) -> str:
     res = f"## Task: {task.id}\n\n"
     res += f"{query}\n\n"
 
-    if assessment != "":
-        res += "### Assessment\n\n"
-        res += f"{assessment}\n\n"
-
+    if len(task.conversation) > 1:
+        #import json
+        #raise Exception(json.dumps(task.conversation[-1], indent=4))
+        assessment = task.conversation[-1]["content"]
+        if assessment:
+            res += "### Assessment\n\n"
+            res += f"{assessment}\n\n"
+        
     res += "### Trajectory\n\n"
     res += f"{trajectory_yaml}\n\n"
     return res

@@ -35,7 +35,12 @@ class TaskExecutor:
     @staticmethod
     def _result_with_session_id(result, session_id: str):
         """Append session_id to tool results returned to the assigner (does not mutate task conversation)."""
-        suffix = f"\n\nsession_id: {session_id}"
+        suffix = (
+            f"\n\nsession_id: {session_id}\n"
+            "To continue this task with the same assignee, use this session_id with the assign_task tool. "
+            "This will let you pick up right where you left off and follow up on the current task."
+        )
+   
         if result is None:
             return None
         if isinstance(result, str):
@@ -109,7 +114,7 @@ class TaskExecutor:
         upsert_session_messages(assigner, assignee, sid, list(shared["messages"]))
 
         if not feedback_enabled:
-            current_task.status = TaskStatus.DONE
+            current_task.attempt_complete(force=True)
             current_task.save()
             return ToolResult(
                 result=TaskExecutor._result_with_session_id(current_task.conversation[-1]["content"], sid),

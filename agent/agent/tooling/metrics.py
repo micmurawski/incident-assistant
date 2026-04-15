@@ -398,7 +398,7 @@ if __name__ == "__main__":
     async def main():
         grafana_client = AsyncGrafanaClient(url=GRAFANA_URL, api_key=GRAFANA_API_KEY)
 
-        result = await get_edges_summary(resource="deployments")
+        result = await get_app_summary(grafana_client=grafana_client)
         if result.error:
             print(result.error, flush=True)
         print(result.result or "", flush=True)

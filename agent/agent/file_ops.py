@@ -205,6 +205,10 @@ class FileOpsManager:
                 error=Exception(f"The path {full_path} does not exist."),
             )
 
+        if os.path.isfile(full_path):
+            msg = f"The path {full_path} is not a directory."
+            return FileOpsResult(path=path, content=msg, error=Exception(msg))
+
         files, did_hit_limit = await list_files(full_path, recursive, 200)
         result = self._format_files_list(full_path, files, did_hit_limit)
         return FileOpsResult(

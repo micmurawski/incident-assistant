@@ -13,56 +13,56 @@ from framework.decorators import node
 @node
 async def gather_tasks(n: int = 5, last: bool = True):
     tasks_map = fetch_tasks_by_assignee(n, last)
-    items = []
-    for assignee, tasks in tasks_map.items():
-        print(f"Assignee: {assignee}")
-        for task in tasks:
-            print(f"Task: {task.id}")
-        items.append({"assignee": assignee, "tasks": tasks})
-    return {
-        "items": items
-    }
-
-
-@node(batch=True)
-async def reflect_on_tasks(assignee: str, tasks: list[Task]):
-    reflections: list[dict] = []
-    playbook = Playbook.load_last_revision_of(assignee)
-    playbook.auto_save = False
-
-    for task in tasks:
-        shared = {
-            "messages": [{"role": "user", "content": "proceed with reflection on task"}],
-            "playbook": playbook
-        }
-        with create_reflector_agent(assignee, task, playbook) as reflector_agent:
-            await reflector_agent.call(shared)
-        reflections.extend(get_reflections(shared["messages"]))
-
-    return {
-        "assignee": assignee,
-        "reflections": reflections,
-        "playbook_snapshot": playbook.to_dict(),
-        "rev_number": playbook.number_of_revisions,
-    }
+    return {"tasks_map": tasks_map}
 
 
 @node
-async def create_curator_prompt(results: list[dict[str, Any]] | None = None):
-    for r in results or []:
-        assignee = r["assignee"]
-        reflections = r["reflections"]
+async def reflect_on_tasks(tasks_map: dict[str, list[Task]]):
+    result: dict[str, dict[str, Any]] = {}
+    playbooks: dict[str, Playbook] = {}
+    
+    for assignee in tasks_map.keys():
+        playbooks[assignee] = Playbook.load_last_revision_of(assignee)
+        playbooks[assignee].auto_save = False
+            
+    for assignee, tasks in tasks_map.items():
+        result[assignee] = {
+            "assignee": assignee,
+            # Finalize this after reflector tool calls mutate scores.
+            "playbook_snapshot": None,
+            "rev_number": playbooks[assignee].number_of_revisions,
+            "reflections": [],
+        }
+
+        for task in tasks:
+            reflection_shared = {
+                "messages": [{"role": "user", "content": "proceed with reflection on task"}],
+            }
+            with create_reflector_agent(assignee, task, playbooks) as reflector_agent:
+                await reflector_agent.call(reflection_shared)
+
+            reflections = get_reflections(reflection_shared["messages"])
+            for reflection in reflections:
+                assignee_ref = reflection.get("assignee") or assignee
+                result[assignee_ref]["reflections"].append(reflection)
+        result[assignee]["playbook_snapshot"] = playbooks[assignee].to_dict()
+
+    return {"reflections_by_assignee": result}
+
+
+@node
+async def create_curator_prompt(reflections_by_assignee: dict[str, dict[str, Any]]):
+    for assignee, data in reflections_by_assignee.items():
         playbook = Playbook.from_dict(
-            r["playbook_snapshot"],
-            rev_number=r["rev_number"],
+            data["playbook_snapshot"],
+            rev_number=data["rev_number"],
             auto_save=False,
         )
-        with create_curator_agent(assignee, reflections, playbook) as curator_agent:
-            shared = {
+        with create_curator_agent(assignee, data["reflections"], playbook) as curator_agent:
+            curator_shared = {
                 "messages": [{"role": "user", "content": "proceed with curation of reflections"}],
-                "playbook": playbook,
             }
-            await curator_agent.call(shared)
+            await curator_agent.call(curator_shared)
         playbook.commit()
     return {}
 

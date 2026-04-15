@@ -1,7 +1,7 @@
 import asyncio
+import os
 import shlex
 from typing import Annotated, Literal, Optional
-
 
 from agent.tooling._utils import run_cli_command
 from agent.tooling.decorators import Hidden, ToolResult, Tools, tool
@@ -16,6 +16,44 @@ K8sResourceTypes = Literal["nodes", "pods", "namespaces", "services", "endpoints
 
 
 APP_NAMESPACE = "application"
+SHELL_META_TOKENS = ("|", "||", "&&", ";", ">", "<", "$(", "`", "\n")
+PORT_FORWARD_WATCHERS: set[asyncio.Task] = set()
+
+
+def _schedule_port_forward_expiry(
+    process: asyncio.subprocess.Process,
+    ttl_seconds: int,
+) -> None:
+    """
+    Schedule background cleanup for a port-forward process.
+    """
+
+    async def _watch() -> None:
+        try:
+            await asyncio.sleep(ttl_seconds)
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+        except Exception as e:
+            print(f"Error scheduling port forward expiry: {e}")
+            # Cleanup is best-effort; failures here should not break tool execution.
+            return
+
+    task = asyncio.create_task(_watch())
+    PORT_FORWARD_WATCHERS.add(task)
+    task.add_done_callback(lambda done: PORT_FORWARD_WATCHERS.discard(done))
+
+
+def _command_needs_shell(command: str) -> bool:
+    """
+    Return True when the command contains shell operators that require
+    execution through a shell (e.g. pipes, redirects, command substitution).
+    """
+    return any(token in command for token in SHELL_META_TOKENS)
 
 # ---------------------------------------------------------------------------
 # Cluster & Node health
@@ -731,6 +769,7 @@ async def kubectl_exec(
     - ['env']                           — list environment variables
     - ['ls', '-la', '/app/data']        — inspect mounted volumes
     - ['wget', '-qO-', 'http://localhost:8080/health'] — test health endpoint
+    - 'sh -lc env | grep -i mysql'             — run shell pipelines
     """
     args = ["exec", pod_name, "-n", namespace]
     if container:
@@ -1084,21 +1123,26 @@ async def kubectl_port_forward(
     resource: Annotated[str, "Resource to forward to, e.g. 'pod/my-pod', 'svc/my-service', 'deploy/my-app'"],
     ports: Annotated[str, "Port mapping, e.g. '8080:80' (local:remote) or '8080' (same port)"],
     namespace: Annotated[str, "Namespace of the resource"] = APP_NAMESPACE,
+    ttl_seconds: Annotated[int, "How long to keep the port-forward alive before auto-stopping (seconds)"] = 1800,
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
     """
     Forward a local port to a port on a pod, service, or deployment.
     Useful for accessing cluster-internal services (dashboards, databases, APIs) from your machine.
 
-    NOTE: This starts a background process. The forwarding remains active until the process is killed.
+    The port-forward auto-stops after ttl_seconds (default 30 minutes).
     """
+    if ttl_seconds <= 0:
+        return ToolResult(result=None, error="ttl_seconds must be greater than 0")
+
     args = ["port-forward", resource, ports, "-n", namespace]
     try:
+        effective_env = {**os.environ.copy(), **(env or {})}
         process = await asyncio.create_subprocess_exec(
             "kubectl", *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=env,
+            env=effective_env,
             cwd=cwd,
         )
         await asyncio.sleep(2)
@@ -1108,8 +1152,13 @@ async def kubectl_port_forward(
                 result=stdout.decode("utf-8"),
                 error=stderr.decode("utf-8") if process.returncode != 0 else None,
             )
+        _schedule_port_forward_expiry(process, ttl_seconds)
         return ToolResult(
-            result=f"Port forwarding started (pid={process.pid}): kubectl {' '.join(args)}\nUse 'kill {process.pid}' to stop.",
+            result=(
+                f"Port forwarding started (pid={process.pid}): kubectl {' '.join(args)}\n"
+                f"It will auto-stop in {ttl_seconds} seconds.\n"
+                f"Use 'kill {process.pid}' to stop earlier."
+            ),
             error=None,
         )
     except Exception as e:
@@ -1148,7 +1197,7 @@ KubectlWriteTools = Tools(tools=[
     # kubectl_create_configmap,
     # kubectl_create_secret,
     # Networking
-    # kubectl_port_forward,
+    kubectl_port_forward,
 ])
 
 

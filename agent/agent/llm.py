@@ -468,7 +468,7 @@ class LLMAgent(ABC):
     async def check_context_size(self, messages: List[AnthropicMessage], tools: list[dict] | None = None) -> bool:
         total_tokens = await self.api_handler.count_tokens(messages, tools)
         max_tokens = self.api_handler.get_model()["max_tokens"]
-        print(f"\033[92mtotal_tokens: {total_tokens}\033[0m | \033[92mPercentage of max tokens: {total_tokens / max_tokens * 100}%\033[0m")
+        print(f"\033[92mtotal_tokens: {total_tokens}\033[0m | \033[92mPercentage of max tokens: {(total_tokens / max_tokens) * 100:.2f}%\033[0m")
         if max_tokens <= total_tokens:
             return {"total_tokens": total_tokens}, "summarize"
         return {"total_tokens": total_tokens}, "default"

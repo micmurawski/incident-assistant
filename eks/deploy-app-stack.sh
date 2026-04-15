@@ -4,16 +4,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 : "${O8S_ROOT:=$REPO_ROOT}"
 JSON_FILE="${O8S_ROOT}/api_key.json"
 
-bash -e "${SCRIPT_DIR}/../services/robot-shop/k8s/build-and-push.sh"
-bash -e "${SCRIPT_DIR}/../services/robot-shop/k8s/deploy-eks-manifests.sh"
-
-echo "Deploying Linkerd service profiles to namespace '${NAMESPACE}'..."
-
-for profile in "${SCRIPT_DIR}/serviceprofiles"/*-profile.yaml; do
-  [ -e "$profile" ] || continue
-  echo "Applying profile: $(basename "$profile")"
-  kubectl apply -n "${NAMESPACE}" -f "$profile"
-done
+bash -e "${SCRIPT_DIR}/../services/robot-shop/k8s/deploy.sh"
 
 SVC_NAME="web"
 EXTERNAL_IP=$(kubectl get svc $SVC_NAME -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')

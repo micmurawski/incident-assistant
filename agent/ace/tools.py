@@ -29,7 +29,8 @@ async def update_playbook(
 
 @tool(tags=["ace", "reflector"])
 async def reflect(
-    playbook: Hidden[Playbook],
+    playbooks: Hidden[dict[str, Playbook]],
+    reflector_assignee: Hidden[str],
     reasoning: Annotated[str, "Your chain of thought / reasoning / thinking process, detailed analysis and calculations"],
     error_identification: Annotated[str, "What specifically went wrong in the reasoning?"],
     root_cause_analysis: Annotated[str, "Why did this error occur? What concept was misunderstood?"],
@@ -45,6 +46,16 @@ async def reflect(
         "One NEW heuristic bullet that would have prevented this failure (for curator synthesis)",
     ] = None,
 ) -> ToolResult:
+    playbook = playbooks.get(reflector_assignee)
+    if playbook is None:
+        available = ", ".join(sorted(playbooks.keys()))
+        return ToolResult(
+            result=None,
+            error=(
+                f"Unknown assignee: {reflector_assignee!r}. "
+                f"Available assignees: {available}."
+            ),
+        )
 
     existing_bullet_ids = _playbook_bullet_ids(playbook)
     missing_bullet_ids: list[str] = []
@@ -63,7 +74,6 @@ async def reflect(
                 f"Available bullet ids: {available_ids}."
             ),
         )
-   
 
     try:
         playbook.apply_bullet_tags(bullet_tags)
@@ -71,5 +81,47 @@ async def reflect(
         return ToolResult(result=None, error=str(e))
     return ToolResult(result="Playbook reflected and points updated")
 
-ReflectorTools = Tools(tools=[reflect])
+
+@tool(tags=["ace", "reflector"])
+async def reflect_on_assignment(
+    playbooks: Hidden[dict[str, Playbook]],
+    reflector_assignee: Hidden[str],
+    assignee: Annotated[
+        str,
+        "Delegated assignee whose curator should receive this reflection.",
+    ],
+    reasoning: Annotated[str, "Your chain of thought / reasoning / thinking process, detailed analysis and calculations"],
+    error_identification: Annotated[str, "What specifically went wrong in the reasoning?"],
+    root_cause_analysis: Annotated[str, "Why did this error occur? What concept was misunderstood?"],
+    correct_approach: Annotated[str, "What should the model have done instead?"],
+    key_insight: Annotated[str, "What strategy, formula, or principle should be remembered to avoid this error?"],
+    useful_facts: Annotated[
+        Optional[list[str]],
+        "A list of verified, reusable facts about the app's architecture/config discovered in this trace",
+    ] = None,
+) -> ToolResult:
+    if assignee not in playbooks:
+        available = ", ".join(sorted(playbooks.keys()))
+        return ToolResult(
+            result=None,
+            error=(
+                f"Unknown delegated assignee: {assignee!r}. "
+                f"Available assignees: {available}."
+            ),
+        )
+
+    source_playbook = playbooks.get(reflector_assignee)
+    if source_playbook is None:
+        available = ", ".join(sorted(playbooks.keys()))
+        return ToolResult(
+            result=None,
+            error=(
+                f"Unknown reflector_assignee: {reflector_assignee!r}. "
+                f"Available assignees: {available}."
+            ),
+        )
+    return ToolResult(result="Reflection on assignment captured")
+
+
+ReflectorTools = Tools(tools=[reflect, reflect_on_assignment])
 CuratorTools = Tools(tools=[update_playbook])

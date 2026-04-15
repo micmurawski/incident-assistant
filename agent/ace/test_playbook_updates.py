@@ -142,6 +142,22 @@ class TestPlaybookUpdates(unittest.TestCase):
         self.assertTrue(pb.sections["new_section"].bullets[0].id.startswith("b9-"))
         self.assertEqual(pb.sections["new_section"].bullets[0].content, "new content")
 
+    def test_add_normalizes_existing_short_suffix(self):
+        pb = _sample_playbook()
+        pb.apply_operations(
+            [
+                {
+                    "action": "ADD",
+                    "section": "sec_b",
+                    "bullet_id": "diagnose-missing-text-index-e4f1",
+                    "content": "new content",
+                }
+            ]
+        )
+        added_id = pb.sections["sec_b"].bullets[0].id
+        self.assertRegex(added_id, r"^diagnose-missing-text-index-[0-9a-f]{4}$")
+        self.assertNotRegex(added_id, r"^diagnose-missing-text-index-e4f1-[0-9a-f]{4}$")
+
     def test_delete_removes_section_when_empty(self):
         pb = _sample_playbook()
         pb.apply_operations(

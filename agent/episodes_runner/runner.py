@@ -137,7 +137,21 @@ def delete_chaos_mesh_all_experiments() -> None:
     env = get_kubectl_env()
     resources = "podchaos,networkchaos,stresschaos,iochaos,httpchaos"
     cmd = ["kubectl", "delete", resources, "--all", "-A"]
-    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    import time
+
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=60)
+            break
+        except subprocess.TimeoutExpired:
+            print(f"[3] kubectl delete timed out on attempt {attempt+1}/{max_retries}. Retrying...")
+            result = None
+            if attempt < max_retries - 1:
+                time.sleep(1)
+    else:
+        raise Exception(f"[3] kubectl delete {resources} failed after {max_retries} retries due to timeouts.")
+
     if result.returncode != 0:
         raise Exception(f"[3] kubectl delete {resources} failed: {result.stderr or result.stdout}")
     print(f"[3] Deleted all chaos mesh {resources}")

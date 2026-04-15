@@ -2,6 +2,10 @@ import asyncio
 import os
 import uuid
 
+import yaml
+
+from ace.pipeline import run_ace_pipeline
+from ace.playbook_core import Playbook
 from agent.llm import LLMAgent
 from agent.persistence.settings import init_db
 from agent.tasks.tasks import Task
@@ -16,10 +20,10 @@ from episodes_runner.sre_agent import configure_settings, create_sre_agent
 from episodes_runner.utils import (clean_all_containers,
                                    collect_meaningful_actions, live_timer,
                                    restore_eks_node_group)
-import yaml
-from ace.pipeline import run_ace_pipeline
+
 # Max wall time for the SRE agent flow; override with env SRE_AGENT_TIMEOUT_SEC.
 SRE_AGENT_CALL_TIMEOUT_SEC = float(os.environ.get("SRE_AGENT_TIMEOUT_SEC", "3600"))
+ACE_ASSIGNEES = ["incident_commander", "monitoring_agent", "devops_agent", "coder_agent"]
 
 JUDGE_SYSTEM_PROMPT = """
 You are a Senior SRE Judge. Your role is to evaluate if an SRE Agent successfully resolved an incident.
@@ -62,11 +66,26 @@ def get_episode_count():
     return len(history)
 
 
+def _current_playbook_revisions() -> dict[str, int]:
+    revisions: dict[str, int] = {}
+    for assignee in ACE_ASSIGNEES:
+        revisions[assignee] = Playbook.load_last_revision_of(assignee).number_of_revisions
+    return revisions
+
+
+def _should_run_ace_pipeline(episode_count: int) -> bool:
+    if episode_count <= 0 or episode_count % 5 != 0:
+        return False
+    current_revisions = _current_playbook_revisions()
+    expected_floor = 1 + (episode_count // 5)
+    return any(rev < expected_floor for rev in current_revisions.values())
+
+
 async def run_experiment():
     init_db()
-    # Every 5 episodes, run ACE pipeline based on number in fault_history.yaml
+    # Every 5 episodes, run ACE pipeline only if revision floor is not reached.
     episode_count = get_episode_count()
-    if episode_count % 5 == 0 and episode_count > 0:
+    if _should_run_ace_pipeline(episode_count):
         print(f"Running ACE pipeline for episode {episode_count}")
         await run_ace_pipeline()
     else:
@@ -142,6 +161,9 @@ async def run_experiment():
             "    \"successful_fix\": 0 or 1,\n"
             "    \"system_recovery_visible\": 0 or 1\n"
             "}\n"
+            "Add also constructive feedback for the agent to improve its performance. This should be in markdown format."
+            "```markdown\n"
+            "{constructive_feedback}\n"
             "```"
         )
 

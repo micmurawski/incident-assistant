@@ -9,6 +9,7 @@ import uuid
 from logging import getLogger
 from typing import Any, Dict, Optional
 
+from opentelemetry import trace as otel_trace
 from opentelemetry.context import attach, detach
 from opentelemetry.trace import StatusCode, set_span_in_context
 from phoenix.otel import register
@@ -47,6 +48,25 @@ def _shared_to_attribute(shared: Any) -> Optional[str]:
 PHOENIX_ENDPOINT = os.getenv("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006")
 
 
+def ensure_tracer_provider(project_name: str = "graph-executions") -> Any:
+    """Ensure a global TracerProvider is registered. Returns the provider."""
+    # Arize Phoenix register() sets the global tracer provider and returns it.
+    return register(project_name=project_name)
+
+
+def ensure_anthropic_instrumentation(tracer_provider=None):
+    """Ensure Anthropic is instrumented with the given (or global) provider."""
+    try:
+        from openinference.instrumentation.anthropic import \
+            AnthropicInstrumentor
+
+        # Avoid double-instrumenting
+        if not AnthropicInstrumentor().is_instrumented_by_opentelemetry:
+            AnthropicInstrumentor().instrument(tracer_provider=tracer_provider)
+    except (ImportError, Exception) as e:
+        logger.warning(f"[Tracing] Could not instrument Anthropic: {e}")
+
+
 class GraphTracer:
     """
     Tracer for flow graph execution only.
@@ -56,8 +76,10 @@ class GraphTracer:
     """
 
     def __init__(self):
-        self._provider = register(project_name="graph-executions")
-        self._tracer = self._provider.get_tracer("pocketflow-graph", "1.0")
+        # Prefer existing global provider to ensure coexistence with other traces
+        self._provider = otel_trace.get_tracer_provider()
+        self._tracer = otel_trace.get_tracer("pocketflow-graph", "1.0")
+
         self._root_span = None
         self._root_token = None
         self._spans: Dict[str, Any] = {}
@@ -144,7 +166,9 @@ class GraphTracer:
 
     def flush(self) -> None:
         try:
-            self._provider.force_flush()
+            # Try to flush the provider if it supports it
+            if hasattr(self._provider, "force_flush"):
+                self._provider.force_flush()
         except Exception as e:
             logger.error(f"[GraphTracer] flush failed: {e}")
 

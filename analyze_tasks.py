@@ -5,6 +5,13 @@ import matplotlib.pyplot as plt
 import os
 import re
 import numpy as np
+from typing import Optional
+
+DEFAULT_SUCCESS_METRICS = {
+    "root_cause_analysis": 0,
+    "successful_fix": 0,
+    "system_recovery_visible": 0,
+}
 
 def parse_date(date_str):
     if not date_str:
@@ -20,19 +27,67 @@ def parse_date(date_str):
                 continue
     return None
 
-def extract_success_metrics(task: dict) -> dict | None:
-    conversation = json.loads(task['conversation'])
-    part_1 = conversation[-1]['content'].split("```json")[-1]
-    last_message = part_1.split("```")[0]
+def _normalize_success_metrics(raw: dict) -> dict:
+    return {
+        "root_cause_analysis": int(raw.get("root_cause_analysis", 0)),
+        "successful_fix": int(raw.get("successful_fix", 0)),
+        "system_recovery_visible": int(raw.get("system_recovery_visible", 0)),
+    }
+
+def _extract_json_object(text: str) -> Optional[dict]:
+    if not text:
+        return None
+
+    candidates = []
+    if "```json" in text:
+        part = text.split("```json")[-1]
+        candidates.append(part.split("```")[0].strip())
+    candidates.append(text.strip())
+
+    decoder = json.JSONDecoder()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if candidate.startswith("{") and candidate.endswith("}"):
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+        for idx, ch in enumerate(candidate):
+            if ch != "{":
+                continue
+            try:
+                obj, _ = decoder.raw_decode(candidate[idx:])
+                if isinstance(obj, dict):
+                    return obj
+            except json.JSONDecodeError:
+                continue
+    return None
+
+def extract_success_metrics(task: dict, db_label: str) -> dict:
     try:
-        return json.loads(last_message)
-    except json.JSONDecodeError:
-        print("Error parsing last message of task:", task['root_id'])
-        return {
-            "root_cause_analysis": 0,
-            "successful_fix": 0,
-            "system_recovery_visible": 0
-        }
+        conversation = json.loads(task['conversation'])
+        if not conversation:
+            return dict(DEFAULT_SUCCESS_METRICS)
+
+        last = conversation[-1]
+        content = last.get('content', "") if isinstance(last, dict) else ""
+        if isinstance(content, list):
+            content = "\n".join(
+                x.get("text", "") for x in content
+                if isinstance(x, dict)
+            )
+        elif not isinstance(content, str):
+            content = str(content)
+
+        parsed = _extract_json_object(content)
+        if parsed is None:
+            # No score JSON in final message is valid for some tasks.
+            return dict(DEFAULT_SUCCESS_METRICS)
+        return _normalize_success_metrics(parsed)
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError):
+        print(f"Error parsing success metrics in {db_label} for task: {task.get('id')}")
+        return dict(DEFAULT_SUCCESS_METRICS)
 
 def count_tool_stats(messages_history):
     if not messages_history:
@@ -61,14 +116,10 @@ def count_tool_stats(messages_history):
                         failing_tools[tool_name] = failing_tools.get(tool_name, 0) + 1
     return uses, errors, failing_tools
 
-def analyze():
-    db_path = "agent.db"
+def get_metrics(db_path):
     if not os.path.exists(db_path):
-        db_path = "agent/agent.db"
-    
-    if not os.path.exists(db_path):
-        print(f"Database not found at agent.db or agent/agent.db")
-        return
+        print(f"Database not found at {db_path}")
+        return None
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -85,7 +136,6 @@ def analyze():
         tasks[row['id']]['created_at_dt'] = parse_date(row['created_at'])
         tasks[row['id']]['resolved_at_dt'] = parse_date(row['resolved_at'])
         
-    # Build tree and calculate metrics
     root_metrics = []
     child_metrics = []
     global_failing_tools = {}
@@ -146,51 +196,24 @@ def analyze():
             metric['incident_type'] = parts[1] if len(parts) > 1 else "unknown"
             metric['service_name'] = parts[2] if len(parts) > 2 else "unknown"
 
-            success = extract_success_metrics(t)
-            if success:
-                metric.update(success)
-            else:
-                metric.update({"root_cause_analysis": 0, "successful_fix": 0, "system_recovery_visible": 0})
+            success = extract_success_metrics(t, db_path)
+            metric.update(success)
             metric['score'] = metric.get('root_cause_analysis', 0) + metric.get('successful_fix', 0) + metric.get('system_recovery_visible', 0)
             root_metrics.append(metric)
         else:
             metric["todo_count"] = len(t['todo_list_data'])
             child_metrics.append(metric)
+    
+    conn.close()
+    return root_metrics, child_metrics, global_failing_tools
 
+def plot_task_metrics(root_metrics, child_metrics, global_failing_tools, title, output_filename):
     if not root_metrics and not child_metrics:
-        print("No metrics gathered.")
+        print(f"No metrics gathered for {title}.")
         return
 
-    # 1. success_chronological_all.png
-    def get_color(score):
-        cmap = plt.get_cmap('Set1')
-        if score == 0: return cmap(0)
-        if score < 3: return cmap(4)
-        return cmap(2)
-
-    root_metrics.sort(key=lambda x: x['created_at_dt'] if x['created_at_dt'] else datetime.min)
-    n = len(root_metrics)
-    print(f"n: {n}")
-    fig, ax = plt.subplots(figsize=(max(10, n * 0.5), 4))
-    indices = np.arange(n)
-    colors = [get_color(t['score']) for t in root_metrics]
-    bars = ax.bar(indices, np.ones(n), color=colors, edgecolor='none', width=0.8)
-    labels = [f"{t['service_name']}\n{t['incident_type']}" for t in root_metrics]
-    ax.set_xticks(indices)
-    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
-    ax.set_yticks([])
-    ax.set_title("Root Tasks Chronological Success (Red=0, Orange=1-2, Green=3)")
-    for i, bar in enumerate(bars):
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + 0.05,
-                f"{root_metrics[i]['score']}/3", ha='center', va='bottom', fontsize=8)
-    plt.tight_layout()
-    plt.savefig('success_chronological_all.png')
-    plt.close()
-
-    # 2. task_metrics.png
     fig, axs = plt.subplots(6, 2, figsize=(15, 36))
-    fig.suptitle('Task Analysis Metrics', fontsize=16)
+    fig.suptitle(f'Task Analysis Metrics - {title}', fontsize=16)
 
     # TTR
     root_ttrs = [m['ttr'] for m in root_metrics if m['ttr'] is not None]
@@ -268,7 +291,7 @@ def analyze():
         axs[5, 0].set_title('Top 10 Failing Tools (Total Errors)')
         axs[5, 0].invert_yaxis()
 
-    # (5, 1) - Success Metrics per Incident Category
+    # Success Metrics per Incident Category
     categories = ['1', '2', '3', '4']
     metrics_by_cat = {cat: {'rca': [], 'fix': [], 'rec': []} for cat in categories}
     
@@ -299,10 +322,91 @@ def analyze():
     axs[5, 1].legend(fontsize='small')
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig('task_metrics.png')
+    plt.savefig(output_filename)
     plt.close()
 
-    print("Analysis complete. Saved success_chronological_all.png and task_metrics.png")
+def plot_success_comparison(root_metrics_no_learning, root_metrics_agent, output_filename):
+    # Sort root_metrics_no_learning chronologically
+    root_metrics_no_learning.sort(key=lambda x: x['created_at_dt'] if x['created_at_dt'] else datetime.min)
+    
+    # Map agent metrics by ID for easy lookup
+    agent_map = {m['id']: m for m in root_metrics_agent}
+    
+    master_ids = [m['id'] for m in root_metrics_no_learning]
+    n = len(master_ids)
+    
+    if n == 0:
+        print("No root tasks found in no_learning database.")
+        return
+
+    def get_color(score):
+        cmap = plt.get_cmap('Set1')
+        if score == 0: return cmap(0)
+        if score < 3: return cmap(4)
+        return cmap(2)
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(max(12, n * 0.6), 8), sharex=True)
+    indices = np.arange(n)
+    
+    # Top Chart: No Learning
+    colors1 = [get_color(t['score']) for t in root_metrics_no_learning]
+    bars1 = ax1.bar(indices, np.ones(n), color=colors1, edgecolor='none', width=0.8)
+    ax1.set_title("Agent No Learning (Top)")
+    ax1.set_ylabel("Success Score")
+    ax1.set_yticks([])
+    
+    for i, bar in enumerate(bars1):
+        ax1.text(bar.get_x() + bar.get_width()/2., 1.05,
+                f"{root_metrics_no_learning[i]['score']}/3", ha='center', va='bottom', fontsize=8)
+
+    # Bottom Chart: Agent
+    agent_data = [agent_map.get(tid) for tid in master_ids]
+    colors2 = [get_color(t['score']) if t else (0,0,0,0) for t in agent_data]
+    bars2 = ax2.bar(indices, [1 if t else 0 for t in agent_data], color=colors2, edgecolor='none', width=0.8)
+    ax2.set_title("Agent (Bottom)")
+    ax2.set_ylabel("Success Score")
+    ax2.set_yticks([])
+
+    for i, bar in enumerate(bars2):
+        if agent_data[i]:
+            ax2.text(bar.get_x() + bar.get_width()/2., 1.05,
+                    f"{agent_data[i]['score']}/3", ha='center', va='bottom', fontsize=8)
+        else:
+            ax2.text(bar.get_x() + bar.get_width()/2., 0.5, "N/A", ha='center', va='center', fontsize=8, color='gray')
+
+    # Shared X labels
+    labels = [f"{t['service_name']}\n{t['incident_type']}" for t in root_metrics_no_learning]
+    ax2.set_xticks(indices)
+    ax2.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
+
+    # Add vertical lines every 5th bar
+    for i in range(4, n - 1, 5):
+        pos = i + 0.5
+        ax1.axvline(x=pos, color='black', linestyle='--', linewidth=1, alpha=0.5)
+        ax2.axvline(x=pos, color='black', linestyle='--', linewidth=1, alpha=0.5)
+    
+    plt.tight_layout()
+    plt.savefig(output_filename)
+    plt.close()
+
+def analyze():
+    db_no_learning = "./agent_no_learning.db"
+    db_agent = "./agent.db"
+    
+    metrics_no_learning = get_metrics(db_no_learning)
+    metrics_agent = get_metrics(db_agent)
+    
+    if metrics_no_learning:
+        print("Plotting task_metrics_no_learning.png")
+        plot_task_metrics(*metrics_no_learning, "No Learning", "task_metrics_no_learning.png")
+    
+    if metrics_agent:
+        print("Plotting task_metrics_agent.png")
+        plot_task_metrics(*metrics_agent, "Agent", "task_metrics_agent.png")
+        
+    if metrics_no_learning and metrics_agent:
+        print("Plotting success_chronological_all.png")
+        plot_success_comparison(metrics_no_learning[0], metrics_agent[0], "success_chronological_all.png")
 
 if __name__ == "__main__":
     analyze()
