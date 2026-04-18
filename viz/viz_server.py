@@ -78,6 +78,12 @@ async def get_tasks(root_id: str):
         tasks = []
         for task in query:
             messages_history = _parse_json_list(task.messages_history)
+            is_root = (not task.parent) or (task.id == task.root_id)
+            last_conversation = None
+            if is_root:
+                conversation = _parse_json_list(task.conversation)
+                if conversation:
+                    last_conversation = conversation[-1]
             tasks.append({
                 "id": task.id,
                 "status": task.status,
@@ -87,6 +93,8 @@ async def get_tasks(root_id: str):
                 "assignee": task.assignee,
                 "assigner": task.assigner,
                 "messages_history": messages_history,
+                "last_conversation": last_conversation,
+                "is_root": is_root,
                 "created_at": task.created_at.isoformat() if isinstance(task.created_at, datetime) else task.created_at,
             })
         return {"tasks": tasks}

@@ -1,44 +1,62 @@
-\chapter{Projekt eksperymentu referencyjnego i metryki ewaluacji autoremediacji}
+\chapter{Ewolucja kontekstu agentowego (ACE): metoda uczenia i implementacja w systemie wieloagentowym}
 
-W celu rzetelnej oceny wpływu potoku ACE na skuteczność systemu, proces badawczy został podzielony na dwie główne fazy: fazę referencyjną (Baseline) oraz fazę ewolucyjną. Kluczowym założeniem było zachowanie determinizmu warunków początkowych poprzez wykorzystanie tej samej, losowo wygenerowanej sekwencji 100 incydentów (scenariuszy usterki) dla obu wariantów.
+Implementacja mechanizmu ewolucji wiedzy w systemie opiera się na paradygmacie \textit{Agentic Context Engineering} (ACE), zaproponowanym przez Zhanga i współpracowników \cite{zhang2025agentic_context_engineering}. Algorytm ten został w niniejszej pracy istotnie rozszerzony i dostosowany do specyfiki hierarchicznej architektury wieloagentowej typu \textit{agent-as-a-tool}. Zamiast tradycyjnego douczania wag modelu (\textit{fine-tuning}), system optymalizuje swoje działanie poprzez ciągłą ewolucję zewnętrznego kontekstu operacyjnego --- tzw. Playbooka.
 
-\section{Konfiguracja eksperymentu referencyjnego (Baseline)}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=1\textwidth]{grafika/ace-idea.png}
+  \caption{Schemat ideii przepływu z publikacji \textit{Agentic Context Engineering: Evolving Contexts for Self-Improving Language Models} \cite{zhang2025agentic_context_engineering}, agent wykonujący pracę generuje trajektorie (ciągi myśli i akcji). \textit{Reflektor} ocenia przebieg pracy (trajektorie) i dzieli się refleksjami z \textit{Kuratorem}, który na ich podstawie wprowadza zmiany do \textit{Playbooka}}
+  \label{fig:ace-idea}
+\end{figure}
 
-Pierwsza faza eksperymentu polegała na uruchomieniu agenta SRE w trybie „bez uczenia” (\textit{Agent No Learning}). W tym wariancie potok ACE był całkowicie wyłączony, a agenci korzystali wyłącznie z bazowych, statycznych promptów systemowych. 
+Centralnym elementem potoku ACE (szczegółowo zaimplementowanego w modułach \texttt{ace/pipeline.py} oraz \texttt{ace/playbook\_core.py}) jest iteracyjny proces zbierania doświadczeń z zakończonych zadań, ich krytycznej analizy oraz syntezy nowych reguł. Proces ten realizowany jest przez wyspecjalizowane agenty:
 
-Proces ten przebiegał zgodnie z logiką zawartą w module \texttt{episodes\_runner/runner.py}:
-\begin{enumerate}
-    \item \textbf{Przygotowanie środowiska}: Dla każdego z 100 incydentów tworzona była czysta kopia robocza aplikacji (\textit{workspace}).
-    \item \textbf{Wstrzyknięcie usterki}: Aplikacja była sabotowana za pomocą wybranego patcha lub manifestu Chaos Mesh z repozytorium \texttt{fault-vault}.
-    \item \textbf{Próba naprawy}: Agent SRE (\textit{Incident Commander} wraz z deputatami) podejmował próbę remediacji bez możliwości aktualizacji swojej bazy wiedzy między epizodami.
-    \item \textbf{Persystencja}: Wyniki działań, ślady rozumowania i wywołania narzędzi były zapisywane w bazie \texttt{agent\_no\_learning.db}.
-\end{enumerate}
-
-\section{Eksperyment ewolucyjny z potokiem ACE}
-
-W drugiej fazie wykorzystano ten sam zestaw 100 incydentów, jednak z włączonym mechanizmem samouczenia. Zgodnie z implementacją w \texttt{episodes\_runner/experiment\_runner.py}, potok ACE nie był uruchamiany po każdym epizodzie, lecz w interwałach co 5 pomyślnie zakończonych lub przerwanych zadań (warunek \texttt{episode\_count \% 5 == 0}).
-
-Taka strategia (\textit{batch learning}) ma na celu stabilizację procesu uczenia i uniknięcie zbyt gwałtownych zmian w Playbookach na podstawie pojedynczych, specyficznych przypadków. Pozwala to na akumulację doświadczeń z kilku różnorodnych incydentów przed dokonaniem syntezy i konsolidacji wiedzy przez agenta Kuratora.
-
-\section{Metryka ewaluacji: Agent Sędzia i Dowody Wykonania}
-
-Ewaluacja każdego epizodu odbywa się w sposób zautomatyzowany przy pomocy agenta sędziego (\textit{Judge Agent}), co opisano w \texttt{experiment\_runner.py}. Sędzia dokonuje binarnej oceny (0 lub 1) w trzech kluczowych kategoriach:
 \begin{itemize}
-    \item \textbf{root\_cause\_analysis}: Czy agent poprawnie zidentyfikował faktyczną przyczynę awarii (zgodnie z usterką w \texttt{FAULT.md})?
-    \item \textbf{successful\_fix}: Czy zastosowano poprawną poprawkę w kodzie/konfiguracji ORAZ czy wywołano narzędzie \texttt{deploy\_app}? Sędzia weryfikuje to na podstawie raportu \textit{System Execution Evidence}, ignorując deklaracje agenta, które nie znalazły odzwierciedlenia w rzeczywistych wywołaniach narzędzi.
-    \item \textbf{system\_recovery\_visible}: Czy metryki z Prometheusa i Loki potwierdzają powrót systemu do stanu zdrowego (brak błędów 5XX, stabilizacja zasobów)?
+  \item \textbf{Reflector} (\textit{Reflektor}) -- agent diagnostyczny, którego zadaniem jest retrospektywna analiza śladu wykonania zadania (\textit{trace analysis}). Porównuje on podjęte przez agenta SRE kroki z ostatecznym wynikiem (sukcesem lub porażką) i identyfikuje tzw. "Moment Dywergencji" --- punkt, w którym strategia odbiegła od optymalnej. Szablon instrukcji dla tego agenta przedstawiono na rysunku \ref{fig:reflector-prompt}.
+  \item \textbf{Curator} (\textit{Kurator}) -- architekt wiedzy, który na podstawie zbioru refleksji podejmuje decyzje o modyfikacji Playbooka (operacje ADD, UPDATE, DELETE). Kryteria decyzyjne kuratora zawarte są w jego prompcie systemowym (rys. \ref{fig:curator-prompt}).
 \end{itemize}
 
-\section{Cele analizy i zjawiska emergentne}
+\begin{figure}[H]
+    \centering
+    \lstinputlisting[basicstyle=\tiny\ttfamily, frame=single, breaklines=true, label={fig:reflector-prompt}, caption={Szablon promptu systemowego dla Reflektora Agenta SRE}]{grafika/reflector-prompt-template.md}
+\end{figure}
 
-Głównym celem porównania obu faz eksperymentu, realizowanym przez skrypt \texttt{analyze\_tasks.py}, jest weryfikacja następujących hipotez:
+\begin{figure}[H]
+    \centering
+    \lstinputlisting[basicstyle=\tiny\ttfamily, frame=single, breaklines=true, label={fig:curator-prompt}, caption={Szablon promptu systemowego dla Kuratora Agenta SRE}]{grafika/curator-prompt-template.md}
+\end{figure}
 
-\begin{enumerate}
-    \item \textbf{Poprawa efektywności operacyjnej}: Czy wraz z ewolucją Playbooka spadnie średni czas naprawy (TTR) oraz liczba iteracji potrzebnych do rozwiązania problemu?
-    \item \textbf{Redukcja błędów narzędziowych}: Czy precyzyjne instrukcje IF/THEN w Playbooku ograniczą liczbę błędnych wywołań narzędzi (\textit{tool error rate}) i halucynacji parametrów?
-    \item \textbf{Emergentna organizacja pracy}: Czy system wypracuje zaawansowane wzorce delegacji? Przykładowo, czy \textit{Incident Commander} nauczy się zlecać analizę logów agentowi metryk (\textit{Monitoring Agent}) przed podjęciem decyzji o zmianie kodu przez \textit{DevOps Agenta}, co jest widoczne w strukturze drzewa zadań (\textit{tasks tree}).
-\end{enumerate}
+\section{Analiza refleksji i przyrostowa budowa wiedzy}
 
-Wyniki eksperymentu są prezentowane na chronologicznych wykresach porównawczych, które umożliwiają ocenę zarówno poprawy, jak i ewentualnej regresji skuteczności agentów w poszczególnych epizodach. Na wykresach tych można obserwować momenty, w których potok ACE aktualizuje Playbook (oznaczane jako pionowe linie przerywane), co często koreluje z pojawieniem się nowych, skutecznych heurystyk działania — zwłaszcza w trudniejszych klasach incydentów. Wykresy pozwalają również wychwycić epizody, w których dochodzi do chwilowego spadku skuteczności względem fazy Baseline.
+Wynikiem pracy Reflektora jest ustrukturyzowany raport (rys. \ref{fig:reflection-example}), który zawiera nie tylko ocenę istniejących punktów Playbooka, ale przede wszystkim tzw. \textit{playbook\_amendment} --- propozycję nowej reguły w formacie IF/THEN oraz \textit{useful\_facts} --- zweryfikowane fakty o architekturze systemu odkryte podczas diagnozy.
 
-Oprócz kategorii sukcesu ocenianych przez agenta sędziego, do analizy wykorzystano także szereg metryk opisowych takich jak: czas do przywrócenia sprawności (TTR), liczba iteracji (\textit{iterations count}), częstość i odsetek błędów wywołań narzędzi (\textit{tool error count}, \textit{tool error rate}), długość trajektorii rozwiązywania zadania, liczba i głębokość potomnych zadań oraz inne statystyki syntetyczne. Statystyki te umożliwiają szczegółową ocenę wpływu ewolucji Playbooka na efektywność operacyjną systemu.
+\begin{figure}[H]
+    \centering
+    \lstinputlisting[basicstyle=\tiny\ttfamily, frame=single, breaklines=true, label={fig:reflection-example}, caption={Przykład wygenerowanej refleksji po incydencie typu "Performance Degradation".}]{grafika/reflection-example.md}
+\end{figure}
+
+\section{Unikanie stronniczości i rola parametrów feedbacku}
+
+W celu zapewnienia obiektywności procesu uczenia, w architekturze wprowadzono mechanizm separacji danych dotyczących skuteczności reguł. Każdy punkt w Playbooku (\textit{bullet}) posiada przypisane parametry \texttt{helpful} oraz \texttt{harmful}, inkrementowane przez Reflektora na podstawie analizy konkretnych incydentów. 
+
+Kluczowym usprawnieniem względem bazowego algorytmu ACE jest \textbf{ukrywanie tych wag przed samym agentem SRE oraz agentem Reflector}. Zapobiega to występowaniu stronniczości (\textit{bias}): agent wykonawczy nie faworyzuje reguł o wysokiej punktacji kosztem nowych propozycji, a Reflektor ocenia przydatność reguły wyłącznie na podstawie bieżącego śladu wykonania, a nie jej historycznej popularności. Pełny wgląd w statystyki (\textit{harmful}, \textit{helpful}) posiada wyłącznie agent \textbf{Curator}, co pozwala mu na podejmowanie racjonalnych decyzji o usunięciu reguł, które w dłuższej perspektywie okazują się szkodliwe lub nieefektywne.
+
+    \begin{figure}[H]
+        \centering
+        \includegraphics[width=\textwidth]{grafika/playbook_example_with_points.png}
+        \caption{Fragment Playbooka dotyczący strategii używania narzędzi, z punktacją \textit{harmful/helpful} i oznaczeniem faz w której zostały dodane punkty.}
+    \label{fig:playbook-points}
+\end{figure}
+
+\section{Hierarchiczna propagacja refleksji}
+
+W przeciwieństwie do systemów jednoagentowych, w przyjętej architekturze refleksje są generowane i przekazywane wzdłuż drzewa zadań. Mechanizm \texttt{reflect\_on\_assignment} pozwala na sytuację, w której agent nadrzędny (np. \textit{Incident Commander}), analizując wynik delegowanego zadania, generuje refleksję skierowaną bezpośrednio do agenta podrzędnego (np. \textit{DevOps Agent}). 
+
+Taki przepływ informacji pozwala na precyzyjne adresowanie błędów w komunikacji i delegacji --- Reflektor może zidentyfikować, że przyczyną niepowodzenia nie był brak umiejętności podwykonawcy, lecz nieprecyzyjne instrukcje przekazane przez zleceniodawcę. Refleksje te są następnie agregowane przez potok ACE i integrowane z Playbookami odpowiednich ról, co prowadzi do spójnego rozwoju kompetencji całego systemu.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{grafika/multiagent-ace.png}
+    \caption{Schemat ACE Pipeline dla architektury wieloagentowej. Reflektor przypisany do Agenta~1 analizuje pełną trajektorię – obejmującą zarówno własne akcje, jak i działania delegowane. W rezultacie powstaje kolekcja refleksji adresowanych do Agenta~1 oraz Agenta~2 (wykonawcy podzadania). Następnie Kurator, w oparciu o zebrane refleksje, aktualizuje odpowiednie playbooki, zapewniając ciągłą ewolucję wiedzy operacyjnej całego systemu.}
+    \label{fig:multiagent-ace}
+\end{figure}
