@@ -14,6 +14,8 @@
 \let\lll\undefined
 \usepackage[utf8]{inputenc}
 \usepackage[table]{xcolor}
+%%\usepackage[figures]{markdown}
+\usepackage{verbatim}
 \RequirePackage{graphicx}
 \RequirePackage[colorlinks,plainpages=false,
  pdfpagelabels,

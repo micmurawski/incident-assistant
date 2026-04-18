@@ -1,4 +1,9 @@
 \chapter{Przegląd literatury oraz projektowanie wieloagentowego systemu opartego na dużych modelach językowych}
+
+Rozwój dużych modeli językowych (LLM) umożliwił powstanie nowej klasy systemów autonomicznych --- agentów zdolnych do samodzielnego planowania, wnioskowania i wykonywania działań w środowiskach wymagających specjalistycznej wiedzy.
+
+Niniejszy rozdział łączy przegląd literatury z opisem autorskiego projektu wieloagentowego systemu autoremediacji. Punktem wyjścia jest paradygmat \textit{Re-Act} oraz analiza jego ograniczeń: limitu okna kontekstowego, degradacji wnioskowania przy długich kontekstach (\textit{Lost in the Middle}) i braku mechanizmów samouczenia. Następnie omówiono architektury wieloagentowe w wariancie \textit{agent-as-a-tool} oraz autorskie rozszerzenia: kompresję kontekstu, hierarchiczny model organizacji pracy oparty na drzewie zadań oraz implementację agenta SRE złożonego z czterech wyspecjalizowanych instancji. Rozdział zamyka opis mechanizmu samouczenia opartego na adaptacji algorytmu \textit{Agentic Context Engineering} (ACE), rozszerzonego o hierarchiczną propagację refleksji wzdłuż drzewa zadań i mechanizmy ograniczania stronniczości.
+
 \section{Agent Re-Act (Reasoning and Acting)}
 \subsection{Idea}
 \begin{figure}[H]
@@ -67,7 +72,7 @@ Gdy szacowana liczba tokenów w historii konwersacji osiąga próg z konfiguracj
 
 Domyślnie do kompresji stosuje się specjalnie przygotowany prompt systemowy wymagający uporządkowanego streszczenia (m.in.\ dotychczasowy tok rozmowy, bieżąca praca, pojęcia techniczne, pliki i~fragmenty kodu, rozwiązane problemy oraz oczekujące kroki). Na końcu żądania dokładana jest krótka wiadomość użytkownika prosząca o~podsumowanie zgodnie z tą instrukcją. Przy wielokrotnej kompresji, jeśli w historii występuje już wcześniejsze podsumowanie, dołączana jest prośba o kontynuację od podanego streszczenia.
 \newpage
-Pełna treść domyślnego promptu systemowego (pochodząca z projektu Roo Code~\cite{roocode_github}) oraz komunikatów pomocniczych przedstawiono w~listingach~\ref{lst:summary-prompt}--\ref{lst:continue-summary}.
+Pełna treść domyślnego promptu systemowego (pochodząca z projektu Roo Code \cite{roocode_github}) oraz komunikatów pomocniczych przedstawiono w~listingach~\ref{lst:summary-prompt}--\ref{lst:continue-summary}.
 
 \begin{lstlisting}[basicstyle=\footnotesize\ttfamily,breaklines=true,columns=fullflexible]
 Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
@@ -177,11 +182,11 @@ W warstwie implementacji agent SRE jest konfigurowany jako grupa czterech instan
 
 \subsection{Incident Commander}
 
-\textit{Incident Commander} jest agentem nadrzędnym: w~promptcie systemowym ma wskazanych deputatów (\texttt{coder\_agent}, \texttt{monitoring\_agent}, \texttt{devops\_agent}) oraz obowiązek uruchomienia wdrożenia po przygotowaniu poprawki. Jego zestaw narzędzi ograniczono do planowania oraz~\texttt{deploy\_app} — wywołania skryptu powłoki (np.\ \texttt{deploy.sh}) wdrażającego aplikację w~Kubernetes, z~przekazaną ścieżką i~środowiskiem w~kontekście. Komendant nie otrzymuje bezpośredniego dostępu do poleceń \texttt{kubectl}, edycji kodu ani zapytań do metryk; jego rola to rozdzielenie pracy i~finalne wdrożenie.
+\textit{Incident Commander} jest agentem nadrzędnym: w promptcie systemowym ma wskazanych deputatów (\texttt{coder\_agent}, \texttt{monitoring\_agent}, \texttt{devops\_agent}) oraz obowiązek uruchomienia wdrożenia po przygotowaniu poprawki. Jego zestaw narzędzi ograniczono do planowania oraz~\texttt{deploy\_app} — wywołania skryptu powłoki (np.\ \texttt{deploy.sh}) wdrażającego aplikację w~Kubernetes, z~przekazaną ścieżką i~środowiskiem w~kontekście. Komendant nie otrzymuje bezpośredniego dostępu do poleceń \texttt{kubectl}, edycji kodu ani zapytań do metryk; jego rola to rozdzielenie pracy i~finalne wdrożenie.
 
 \subsection{Metrics Agent}
 
-Agent metryk odpowiada w~kodzie instancji \texttt{monitoring\_agent} i~jest przeznaczony do zbierania oraz wstępnej interpretacji logów i~metryk z~klastra. Otrzymuje narzędzia z~grupy \texttt{MetricsTools} (m.in.\ zapytania do Grafana/Loki i~budowanie raportów), funkcję \texttt{kubectl\_get\_resources} do odczytu wybranych zasobów Kubernetes oraz narzędzia planistyczne, dzięki czemu może delegować podzadania innym agentom i~prowadzić listę \texttt{TODO}. W~porównaniu z~komendantem ma węższą, lecz głębszą domenę obserwowalności.
+Agent metryk (\texttt{monitoring\_agent}) został rozbudowany o paradygmat \textit{Recursive Language Models} (RLM) \cite{rlm}, co pozwala na analizę obszernych zbiorów danych obserwowalności bez ryzyka degradacji jakości odpowiedzi wynikającej z przepełnienia okna kontekstowego. Zamiast przesyłać surowe logi bezpośrednio do modelu, agent wykorzystuje izolowane środowisko wykonawcze Python (\texttt{ContainerRLMSandbox}) oraz dedykowanego klienta \texttt{GrafanaPandasClient}. Podejście to umożliwia programowe pobieranie danych z systemów Prometheus i Loki bezpośrednio do struktur \texttt{pandas.DataFrame}, ich agregację, filtrowanie oraz detekcję wzorców (ang. \textit{pattern-matching}) na poziomie kodu. Wyniki analizy mogą być wymieniane między agentami poprzez współdzielony wolumen (\textit{handover volume}), co wspiera wieloetapowe wnioskowanie o przyczynach źródłowych (ang. \textit{root-cause analysis}). Agent posiada również dostęp do narzędzi \texttt{MetricsSummaryTools}, \texttt{kubectl\_get\_resources} oraz funkcji planistycznych, co czyni go autonomicznym analitykiem danych SRE, zdolnym do obsługi incydentów o wysokiej złożoności danych.
 
 \subsection{DevOps Agent}
 
@@ -189,18 +194,66 @@ Agent metryk odpowiada w~kodzie instancji \texttt{monitoring\_agent} i~jest prze
 
 \section{Samouczenie się}
 
-Implementacja podejścia \textit{Agentic Context Engineering} (ACE) \cite{zhang2025agentic_context_engineering} została w pełni zrealizowana w systemie zarządzania incydentami SRE. Zamiast tradycyjnego uczenia przez modyfikację wag modelu lub kosztowne douczanie, system rozwija się poprzez \textbf{ewolucję zewnętrznego kontekstu} – czyli dynamicznie powiększany i aktualizowany zbiór heurystyk, reguł IF/THEN i procedur operacyjnych (\textit{playbook}), które są budowane na podstawie doświadczeń agentów oraz sygnałów środowiskowych. Pozwoliło to całkowicie wyeliminować problematykę związaną z przepisywaniem całych promptów po każdej iteracji pracy, minimalizując zjawiska takie jak \textit{brevity bias} czy \textit{context collapse} dzięki wprowadzaniu przyrostowych, precyzyjnych zmian i regularnej konsolidacji (\textit{grow-and-refine}).
+Implementacja mechanizmu ewolucji wiedzy w systemie opiera się na paradygmacie \textit{Agentic Context Engineering} (ACE), zaproponowanym przez Zhanga i współpracowników \cite{zhang2025agentic_context_engineering}. Algorytm ten został w niniejszej pracy istotnie rozszerzony i dostosowany do specyfiki hierarchicznej architektury wieloagentowej typu \textit{agent-as-a-tool}. Zamiast tradycyjnego douczania wag modelu (\textit{fine-tuning}), system optymalizuje swoje działanie poprzez ciągłą ewolucję zewnętrznego kontekstu operacyjnego --- tzw. Playbooka.
 
-Centralnym elementem jest klasa \texttt{IncidentManagerACE}, która automatyzuje i nadzoruje całość procesu uczenia się na podstawie zamkniętych epizodów. System obejmuje trzy specjalizowane role agentowe:
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=1\textwidth]{grafika/ace-idea.png}
+  \caption{Schemat ideii przepływu z publikacji \textit{Agentic Context Engineering: Evolving Contexts for Self-Improving Language Models} \cite{zhang2025agentic_context_engineering}, agent wykonujący pracę generuje trajektorie (ciągi myśli i akcji). \textit{Reflektor} ocenia przebieg pracy (trajektorie) i dzieli się refleksjami z \textit{Kuratorem}, który na ich podstawie wprowadza zmiany do \textit{Playbooka}}
+  \label{fig:ace-idea}
+\end{figure}
+
+Centralnym elementem potoku ACE (szczegółowo zaimplementowanego w modułach \texttt{ace/pipeline.py} oraz \texttt{ace/playbook\_core.py}) jest iteracyjny proces zbierania doświadczeń z zakończonych zadań, ich krytycznej analizy oraz syntezy nowych reguł. Proces ten realizowany jest przez wyspecjalizowane agenty:
+
 \begin{itemize}
-  \item \textbf{Generator (wykonawca)} – tworzy plan mitygacji na bazie aktualnego playbooka oraz bieżącej wiedzy.
-  \item \textbf{Reflector (analizator)} – dokonuje szczegółowej retrospekcji poprzednich zadań, porównując przebieg i efektywność realizacji z zamierzonym wzorcem, a także generuje podsumowania i wnioski po każdym przypadku. Analiza jest wspierana wyszukiwaniem wektorowym podobnych sytuacji z bazy zamkniętych incydentów.
-  \item \textbf{Curator (kurator wiedzy)} – integruje nowe reguły na podstawie refleksji i automatycznie decyduje o ich dołączeniu, edycji lub usunięciu w playbooku, dbając o spójność kontekstu i ograniczając jego objętość tylko do faktycznie przydatnych heurystyk.
+  \item \textbf{Reflector} (\textit{Reflektor}) -- agent diagnostyczny, którego zadaniem jest retrospektywna analiza śladu wykonania zadania (\textit{trace analysis}). Porównuje on podjęte przez agenta SRE kroki z ostatecznym wynikiem (sukcesem lub porażką) i identyfikuje tzw. "Moment Dywergencji" --- punkt, w którym strategia odbiegła od optymalnej. Szablon instrukcji dla tego agenta przedstawiono na rysunku \ref{fig:reflector-prompt}.
+  \item \textbf{Curator} (\textit{Kurator}) -- architekt wiedzy, który na podstawie zbioru refleksji podejmuje decyzje o modyfikacji Playbooka (operacje ADD, UPDATE, DELETE). Kryteria decyzyjne kuratora zawarte są w jego prompcie systemowym (rys. \ref{fig:curator-prompt}).
 \end{itemize}
 
-ACE został zsynchronizowany z cyklem uczenia epizodycznego, bazując na strategii \textit{epsilon-greedy} tj. w technikach uczenia ze wzmocnieniem: pełen potok aktualizacji heurystyk i konsolidacji wiedzy uruchamiany jest co kilka epizodów, nie po każdym kroku. Dla każdej roli operacyjnej (\textit{Incident Commander}, \textit{Metrics Agent}, \textit{Coder}, \textit{DevOps Agent}) generowany jest odrębny, specyficzny playbook, odzwierciedlający jej zachowania oraz interakcje ze środowiskiem i pozostałymi agentami.
+\begin{figure}[H]
+    \centering
+    \lstinputlisting[basicstyle=\tiny\ttfamily, frame=single, breaklines=true, label={fig:reflector-prompt}, caption={Szablon promptu systemowego dla Reflektora Agenta SRE}]{grafika/reflector-prompt-template.md}
+\end{figure}
 
-Cały proces uczenia przebiega automatycznie w pętli Generator $\rightarrow$ Reflector $\rightarrow$ Curator i nie wymaga ręcznej moderacji. Usuwanie, łączenie i priorytetyzacja reguł pozwalają utrzymać aktualność i przejrzystość wiedzy operacyjnej. Mechanizmy te zostały szczegółowo zaimplementowane i opisane w module \texttt{agent/ace.py}.
+\begin{figure}[H]
+    \centering
+    \lstinputlisting[basicstyle=\tiny\ttfamily, frame=single, breaklines=true, label={fig:curator-prompt}, caption={Szablon promptu systemowego dla Kuratora Agenta SRE}]{grafika/curator-prompt-template.md}
+\end{figure}
+
+\subsection{Analiza refleksji i przyrostowa budowa wiedzy}
+
+Wynikiem pracy Reflektora jest ustrukturyzowany raport (rys. \ref{fig:reflection-example}), który zawiera nie tylko ocenę istniejących punktów Playbooka, ale przede wszystkim tzw. \textit{playbook\_amendment} --- propozycję nowej reguły w formacie IF/THEN oraz \textit{useful\_facts} --- zweryfikowane fakty o architekturze systemu odkryte podczas diagnozy.
+
+\begin{figure}[H]
+    \centering
+    \lstinputlisting[basicstyle=\tiny\ttfamily, frame=single, breaklines=true, label={fig:reflection-example}, caption={Przykład wygenerowanej refleksji po incydencie typu "Performance Degradation".}]{grafika/reflection-example.md}
+\end{figure}
+
+\subsection{Unikanie stronniczości i rola parametrów feedbacku}
+
+W celu zapewnienia obiektywności procesu uczenia, w architekturze wprowadzono mechanizm separacji danych dotyczących skuteczności reguł. Każdy punkt w Playbooku (\textit{bullet}) posiada przypisane parametry \texttt{helpful} oraz \texttt{harmful}, inkrementowane przez Reflektora na podstawie analizy konkretnych incydentów. 
+
+Kluczowym usprawnieniem względem bazowego algorytmu ACE jest \textbf{ukrywanie tych wag przed samym agentem SRE oraz agentem Reflector}. Zapobiega to występowaniu stronniczości (\textit{bias}): agent wykonawczy nie faworyzuje reguł o wysokiej punktacji kosztem nowych propozycji, a Reflektor ocenia przydatność reguły wyłącznie na podstawie bieżącego śladu wykonania, a nie jej historycznej popularności. Pełny wgląd w statystyki (\textit{harmful}, \textit{helpful}) posiada wyłącznie agent \textbf{Curator}, co pozwala mu na podejmowanie racjonalnych decyzji o usunięciu reguł, które w dłuższej perspektywie okazują się szkodliwe lub nieefektywne.
+
+    \begin{figure}[H]
+        \centering
+        \includegraphics[width=\textwidth]{grafika/playbook_example_with_points.png}
+        \caption{Fragment Playbooka dotyczący strategii używania narzędzi, z punktacją \textit{harmful/helpful} i oznaczeniem faz w której zostały dodane punkty.}
+    \label{fig:playbook-points}
+\end{figure}
+
+\subsection{Hierarchiczna propagacja refleksji}
+
+W przeciwieństwie do systemów jednoagentowych, w przyjętej architekturze refleksje są generowane i przekazywane wzdłuż drzewa zadań. Mechanizm \texttt{reflect\_on\_assignment} pozwala na sytuację, w której agent nadrzędny (np. \textit{Incident Commander}), analizując wynik delegowanego zadania, generuje refleksję skierowaną bezpośrednio do agenta podrzędnego (np. \textit{DevOps Agent}). 
+
+Taki przepływ informacji pozwala na precyzyjne adresowanie błędów w komunikacji i delegacji --- Reflektor może zidentyfikować, że przyczyną niepowodzenia nie był brak umiejętności podwykonawcy, lecz nieprecyzyjne instrukcje przekazane przez zleceniodawcę. Refleksje te są następnie agregowane przez potok ACE i integrowane z Playbookami odpowiednich ról, co prowadzi do spójnego rozwoju kompetencji całego systemu.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{grafika/multiagent-ace.png}
+    \caption{Schemat ACE Pipeline dla architektury wieloagentowej. Reflektor przypisany do Agenta~1 analizuje pełną trajektorię – obejmującą zarówno własne akcje, jak i działania delegowane. W rezultacie powstaje kolekcja refleksji adresowanych do Agenta~1 oraz Agenta~2 (wykonawcy podzadania). Następnie Kurator, w oparciu o zebrane refleksje, aktualizuje odpowiednie playbooki, zapewniając ciągłą ewolucję wiedzy operacyjnej całego systemu.}
+    \label{fig:multiagent-ace}
+\end{figure}
 
 \subsection{Wstrzykiwanie wyuczonego kontekstu do agenta SRE}
 
