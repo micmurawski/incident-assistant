@@ -30,6 +30,7 @@ class UsageChunk(TypedDict, total=False):
     output_tokens: int = 0
     cache_write_tokens: Optional[int] = None
     cache_read_tokens: Optional[int] = None
+    reasoning_tokens: Optional[int] = None
     total_cost: Optional[float] = None
 
 

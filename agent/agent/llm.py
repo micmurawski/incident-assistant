@@ -546,10 +546,9 @@ class LLMAgent(ABC):
         system_prompt = kwargs.pop("system_prompt", self.system_prompt)
         task: Task | None = kwargs.pop("task", None)
         if task:
-            left_iterations = task.iterations_limit - task.iterations_count
-            iterations_limit = task.iterations_limit
-            system_prompt = system_prompt + "\n\n" + \
-                f"You have {left_iterations} iterations left out of {iterations_limit}."
+            # left_iterations = task.iterations_limit - task.iterations_count
+            # iterations_limit = task.iterations_limit
+            system_prompt = system_prompt #+ "\n\n" + f"You have {left_iterations} iterations left out of {iterations_limit}."
 
         _iterator = self.api_handler.create_message(
             system_prompt=system_prompt,

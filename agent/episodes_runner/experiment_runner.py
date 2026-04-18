@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import os
 import uuid
@@ -8,6 +9,7 @@ from ace.pipeline import run_ace_pipeline
 from ace.playbook_core import Playbook
 from agent.llm import LLMAgent
 from agent.persistence.settings import init_db
+from agent.settings import SettingsManager
 from agent.tasks.tasks import Task
 from agent.tasks.types import TaskStatus
 from agent.tooling.decorators import Tools
@@ -36,7 +38,7 @@ Your evaluation must be grounded in evidence. If the agent claims to have fixed 
 
 Criteria:
 - root_cause_analysis: 1 if the agent correctly identified the specific failure (e.g., the exact bug in a file or the misconfigured parameter), 0 otherwise.
-- successful_fix: 1 if the agent applied a correct fix AND triggered a deployment (deploy_app), 0 otherwise.
+- successful_fix: 1 if the agent applied a correct fix AND triggered a deployment (deploy_app or kubectl_apply or scale_node_group or any other tool that is relevant for the incident), 0 otherwise.
     - assess files changes, if correct file was modified in correct place it needs to be correct fix, but not exactly the same code as before the incident, if not it needs to be 0.
     - assess deployment, if deployment was triggered and it was successful, 0 otherwise.
 - system_recovery_visible: 1 if the metrics report clearly shows the system returned to a healthy state, 0 otherwise.
@@ -48,8 +50,8 @@ Return your final assessment in the requested JSON format.
 """
 
 
-def create_judge_agent(provider: str = "minimax"):
-    configure_settings("sre-agent", provider)
+def create_judge_agent(provider: str | None = None, model_id: str | None = None):
+    configure_settings("sre-agent", provider=provider, model_id=model_id)
     judge_agent = LLMAgent(
         name="judge_agent",
         system_prompt=JUDGE_SYSTEM_PROMPT,
@@ -81,15 +83,52 @@ def _should_run_ace_pipeline(episode_count: int) -> bool:
     return any(rev < expected_floor for rev in current_revisions.values())
 
 
-async def run_experiment():
+async def run_experiment(
+    db_path: str = "./agent.db",
+    learning: bool = True,
+    provider: str = "minimax",
+    model_id: str | None = None,
+):
+    """Run one experiment episode.
+
+    Args:
+        db_path: SQLite database to write tasks to.
+        learning: When True (default) behaves like the original runner —
+            may trigger the ACE pipeline on the normal cadence and uses the
+            latest playbook revision. When False, the ACE pipeline is never
+            run and every agent is pinned to playbook revision 1.
+        provider: LLM provider (e.g. ``"minimax"``, ``"groq"``). Also exported
+            as ``EXPERIMENT_PROVIDER`` so nested agents (reflector/curator/
+            judge) use the same provider.
+        model_id: Explicit model id (e.g. ``"openai/gpt-oss-120b"``). When
+            ``None``, the provider's default model is used. Exported as
+            ``EXPERIMENT_MODEL`` for nested agents.
+    """
+    SettingsManager.get_instance().set("persistence.url", db_path)
     init_db()
-    # Every 5 episodes, run ACE pipeline only if revision floor is not reached.
-    episode_count = get_episode_count()
-    if _should_run_ace_pipeline(episode_count):
-        print(f"Running ACE pipeline for episode {episode_count}")
-        await run_ace_pipeline()
+    # Expose provider/model to every nested ``configure_settings`` call
+    # (reflector/curator inside run_ace_pipeline, judge agent, etc.).
+    os.environ["EXPERIMENT_PROVIDER"] = provider
+    if model_id:
+        os.environ["EXPERIMENT_MODEL"] = model_id
     else:
-        print(f"Skipping ACE pipeline for episode {episode_count}")
+        os.environ.pop("EXPERIMENT_MODEL", None)
+
+    print(f"Database: {db_path}")
+    print(f"Learning: {learning}")
+    print(f"Provider: {provider}")
+    print(f"Model:    {model_id or '<provider default>'}")
+
+    if learning:
+        # Every 5 episodes, run ACE pipeline only if revision floor is not reached.
+        episode_count = get_episode_count()
+        if _should_run_ace_pipeline(episode_count):
+            print(f"Running ACE pipeline for episode {episode_count}")
+            await run_ace_pipeline()
+        else:
+            print(f"Skipping ACE pipeline for episode {episode_count}")
+    else:
+        print("Learning disabled — skipping ACE pipeline and pinning playbook revision to 1")
 
     await ensure_load_gen_deployed()
     episode = await run_episode()
@@ -108,8 +147,15 @@ async def run_experiment():
     }
     name = "sre-agent-experiment-" + episode["fault_id"] + "-" + str(uuid.uuid4())
 
+    playbook_revision = None if learning else 1
+
     sre_agent: LLMAgent
-    with create_sre_agent(name) as sre_agent:
+    with create_sre_agent(
+        name,
+        provider=provider,
+        model_id=model_id,
+        playbook_revision=playbook_revision,
+    ) as sre_agent:
         try:
             await asyncio.wait_for(
                 sre_agent.call(shared),
@@ -133,15 +179,16 @@ async def run_experiment():
         meaningful_actions, modified_files, deploy_app_called = collect_meaningful_actions(goal)
         # 2. Build the System Evidence Report
         evidence_report = "### System Execution Evidence (Ground Truth):\n"
-        if deploy_app_called:
-            evidence_report += "- [VERIFIED] `deploy_app` was called.\n"
-        else:
-            evidence_report += "- [MISSING] `deploy_app` was NOT called. The agent might have forgotten to deploy.\n"
+        if meaningful_actions:
+            evidence_report += "### Meaningful Tool Actions:\n"
+        for action in meaningful_actions:
+            evidence_report += f"{action}\n"
+        
+        if not meaningful_actions:
+            evidence_report += "No meaningful tool actions were detected in the execution logs.\n"
 
         if modified_files:
             evidence_report += f"- Files modified during session: {', '.join(modified_files)}\n"
-            for action in meaningful_actions:
-                evidence_report += f"  {action}\n"
         else:
             evidence_report += "- No file modification tools were detected in the execution logs.\n"
 
@@ -202,5 +249,55 @@ async def run_experiment():
     delete_chaos_mesh_all_experiments()
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run a single SRE-agent experiment episode."
+    )
+    parser.add_argument(
+        "--db",
+        default="./agent.db",
+        help="Path to the target SQLite database (default: ./agent.db).",
+    )
+    learning_group = parser.add_mutually_exclusive_group()
+    learning_group.add_argument(
+        "--learning",
+        dest="learning",
+        action="store_true",
+        help="Enable learning: may run ACE pipeline and use latest playbook (default).",
+    )
+    learning_group.add_argument(
+        "--no-learning",
+        dest="learning",
+        action="store_false",
+        help="Disable learning: skip ACE pipeline and pin playbook to revision 1.",
+    )
+    parser.set_defaults(learning=True)
+    parser.add_argument(
+        "--provider",
+        default="minimax",
+        choices=["minimax", "groq", "gemini", "anthropic", "openai", "openrouter", "ovh"],
+        help="LLM provider for all agents (SRE team, ACE reflector/curator, judge). Default: minimax.",
+    )
+    parser.add_argument(
+        "--model",
+        dest="model_id",
+        default=None,
+        help=(
+            "Explicit model id (e.g. 'openai/gpt-oss-120b' for Groq/OpenRouter, "
+            "'gpt-oss-120b' for OVH, 'MiniMax-M2.5' for MiniMax). "
+            "If omitted, the provider's default model is used."
+        ),
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    asyncio.run(run_experiment())
+    args = _parse_args()
+    asyncio.run(
+        run_experiment(
+            db_path=args.db,
+            learning=args.learning,
+            provider=args.provider,
+            model_id=args.model_id,
+        )
+    )

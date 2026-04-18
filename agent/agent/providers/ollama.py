@@ -100,11 +100,14 @@ class OllamaHandler(ApiHandler):
         if system_prompt:
             ollama_messages.append({"role": "system", "content": system_prompt})
         
-        # Convert and add user/assistant messages
+        # Convert and add user/assistant messages.
+        # NOTE: R1 format drops tool_use / tool_result blocks, so only use it for models that
+        # actually require it (deepseek-r1). Otherwise use the OpenAI formatter which preserves
+        # tool calls and results -- without this, tool-calling models loop on the same call.
         if use_r1_format:
-            converted_messages = convert_to_openai_messages(messages)
-        else:
             converted_messages = convert_to_r1_format(messages)
+        else:
+            converted_messages = convert_to_openai_messages(messages)
         
         for msg in converted_messages:
             content = _content_to_string(msg.get("content", ""))

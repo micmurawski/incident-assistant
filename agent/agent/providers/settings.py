@@ -15,7 +15,7 @@ class GeminiReasoningParams(TypedDict, total=False):
 
 
 AnthropicReasoningParams = ThinkingConfigParam
-ApiProvider = Literal["anthropic", "openai", "gemini", "ollama", "minimax"]
+ApiProvider = Literal["anthropic", "openai", "gemini", "ollama", "minimax", "groq", "openrouter", "ovh"]
 
 
 class ModelInfo(TypedDict, total=False):

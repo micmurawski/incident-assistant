@@ -160,7 +160,6 @@ Choose ONE tool per reflection:
   - `assignee` = delegated assignee slug.
 
 ## Required fields
-- `assignee`: reflection routing target.
 - `reasoning`: Structured analysis. For failures use numbered "5 Whys" format (1. Why...? 2. Why...? ...). For successes describe what went right and what facts were discovered.
 - `error_identification`: For failures — categorize precisely (e.g., "Tool Parameter Hallucination", "Observation Blindness"). For successes — set to "N/A - Success" (optionally note inefficiencies).
 - `root_cause_analysis`: For failures — why the error occurred. For successes — "N/A" or note minor inefficiency root cause.

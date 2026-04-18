@@ -422,7 +422,7 @@ class Tools(AsyncNode):
     """
 
     tools: list[BaseTool]
-    debug_mode: bool = False
+    debug_mode: bool = True
 
     def pick_tool_by_name(self, name: str) -> BaseTool:
         tool = next((t for t in self.tools if t.name == name), None)
@@ -641,6 +641,7 @@ class Tools(AsyncNode):
         # Filter the tools by tags (if provided)
         filtered = [t for t in self.tools if tags is None or t.tags & tags]
         definitions = [t.tool_definition for t in filtered]
+        # Tool definition schema adjustment based on format
         if format in ["anthropic", "minimax"]:
             for definition in definitions:
                 definition["input_schema"] = definition.pop("parameters")
@@ -657,6 +658,21 @@ class Tools(AsyncNode):
                 definition["parameters"] = self._strip_unsupported_schema_fields(
                     definition.get("parameters", {})
                 )
+        elif format in["openai", "openrouter", "groq", "ovh"]:
+            # For OpenAI, must produce a list of objects with 'type': 'function' and a 'function' field.
+            for i, definition in enumerate(definitions):
+                # Create a copy to avoid side-effects in case tool_definition is reused elsewhere
+                name = definition.get("name")
+                description = definition.get("description")
+                parameters = definition.get("parameters")
+                definitions[i] = {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": description,
+                        "parameters": parameters,
+                    },
+                }
         else:
             raise ValueError(f"Unknown format: {format}")
 
@@ -673,7 +689,7 @@ class Tools(AsyncNode):
                 continue
             txt = txt.replace(f"{{{k}}}", v)
             remaining_to_replace.remove(k)
-            # After replacements, check if any unreplaced placeholders remain
+        # After replacements, check if any unreplaced placeholders remain
         if remaining_to_replace:
             raise ValueError(f"Unresolved placeholders in tool definitions: {remaining_to_replace}")
         definitions = json.loads(txt)

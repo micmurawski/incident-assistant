@@ -41,13 +41,20 @@ def _deep_materialize(obj: Any, preserve_custom_objects: bool = False) -> Any:
     if isinstance(obj, list):
         return [_deep_materialize(x, preserve_custom_objects=preserve_custom_objects) for x in obj]
     
-    # Handle other iterables (e.g., Pydantic's ValidatorIterator/SerializationIterator)
+    # Handle other iterables (e.g., Pydantic's ValidatorIterator/SerializationIterator).
+    # If iteration itself fails (e.g. a Pydantic ValidationError triggered by lazily-
+    # validated Iterable[...] fields such as Anthropic MessageParam.content hitting an
+    # unknown block type), re-raise with context instead of masking as a misleading
+    # "not JSON-serializable" TypeError.
     if hasattr(obj, "__iter__"):
         try:
             return [_deep_materialize(x, preserve_custom_objects=preserve_custom_objects) for x in obj]
-        except (TypeError, ValueError):
-            # If it's supposedly iterable but fails, we fall through to the exception
+        except TypeError:
             pass
+        except ValueError as e:
+            raise TypeError(
+                f"Failed to materialize iterable of type {type(obj).__name__}: {e}"
+            ) from e
 
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON-serializable and cannot be materialized.")
 

@@ -168,6 +168,57 @@ OPENAI_DEFAULT_MODEL_INFO = {
     "output_price": 0,
 }
 
+OPENAI_MODELS = {
+    "gpt-oss-20b": {
+        "max_tokens": 40_000,
+        "context_window": 131_072,
+        "supports_images": False,
+        "supports_prompt_cache": True,
+        "input_price": 0.03,
+        "output_price": 0.14,
+        "cache_reads_price": 0.01,
+        "cache_writes_price": 0.04,
+        "description": "OpenAI's compact open-weight MoE model (21B total / 3.6B active).",
+        "architecture": "MoE (32 experts)",
+        "license": "Apache 2.0",
+    },
+    "gpt-oss-120b": {
+        "max_tokens": 40_000,
+        "context_window": 131_072,
+        "supports_images": False,
+        "supports_prompt_cache": True,
+        "input_price": 0.039,
+        "output_price": 0.19,
+        "cache_reads_price": 0.02,
+        "cache_writes_price": 0.05,
+        "description": "OpenAI's frontier-class open-weight reasoning model (117B total / 5.1B active).",
+        "architecture": "MoE (128 experts)",
+        "license": "Apache 2.0",
+    },
+    "gpt-5-nano": {
+		"max_tokens": 128000,
+		"context_window": 400000,
+		"included_tools": ["apply_patch"],
+		"excluded_tools": ["apply_diff", "write_to_file"],
+		"supports_images": True,
+		"supports_prompt_cache": True,
+		"supports_reasoning_effort": ["minimal", "low", "medium", "high"],
+		"reasoning_effort": "medium",
+		"input_price": 0.05,
+		"output_price": 0.4,
+		"cache_reads_price": 0.005,
+		"supports_verbosity": True,
+		"supports_temperature": False,
+		"tiers": [{ "name": "flex", "context_window": 400000, "input_price": 0.025, "output_price": 0.2, "cache_reads_price": 0.0025 }],
+		"description": "GPT-5 Nano: Fastest, most cost-efficient version of GPT-5",
+	},
+}
+
+OPENAI_MODELS["openai/gpt-oss-20b"] = OPENAI_MODELS["gpt-oss-20b"]
+OPENAI_MODELS["openai/gpt-oss-120b"] = OPENAI_MODELS["gpt-oss-120b"]
+
+OPENAI_DEFAULT_MODEL_ID = "gpt-oss-20b"
+
 MINIMAX_MODELS = {
     "MiniMax-M2.5": {
         "max_tokens": 64_000,
@@ -185,3 +236,100 @@ MINIMAX_MODELS = {
     },
 }
 MINIMAX_DEFAULT_MODEL_ID = "MiniMax-M2.5"
+
+
+GROQ_MODELS = {
+    "openai/gpt-oss-20b": {
+        "max_tokens": 40_000,
+        "context_window": 131_072,
+        "supports_images": False,
+        "supports_prompt_cache": True,
+        "input_price": 0.03,   # $0.03 per million tokens
+        "output_price": 0.14,  # $0.14 per million tokens
+        "cache_reads_price": 0.01,
+        "cache_writes_price": 0.04,
+        "description": "OpenAI's compact open-weight MoE model (21B total / 3.6B active). Optimized for local deployment on consumer hardware (16-32GB RAM).",
+        "architecture": "MoE (32 experts)",
+        "license": "Apache 2.0"
+    },
+    "openai/gpt-oss-120b": {
+        "max_tokens": 40_000,
+        "context_window": 131_072,
+        "supports_images": False,
+        "supports_prompt_cache": True,
+        "input_price": 0.039,  # $0.039 per million tokens
+        "output_price": 0.19,   # $0.19 per million tokens
+        "cache_reads_price": 0.02,
+        "cache_writes_price": 0.05,
+        "description": "Frontier-class open-weight reasoning model (117B total / 5.1B active). Performance comparable to o4-mini/o3-mini. Requires 80GB VRAM (H100/MI300X).",
+        "architecture": "MoE (128 experts)",
+        "license": "Apache 2.0"
+    },
+}
+
+GROQ_DEFAULT_MODEL_ID = "openai/gpt-oss-120b"
+
+
+OPENROUTER_MODELS = {
+    "openai/gpt-oss-20b": {
+        "max_tokens": 40_000,
+        "context_window": 131_072,
+        "supports_images": False,
+        "supports_prompt_cache": True,
+        "input_price": 0.05,
+        "output_price": 0.20,
+        "cache_reads_price": 0.01,
+        "cache_writes_price": 0.05,
+        "description": "OpenAI's compact open-weight MoE model (21B total / 3.6B active), served via OpenRouter.",
+        "architecture": "MoE (32 experts)",
+        "license": "Apache 2.0",
+    },
+    "openai/gpt-oss-120b": {
+        "max_tokens": 40_000,
+        "context_window": 131_072,
+        "supports_images": False,
+        "supports_prompt_cache": True,
+        "input_price": 0.09,
+        "output_price": 0.45,
+        "cache_reads_price": 0.02,
+        "cache_writes_price": 0.09,
+        "description": "OpenAI's frontier-class open-weight reasoning model (117B total / 5.1B active), served via OpenRouter.",
+        "architecture": "MoE (128 experts)",
+        "license": "Apache 2.0",
+    },
+}
+
+OPENROUTER_DEFAULT_MODEL_ID = "openai/gpt-oss-120b"
+
+
+OVH_MODELS = {
+    "gpt-oss-120b": {
+        "max_tokens": 40_000,
+        "context_window": 131_072,
+        "supports_images": False,
+        "supports_prompt_cache": True,
+        # OVH AI Endpoints pricing is published in EUR per million tokens.
+        "input_price": 0.08,
+        "output_price": 0.40,
+        "description": "OpenAI's frontier-class open-weight reasoning model (117B total / 5.1B active), served via OVH AI Endpoints.",
+        "architecture": "MoE (128 experts)",
+        "license": "Apache 2.0",
+        "supports_reasoning_effort": ["low", "medium", "high"],
+        "reasoning_effort": "low",
+    },
+    "gpt-oss-20b": {
+        "max_tokens": 40_000,
+        "context_window": 131_072,
+        "supports_images": False,
+        "supports_prompt_cache": True,
+        "input_price": 0.04,
+        "output_price": 0.15,
+        "description": "OpenAI's compact open-weight MoE model (21B total / 3.6B active), served via OVH AI Endpoints.",
+        "architecture": "MoE (32 experts)",
+        "license": "Apache 2.0",
+        "supports_reasoning_effort": ["low", "medium", "high"],
+        "reasoning_effort": "medium",
+    },
+}
+
+OVH_DEFAULT_MODEL_ID = "gpt-oss-120b"

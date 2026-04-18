@@ -194,6 +194,24 @@ class Playbook:
         latest_file = max(files, key=lambda x: os.path.getctime(x))
         return cls.from_file(latest_file, rev_number=number_of_revs)
 
+    @classmethod
+    def load_nth_revision_of(cls, playbook_id: str, n: int):
+        """Load the *n*-th revision (1-based) of *playbook_id*.
+
+        Revisions are ordered chronologically by filename timestamp.
+        Raises ``FileNotFoundError`` when the requested revision does not exist.
+        """
+        files = sorted(
+            glob.glob(os.path.join(PLAYBOOK_HISTORY_DIR, f"{playbook_id}-*.json")),
+            key=lambda x: os.path.getctime(x),
+        )
+        if not files or n < 1 or n > len(files):
+            raise FileNotFoundError(
+                f"Revision {n} not found for {playbook_id!r} "
+                f"({len(files)} revision(s) on disk)"
+            )
+        return cls.from_file(files[n - 1], rev_number=n)
+
     def load_latest_revision(self):
         files = glob.glob(os.path.join(PLAYBOOK_HISTORY_DIR, f"{self.playbook_id}-*.json"))
         if not files:

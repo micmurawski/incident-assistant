@@ -10,20 +10,97 @@ from agent.settings import SettingsManager
 from agent.tasks.tasks import Task
 from agent.tooling.codebase_write import CodebaseWriteTools
 from agent.tooling.deploy import deploy_app
-from agent.tracing import (ensure_anthropic_instrumentation,
+from agent.tooling.eks import scale_node_group
+from agent.tooling.kubectl import kubectl_apply
+from agent.tracing import (ensure_provider_instrumentation,
                            ensure_tracer_provider)
 
 WRITE_TOOLS = [f.name for f in CodebaseWriteTools.tools]
-DEPLOY_TOOLS = [deploy_app.name]
+DEPLOY_TOOLS = [deploy_app.name, kubectl_apply.name, scale_node_group.name]
 API_KEY_PATH = api_key_path()
 
+# Mapping of provider -> (env_var_name, api_key.json field)
+# The env var takes precedence if set; otherwise the JSON field is read.
+_PROVIDER_API_KEY_SOURCES: dict[str, tuple[str, str]] = {
+    "minimax": ("MINIMAX_API_KEY", "minimax_api_key"),
+    "groq": ("GROQ_API_KEY", "groq_api_key"),
+    "gemini": ("GEMINI_API_KEY", "gemini_api_key"),
+    "anthropic": ("ANTHROPIC_API_KEY", "anthropic_api_key"),
+    "openai": ("OPENAI_API_KEY", "openai_api_key"),
+    "openrouter": ("OPENROUTER_API_KEY", "open_router_api_key"),
+    "ovh": ("OVH_AI_ENDPOINTS_ACCESS_TOKEN", "ovh_ai_endpoint_access_token"),
+}
 
-def configure_settings(project_name: str, provider: str = "minimax") -> None:
+# Providers that need an explicit base_url override (overrides whatever the
+# handler would default to; also prevents a stale ``api.base_url`` from a
+# previous run leaking into a different provider's handler).
+_PROVIDER_BASE_URLS: dict[str, str] = {
+    "groq": "https://api.groq.com/openai/v1",
+    "openai": "https://api.openai.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "ovh": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+}
+
+
+def _load_provider_api_key(provider: str) -> str:
+    source = _PROVIDER_API_KEY_SOURCES.get(provider)
+    if source is None:
+        raise ValueError(
+            f"Unsupported provider '{provider}'. "
+            f"Known providers: {sorted(_PROVIDER_API_KEY_SOURCES)}"
+        )
+    env_name, json_field = source
+    if env_name in os.environ and os.environ[env_name]:
+        return os.environ[env_name]
+    try:
+        with open(API_KEY_PATH) as f:
+            api_keys = json.load(f)
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            f"No API key for provider '{provider}': env var {env_name} is unset "
+            f"and api_key.json not found at {API_KEY_PATH}."
+        ) from e
+    if json_field not in api_keys:
+        raise RuntimeError(
+            f"No API key for provider '{provider}': env var {env_name} is unset "
+            f"and '{json_field}' is missing from {API_KEY_PATH}."
+        )
+    return api_keys[json_field]
+
+
+def configure_settings(
+    project_name: str,
+    provider: str | None = None,
+    model_id: str | None = None,
+) -> trace.Tracer:
+    """Configure API settings for the current experiment.
+
+    Provider/model default to the environment variables ``EXPERIMENT_PROVIDER``
+    and ``EXPERIMENT_MODEL`` (set by ``experiment_runner.py`` based on CLI args),
+    falling back to ``minimax`` with the handler's default model. This lets
+    nested callers (e.g. ACE reflector/curator agents) pick up the same
+    provider/model without having to plumb arguments through every call.
+
+    ``reasoning_effort`` (``"minimal" | "low" | "medium" | "high"``) overrides the
+    model's default reasoning effort for OpenAI-compatible reasoning models
+    (gpt-oss, etc). Falls back to ``EXPERIMENT_REASONING_EFFORT`` env var, then
+    to the model-declared default.
+    """
     settings = SettingsManager.get_instance()
+    provider = provider or os.environ.get("EXPERIMENT_PROVIDER") or "minimax"
+    model_id = model_id or os.environ.get("EXPERIMENT_MODEL") or None
+
+
     settings.set("api.provider", provider)
-    settings.set("api.api_key", os.environ["MINIMAX_API_KEY"])
+    settings.set("api.api_key", _load_provider_api_key(provider))
+    if provider in _PROVIDER_BASE_URLS:
+        settings.set("api.base_url", _PROVIDER_BASE_URLS[provider])
+    if model_id:
+        settings.set("api.model_id", model_id)
+
+
     tracer_provider = ensure_tracer_provider(project_name=project_name)
-    ensure_anthropic_instrumentation(tracer_provider=tracer_provider)
+    ensure_provider_instrumentation(provider, tracer_provider=tracer_provider)
     return trace.get_tracer(__name__)
 
 
@@ -45,7 +122,8 @@ def collect_meaningful_actions(goal: Task) -> tuple[list[str], set[str], bool]:
             name = tu.get("name")
             if name in DEPLOY_TOOLS:
                 deploy_app_called = True
-                meaningful_actions.append("- Action: `deploy_app` was executed.")
+                inp = tu.get("input", {})
+                meaningful_actions.append(f"- Action: `{name}` was executed with input: {json.dumps(inp, indent=4)}")
             elif name in WRITE_TOOLS:
                 # Try to extract file path from various possible input schemas
                 inp: dict = tu.get("input", {})

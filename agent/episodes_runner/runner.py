@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import yaml
@@ -125,36 +126,76 @@ async def deploy_async(workspace_dir: Path, env: dict) -> None:
     print(f"[3] Deployed to {workspace_dir.name}")
 
 
-def apply_chaos_mesh_fault(manifest_path: Path, env: dict) -> None:
-    cmd = ["kubectl", "apply", "-f", manifest_path]
+def apply_chaos_mesh_fault(
+    manifest_path: Path,
+    env: dict,
+    timeout: int = 120,
+    poll_interval: int = 5,
+) -> None:
+    """Apply a Chaos Mesh manifest and wait until the fault is actually injected.
+
+    Parses the manifest to extract kind/name/namespace, runs ``kubectl apply``,
+    then polls the resource status until the ``AllInjected`` condition is True
+    or *timeout* seconds elapse.
+    """
+    manifest = yaml.safe_load(Path(manifest_path).read_text())
+    kind = manifest["kind"]
+    name = manifest["metadata"]["name"]
+    namespace = manifest["metadata"].get("namespace", "default")
+
+    cmd = ["kubectl", "apply", "-f", str(manifest_path)]
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if result.returncode != 0:
-        raise Exception(f"[3] kubectl apply failed: {result.stderr or result.stdout}")
-    print(f"[3] Applied chaos mesh fault from {manifest_path}")
+        raise RuntimeError(
+            f"[3] kubectl apply chaos manifest failed: {result.stderr or result.stdout}"
+        )
+    print(f"[3] Applied {kind}/{name} in namespace {namespace} from {manifest_path}")
+
+    jsonpath = "{.status.conditions[?(@.type==\"AllInjected\")].status}"
+    deadline = time.monotonic() + timeout
+    last_reason = ""
+    while time.monotonic() < deadline:
+        time.sleep(poll_interval)
+        check = subprocess.run(
+            ["kubectl", "get", kind.lower(), name, "-n", namespace, "-o",
+             f"jsonpath={jsonpath}"],
+            capture_output=True, text=True, env=env,
+        )
+        status = check.stdout.strip()
+        if status == "True":
+            print(f"[3] {kind}/{name} injection confirmed (AllInjected=True)")
+            return
+
+        event_cmd = subprocess.run(
+            ["kubectl", "get", "events", "-n", namespace,
+             "--field-selector", f"involvedObject.name={name}",
+             "--sort-by=.lastTimestamp", "-o",
+             "jsonpath={.items[-1:].message}"],
+            capture_output=True, text=True, env=env,
+        )
+        last_reason = event_cmd.stdout.strip() or "no events yet"
+        remaining = int(deadline - time.monotonic())
+        print(f"[3] Waiting for {kind}/{name} injection... "
+              f"(AllInjected={status or 'unknown'}, {remaining}s left, last event: {last_reason})")
+
+    raise RuntimeError(
+        f"[3] {kind}/{name} not injected after {timeout}s. "
+        f"Last event: {last_reason}"
+    )
 
 
 def delete_chaos_mesh_all_experiments() -> None:
+    script = BASE_DIR / "eks" / "cleanup-chaos-experiments.sh"
     env = get_kubectl_env()
-    resources = "podchaos,networkchaos,stresschaos,iochaos,httpchaos"
-    cmd = ["kubectl", "delete", resources, "--all", "-A"]
-    import time
-
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=60)
-            break
-        except subprocess.TimeoutExpired:
-            print(f"[3] kubectl delete timed out on attempt {attempt+1}/{max_retries}. Retrying...")
-            result = None
-            if attempt < max_retries - 1:
-                time.sleep(1)
-    else:
-        raise Exception(f"[3] kubectl delete {resources} failed after {max_retries} retries due to timeouts.")
-
+    result = subprocess.run(
+        ["bash", str(script)],
+        capture_output=True, text=True, env=env, timeout=300,
+    )
     if result.returncode != 0:
-        raise Exception(f"[3] kubectl delete {resources} failed: {result.stderr or result.stdout}")
-    print(f"[3] Deleted all chaos mesh {resources}")
+        raise Exception(
+            f"[3] cleanup-chaos-experiments.sh failed: {result.stderr or result.stdout}"
+        )
+    print("[3] Chaos Mesh cleanup done")
 
 
 async def apply_scenario(fault_scenario: dict, metrics_before: dict) -> None:

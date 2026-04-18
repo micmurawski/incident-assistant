@@ -21,5 +21,17 @@ def build_api_handler(*, provider: ApiProvider, **configuration: dict[str, Any])
         from agent.providers.minimax import MiniMaxHandler
         
         return MiniMaxHandler(**configuration)
+    elif provider == "groq":
+        from agent.providers.groq import GroqHandler    
+        return GroqHandler(**configuration)
+    elif provider == "openai":
+        from agent.providers.openai import OpenAIHandler
+        return OpenAIHandler(**configuration)
+    elif provider == "openrouter":
+        from agent.providers.openrouter import OpenRouterHandler
+        return OpenRouterHandler(**configuration)
+    elif provider == "ovh":
+        from agent.providers.ovh import OvhHandler
+        return OvhHandler(**configuration)
     else:
         raise ValueError(f"Unknown provider: {provider}")

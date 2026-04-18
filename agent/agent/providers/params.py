@@ -220,8 +220,7 @@ def get_model_params(
         result = {"format": format, **params}
         result["reasoning"] = get_openai_reasoning(
             model=model,
-            reasoning_budget=reasoning_budget,
-            #reasoning_effort=reasoning_effort,
+            reasoning_effort=reasoning_effort,
             settings=settings,
         )
         return result

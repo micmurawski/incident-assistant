@@ -4,8 +4,11 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
+
+import yaml
 
 from agent.grafana_client.client import AsyncGrafanaClient
 from agent.grafana_client.report import (build_status_report_dict,
@@ -48,14 +51,62 @@ def create_workspace(source_dir: Path, workspace_dir: Path) -> None:
     print(f"[1] Created workspace at {workspace_dir}")
 
 
-def apply_chaos_mesh_fault(manifest_path: Path, env: dict) -> None:
+def apply_chaos_mesh_fault(
+    manifest_path: Path,
+    env: dict,
+    timeout: int = 120,
+    poll_interval: int = 5,
+) -> None:
+    """Apply a Chaos Mesh manifest and wait until the fault is actually injected.
+
+    Parses the manifest to extract kind/name/namespace, runs ``kubectl apply``,
+    then polls the resource status until the ``AllInjected`` condition is True
+    or *timeout* seconds elapse.
+    """
+    manifest = yaml.safe_load(manifest_path.read_text())
+    kind = manifest["kind"]
+    name = manifest["metadata"]["name"]
+    namespace = manifest["metadata"].get("namespace", "default")
+
     cmd = ["kubectl", "apply", "-f", str(manifest_path)]
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if result.returncode != 0:
         raise RuntimeError(
             f"[3] kubectl apply chaos manifest failed: {result.stderr or result.stdout}"
         )
-    print(f"[3] Applied chaos mesh fault from {manifest_path}")
+    print(f"[3] Applied {kind}/{name} in namespace {namespace} from {manifest_path}")
+
+    jsonpath = "{.status.conditions[?(@.type==\"AllInjected\")].status}"
+    deadline = time.monotonic() + timeout
+    last_reason = ""
+    while time.monotonic() < deadline:
+        time.sleep(poll_interval)
+        check = subprocess.run(
+            ["kubectl", "get", kind.lower(), name, "-n", namespace, "-o",
+             f"jsonpath={jsonpath}"],
+            capture_output=True, text=True, env=env,
+        )
+        status = check.stdout.strip()
+        if status == "True":
+            print(f"[3] {kind}/{name} injection confirmed (AllInjected=True)")
+            return
+
+        event_cmd = subprocess.run(
+            ["kubectl", "get", "events", "-n", namespace,
+             "--field-selector", f"involvedObject.name={name}",
+             "--sort-by=.lastTimestamp", "-o",
+             "jsonpath={.items[-1:].message}"],
+            capture_output=True, text=True, env=env,
+        )
+        last_reason = event_cmd.stdout.strip() or "no events yet"
+        remaining = int(deadline - time.monotonic())
+        print(f"[3] Waiting for {kind}/{name} injection... "
+              f"(AllInjected={status or 'unknown'}, {remaining}s left, last event: {last_reason})")
+
+    raise RuntimeError(
+        f"[3] {kind}/{name} not injected after {timeout}s. "
+        f"Last event: {last_reason}"
+    )
 
 
 def delete_chaos_mesh_all_experiments(env: dict) -> None:
@@ -135,6 +186,7 @@ async def deploy_and_wait(
     workspace_dir: Path,
     wait_seconds: int = DEFAULT_WAIT_SECONDS,
 ):
+    return None
     """
     Run deploy script from workspace k8s/ and wait.
     Streams up to 30 lines of deployment output.

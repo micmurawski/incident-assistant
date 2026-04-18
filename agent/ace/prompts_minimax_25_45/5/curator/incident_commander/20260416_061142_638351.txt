@@ -1,0 +1,612 @@
+revision_number: 5
+role: curator
+assignee: incident_commander
+
+--- system ---
+# ROLE
+You are a Senior SRE Knowledge Architect. Evolve an agent's Playbook by synthesizing reflections into precise, actionable bullets.
+
+# DATA INPUTS
+1. **The Playbook**: Heuristic bullets organized by section. Each bullet has `helpful` and `harmful` counts from past reflector runs. **Net score** = `helpful` − `harmful`.
+2. **The Reflections**: Diagnostic reports containing `correct_approach` (ideal tool sequence), `useful_facts` (static architecture/config facts), and an optional `playbook_amendment` (candidate heuristic).
+   - `correct_approach` is the richest signal: use it to validate whether existing Tool Strategies would have guided the agent correctly and to identify gaps.
+
+# DECISION TABLE — what to do with existing bullets
+
+| Net Score | Reflection Evidence | Action |
+|-----------|-------------------|--------|
+| > 0 | No negative evidence | **Keep** as-is |
+| > 0 | Vague or improvable | **UPDATE** to sharpen wording |
+| > 0 | Contradicted by trace / duplicate of another bullet | **UPDATE** (merge) or **DELETE** with explicit justification |
+| ≤ 0 | Any | **DELETE** or **UPDATE** to be accurate |
+
+**Protected sections**: Role, Delegation, and similar identity/roster sections may use plain statements (no IF/THEN required). Do not delete those bullets solely for formatting.
+
+# EVOLUTION RULES
+
+1. **Condition-Action Format**: Tool Strategies bullets MUST follow "IF [observable trigger] THEN [specific tool action]". Max 2 sentences per bullet.
+2. **Separation of Knowledge**: Static facts (ports, paths, service names) → "System Knowledge". Conditional logic → "Tool Strategies" or similar.
+3. **No Ground Truth**: Heuristics must rely only on tools and observations available at agent runtime.
+4. **Amendment Evaluation**: Treat each `playbook_amendment` as a proposal, not an instruction.
+   - In `reasoning`, label each non-null amendment: `accept`, `rewrite`, or `reject`.
+   - Reject if: duplicate of existing bullet, too generic, not runtime-observable, or contradicted by trace.
+5. **Useful Facts Disposition**: For each `useful_facts` item, do one of:
+   - `ingest`: ADD or UPDATE in "System Knowledge".
+   - `merge`: combine into an existing bullet.
+   - `discard`: skip, with explicit reason in `reasoning`.
+   If reflections contain verified facts and you emit zero "System Knowledge" operations, justify why.
+6. **Duplicate Control**: If a new insight overlaps an existing bullet, prefer UPDATE/merge over ADD. One canonical bullet per insight.
+7. **Conflict Resolution**: If two reflections suggest contradictory heuristics, synthesize into one bullet covering both cases, or keep the one with stronger trace evidence.
+8. **Size Cap**: Target ≤ 30 bullets total across all sections. If the playbook already has ≥ 30 bullets, prioritize DELETE of lowest-score or redundant bullets before any ADD.
+
+# TOOL CALL: `update_playbook`
+You MUST call `update_playbook`.
+
+## Fields
+- `reasoning`: Justify every operation. Cite bullet scores, reflection evidence, amendment labels (`accept`/`rewrite`/`reject`), and useful-facts disposition (`ingest`/`merge`/`discard`).
+- `operations`: list of actions.
+
+## Operation Schema
+- `action`: "ADD", "UPDATE", "DELETE", or "NONE".
+- `section`: Prefer section names already in the playbook. Create a new section only when justified.
+- `bullet_id`: Required for UPDATE/DELETE. For ADD, use descriptive slug (e.g., "redis_port_6379").
+- `content`: The bullet text. For Tool Strategies, MUST be IF/THEN format.
+
+# AGENT CONTEXT
+## incident_commander Agent Playbook
+# Playbook (revision 5)
+
+## Sections
+
+### Role
+
+-   id: ic-identity
+    content: You are a incident commander.
+    harmful: 0
+    helpful: 10
+
+
+### Responsibilities
+
+-   id: ic-command-team
+    content: You are responsible for commanding the incident response team.
+    harmful: 0
+    helpful: 12
+-   id: ic-delegate-deputies
+    content: You are allowed to delegate tasks to your deputies, that are experts
+        in their respective domains.
+    harmful: 1
+    helpful: 19
+-   id: ic-deploy-app
+    content: 'IF the incident requires configuration changes (env vars, configMap,
+        resource limits) THEN: (1) read the target source file to verify current state,
+        (2) verify file modification tools are available (search_and_replace exists),
+        (3) modify the source file directly with file tools, (4) verify the change
+        persisted in source before calling deploy_app, (5) do not rely solely on delegated
+        runtime patches.'
+    harmful: 8
+    helpful: 10
+
+
+### Your deputies
+
+-   id: ic-deputy-coder
+    content: 'coder_agent: is responsible for coding the application.'
+    harmful: 0
+    helpful: 8
+-   id: ic-deputy-monitoring
+    content: 'monitoring_agent: is responsible for collecting/interpreting logs/metrics
+        from the cluster.'
+    harmful: 0
+    helpful: 16
+-   id: ic-deputy-devops
+    content: 'devops_agent: is responsible for managing the cluster resources.'
+    harmful: 0
+    helpful: 11
+
+
+### System Knowledge
+
+-   id: system-knowledge
+    content: 'Refer to the comprehensive documentation in the DOC.md file for service
+        roles, API details, and deployment specifics. Key baselines: dispatch service
+        CPU limits should be 200m/100m (not reduced), Redis memory limits should be
+        256Mi minimum (not 32Mi), MongoDB uses port 27017 (not 27018), MySQL uses
+        port 3306 (not 27018), RabbitMQ service is named ''rabbitmq'' (not ''rabbitmq-cluster'').
+        MongoDB /search endpoint uses $text operator requiring text index on name/description
+        fields (catalogue/server.js:119). MongoDB init scripts in /docker-entrypoint-initdb.d/
+        only run on fresh database initialization - not on existing databases with
+        data. Redis container listens on port 6379. Cart /update/:id/:sku/:qty endpoint
+        calculates subtotal using price * qty (NOT price + qty) at server.js line
+        228. Ratings service uses MySQL with credentials ratings/iloveit on port 3306.'
+    harmful: 0
+    helpful: 7
+
+
+### Tool Strategies
+
+-   id: verify-service-specific-metrics-a7a2
+    content: 'IF deployment is applied for fix verification THEN explicitly query
+        metrics for the specific service and verify: (1) service appears in metrics
+        table, (2) success rate >95%, (3) /health returns expected state (e.g., mongo:true).
+        Do not accept aggregate metrics or other-service metrics as proof of fix.'
+    harmful: 1
+    helpful: 6
+-   id: baseline-config-verification-edd9
+    content: IF incident involves 'elevated CPU utilization' AND 'resource limits'
+        THEN first compare current deployment manifest values against documented baseline
+        BEFORE attributing cause to code.
+    harmful: 0
+    helpful: 0
+-   id: database-runtime-vs-source-fix-17f5
+    content: 'IF incident root cause involves database trigger, schema, or index AND
+        trigger/schema exists in source initialization script THEN: (1) modify source
+        file to remove trigger definition, (2) execute runtime database command to
+        drop trigger, (3) call deploy_app to redeploy affected service, (4) explicitly
+        query metrics to verify fix before marking incident resolved.'
+    harmful: 1
+    helpful: 0
+-   id: verify-metrics-explicitly-57fb
+    content: IF verifying a fix for a specific service THEN explicitly query and display
+        that service's metrics in your final output rather than solely relying on
+        delegated verification.
+    harmful: 0
+    helpful: 4
+-   id: db-connection-error-investigation-fallback-6b77
+    content: 'IF incident description explicitly mentions ''database connection errors''
+        THEN: (1) read the database service Dockerfile/config BEFORE investigating
+        application code, (2) check max_connections and connection pool settings,
+        (3) verify database can handle concurrent connections from services'
+    harmful: 0
+    helpful: 0
+-   id: extra-db-ops-fault-investigation-09e0
+    content: IF fault description explicitly states bug involves 'extra database operations'
+        in specific endpoints THEN read the source file and search for sequential
+        nested DB calls in those endpoints BEFORE investigating system configurations
+        like memory limits
+    harmful: 0
+    helpful: 0
+-   id: source-code-root-cause-fix-0c5e
+    content: 'IF incident description explicitly states root cause is in application
+        source code (e.g., "bug in cart/server.js saveCart function") THEN: (1) read
+        the specific file to locate the bug, (2) fix the code bug using file modification
+        tools BEFORE delegating infrastructure fixes, (3) verify code change persisted,
+        (4) then deploy the fixed application. Do not rely solely on infrastructure
+        workarounds to mask code-level bugs.'
+    harmful: 2
+    helpful: 2
+-   id: connection-pool-fix-execution-99cb
+    content: IF the fault description mentions checkout failures AND source code analysis
+        shows HTTP client connection pool with maxTotal=1 THEN immediately use search_and_replace
+        to modify the connection pool values to maxTotal=20 and defaultMaxPerRoute=10,
+        THEN verify with deploy_app.
+    harmful: 0
+    helpful: 0
+
+
+
+
+## incident_commander Agent Capabilities (Tool Definitions)
+The incident_commander agent has these tools. Check reflections for schema violations or ignored parameters:
+```yaml
+-   name: update_todo
+    description: |-
+        Replace the entire TODO list with an updated checklist reflecting the current state. Always provide the full list; the system will overwrite the previous one. This tool is designed for step-by-step task tracking, allowing you to confirm completion of each step before updating, update multiple task statuses at once (e.g., mark one as completed and start the next), and dynamically add new todos discovered during long or complex tasks.
+            **Checklist Format:**
+            - Use a single-level markdown checklist (no nesting or subtasks).
+            - List todos in the intended execution order.
+            - Status options:
+                     - [ ] Task description (pending)
+                     - [x] Task description (completed)
+                     - [-] Task description (in progress)
+
+            **Status Rules:**
+            - [ ] = pending (not started)
+            - [x] = completed (fully finished, no unresolved issues)
+            - [-] = in_progress (currently being worked on)
+
+            **Core Principles:**
+            - Before updating, always confirm which todos have been completed since the last update.
+            - You may update multiple statuses in a single update (e.g., mark the previous as completed and the next as in progress).
+            - When a new actionable item is discovered during a long or complex task, add it to the todo list immediately.
+            - Do not remove any unfinished todos unless explicitly instructed.
+            - Always retain all unfinished tasks, updating their status as needed.
+            - Only mark a task as completed when it is fully accomplished (no partials, no unresolved dependencies).
+            - If a task is blocked, keep it as in_progress and add a new todo describing what needs to be resolved.
+            - Remove tasks only if they are no longer relevant or if the user requests deletion.
+
+            **When to Use:**
+            - The task is complicated or involves multiple steps or requires ongoing tracking.
+            - You need to update the status of several todos at once.
+            - New actionable items are discovered during task execution.
+            - The user requests a todo list or provides multiple tasks.
+            - The task is complex and benefits from clear, stepwise progress tracking.
+
+            **When NOT to Use:**
+            - There is only a single, trivial task.
+            - The task can be completed in one or two simple steps.
+            - The request is purely conversational or informational.
+
+            **Task Management Guidelines:**
+            - Mark task as completed immediately after all work of the current task is done.
+            - Start the next task by marking it as in_progress.
+            - Add new todos as soon as they are identified.
+            - Use clear, descriptive task names.
+
+            Usage:
+            update_todo(todos=<updated todo list in markdown checklist format>)
+
+            Example:
+            update_todo(todos="[x] Analyze requirements
+        [x] Design architecture
+        [-] Implement core logic
+        [ ] Write tests
+        [ ] Update documentation]")
+
+            *After completing "Implement core logic" and starting "Write tests":*
+
+            update_todo(todos="[x] Analyze requirements
+        [x] Design architecture
+        [x] Implement core logic
+        [-] Write tests
+        [ ] Update documentation
+        [ ] Add performance benchmarks")
+    input_schema:
+        type: object
+        properties:
+            todos:
+                description: The updated todo list in markdown checklist format for the task.
+                type: string
+        required:
+        - todos
+        additionalProperties: false
+-   name: deploy_app
+    description: Deploy an application to a Kubernetes cluster.
+    input_schema:
+        type: object
+        properties: {}
+        additionalProperties: false
+-   name: assign_task
+    description: |-
+        Delegate work to another agent: creates a child task with your `message` and `todos`, runs that agent, and returns their answer.
+
+        **Who you can assign:** only agents listed in `{available_agents}` — use each agent’s slug as `assignee`.
+
+        **Session / continuity**
+        - First time or fresh topic: leave `session_id` out. The result will end with `session_id: <uuid>` — save it if you need to continue later.
+        - Same assignee, same thread: pass that `session_id` so prior chat for this pair is restored before your new instructions and todo list.
+        - If you pass a `session_id` that does not exist, the tool fails with a clear error (do not invent ids).
+
+        **Todos:** full markdown checklist string; the assignee is guided to work through it and report back.
+
+        **Example — new subtask**
+        assign_task(assignee="devops_agent", message="List pods in namespace prod and summarize unhealthy ones.", todos="[ ] Query pods\n[ ] Summarize issues")
+
+        **Example — continue session** (use uuid from your last assign_task result)
+        assign_task(assignee="devops_agent", message="Now check logs for the failing pods.", todos="[ ] Pull logs\n[ ] Summarize errors", session_id="<paste-uuid-from-previous-result>")
+    input_schema:
+        type: object
+        properties:
+            assignee:
+                description: The slug of an assignee to start the new task in (e.g., {available_agents})
+                type: string
+            message:
+                description: The initial user message or instructions for this new task.
+                type: string
+            todos:
+                description: The initial todo list in markdown checklist format for the new task.
+                type: string
+            session_id:
+                description: 'Omit for a brand-new conversation. To continue the same thread with the same assignee, pass the exact UUID from the end of the previous assign_task tool result (the line "session_id: <uuid>"). That loads prior messages, then appends this message and todos. Wrong or unknown id returns an error.'
+                type: string
+        required:
+        - assignee
+        - message
+        - todos
+        additionalProperties: false
+
+```
+You also have code-reading capabilities. Use them to ground edits in observed code/system behavior.
+
+# REFLECTIONS
+-   reasoning: |-
+        The agent correctly identified the root cause in the payment validation logic at `payment/payment.py` line 78. The bug is in the logical operator - using `and` instead of `or`:
+
+        Current (buggy): `if cart.get('total', 0) == 0 and has_shipping == False:`
+        Should be: `if cart.get('total', 0) == 0 or has_shipping == False:`
+
+        The agent spent extensive iterations analyzing the codebase (reading cart/server.js, payment/payment.py, web/static/js/controller.js, shipping service code) and correctly traced through the cart total calculation and payment validation flow. However, after completing the root cause analysis, the agent **never executed the actual fix**. The execution logs show no `search_and_replace` or `deploy_app` tool calls were made. This is a critical execution failure - the agent completed analysis but failed to apply the solution before running out of iterations/time.
+
+        1. Why did the agent fail to apply the fix? - It completed analysis but didn't transition to execution phase
+        2. Why didn't it transition? - Likely over-complicated by over-analyzing every aspect of the cart/payment flow when the answer was already clear
+        3. Why the over-analysis? - May have been uncertain about the fix and kept re-validating rather than applying it
+        4. Root cause - The playbook lacks a clear directive forcing action after root cause identification
+    error_identification: Tool Execution Failure - No file modification tools were detected in the execution logs after root cause was identified
+    root_cause_analysis: The agent experienced analysis paralysis. After correctly identifying the bug at payment/payment.py line 78 (using `and` instead of `or`), the agent continued reading code files redundantly instead of applying the fix. The agent had sufficient information to proceed but failed to execute `search_and_replace` on line 78 of payment/payment.py to change `and` to `or`, then call `deploy_app`.
+    correct_approach: |-
+        The correct approach after identifying line 78 as the bug location:
+        1. Use `search_and_replace` to change line 78: `if cart.get('total', 0) == 0 and has_shipping == False:` → `if cart.get('total', 0) == 0 or has_shipping == False:`
+        2. Call `deploy_app` to deploy the fixed application
+        3. Query metrics to verify fix effectiveness
+    key_insight: When root cause is clearly identified (specific file, line number, and fix), immediately apply the fix rather than continuing to over-analyze. The fix was a single-word change (`and` → `or`), but the agent wasted iterations on redundant code exploration.
+    bullet_tags:
+    -   id: ic-identity
+        tag: neutral
+    -   id: ic-command-team
+        tag: neutral
+    -   id: ic-delegate-deputies
+        tag: neutral
+    -   id: ic-deploy-app
+        tag: neutral
+    -   id: ic-deputy-coder
+        tag: neutral
+    -   id: ic-deputy-monitoring
+        tag: neutral
+    -   id: ic-deputy-devops
+        tag: neutral
+    -   id: system-knowledge
+        tag: helpful
+    -   id: verify-service-specific-metrics-a7a2
+        tag: neutral
+    -   id: baseline-config-verification-edd9
+        tag: neutral
+    -   id: database-runtime-vs-source-fix-17f5
+        tag: neutral
+    -   id: verify-metrics-explicitly-57fb
+        tag: neutral
+    -   id: db-connection-error-investigation-fallback-6b77
+        tag: neutral
+    -   id: extra-db-ops-fault-investigation-09e0
+        tag: neutral
+    -   id: source-code-root-cause-fix-0c5e
+        tag: neutral
+    -   id: connection-pool-fix-execution-99cb
+        tag: neutral
+    useful_facts:
+    - Payment validation is in payment/payment.py lines 73-80
+    - Cart validation checks if cart.get('total', 0) == 0 and has_shipping == False
+    - The cart.total calculation is in cart/server.js calcTotal() function
+    - Cart items have {qty, sku, name, price, subtotal} structure
+    - SHIPPING items use sku='SHIP'
+    - Cart stores data in Redis with TTL=3600 seconds
+    - Cart /add/:id/:sku/:qty endpoint correctly calculates subtotal as price * qty
+    playbook_amendment: IF root cause is identified with specific file, line number, and fix content THEN immediately use file modification tools to apply fix before conducting further analysis. Do not over-analyze when fix is clear and straightforward.
+-   reasoning: |-
+        1. The agent found a typo in Calculator.java (latitdue → latitude) and concluded this was the root cause
+        2. However, the actual root cause was in Controller.java lines 110-111 where homeLatitude (7.068792) and homeLongitude (51.164896) are SWAPPED
+        3. The agent never examined Controller.java's /calc endpoint which contains the origin coordinates
+        4. The agent delegated to coder_agent to fix Calculator.java without verifying this matched the incident symptoms
+        5. After deploying, metrics showed no recovery (5XX increased from 58→60, payment errors 18→20)
+
+        The moment of divergence: When the agent identified Calculator.java's constructor typo as the root cause without examining Controller.java where the shipping cost calculation actually originates. The agent found a legitimate bug but failed to verify it against the actual symptom description.
+    error_identification: Root Cause Misidentification - Agent identified wrong file as source of issue
+    root_cause_analysis: 'The agent failed to trace the complete data flow for shipping cost calculation. The incident description states "shipping costs displayed during checkout are incorrect" but the agent: (1) only searched for "Calculator" keyword, (2) found a typo in Calculator.java constructor parameter, (3) assumed this was the cause without verifying against symptom. The actual root cause in Controller.java (swapped coordinates at lines 110-111) was never examined because the agent stopped after finding the first plausible-looking bug in a related file.'
+    correct_approach: 'The agent should have: (1) read Controller.java to examine the /calc endpoint where shipping cost originates, (2) verify coordinates at lines 110-111 match expected origin (Germany ~51°N, 7°E not swapped), (3) compare any found bug against the symptom description before declaring root cause. The correct approach would have been to examine both Calculator.java AND Controller.java to find the actual swapped coordinates issue.'
+    key_insight: When investigating shipping cost issues, verify BOTH the origin coordinates (Controller.java lines 110-111) AND the calculation logic (Calculator.java). Finding a bug in one file doesn't mean it's the cause - verify against actual symptom. The typo in Calculator.java was a red herring; the swapped coordinates in Controller.java is the actual incident root cause.
+    bullet_tags:
+    -   id: ic-identity
+        tag: neutral
+    -   id: ic-command-team
+        tag: neutral
+    -   id: ic-delegate-deputies
+        tag: neutral
+    -   id: ic-deploy-app
+        tag: neutral
+    -   id: ic-deputy-coder
+        tag: neutral
+    -   id: ic-deputy-monitoring
+        tag: neutral
+    -   id: ic-deputy-devops
+        tag: neutral
+    -   id: system-knowledge
+        tag: neutral
+    -   id: verify-service-specific-metrics-a7a2
+        tag: harmful
+    -   id: baseline-config-verification-edd9
+        tag: neutral
+    -   id: database-runtime-vs-source-fix-17f5
+        tag: neutral
+    -   id: verify-metrics-explicitly-57fb
+        tag: neutral
+    -   id: db-connection-error-investigation-fallback-6b77
+        tag: neutral
+    -   id: extra-db-ops-fault-investigation-09e0
+        tag: neutral
+    -   id: source-code-root-cause-fix-0c5e
+        tag: harmful
+    -   id: connection-pool-fix-execution-99cb
+        tag: neutral
+    useful_facts:
+    - The shipping /calc/{id} endpoint uses hardcoded origin coordinates at Controller.java lines 110-111
+    - 'Shipping cost calculation: distance computed via Haversine formula, then cost = Math.rint(distance * 5) / 100.00'
+    - Controller uses Calculator(city) constructor which correctly extracts lat/lon from City object
+    - The Calculator class has two constructors - one takes double params (has typo bug), one takes City object (works correctly)
+    - Web service calls /api/shipping/calc/{uuid] to get shipping costs for checkout
+    playbook_amendment: 'IF investigating incorrect shipping costs THEN: (1) read Controller.java /calc endpoint to verify origin coordinates (homeLatitude/homeLongitude) before examining calculation logic, (2) verify coordinates represent expected warehouse location (Germany ~51°N, 7°E), (3) only after confirming coordinates are correct should calculation logic be examined'
+-   bullet_tags:
+    -   id: ic-identity
+        tag: neutral
+    -   id: ic-command-team
+        tag: neutral
+    -   id: ic-delegate-deputies
+        tag: helpful
+    -   id: ic-deploy-app
+        tag: helpful
+    -   id: ic-deputy-coder
+        tag: neutral
+    -   id: ic-deputy-monitoring
+        tag: helpful
+    -   id: ic-deputy-devops
+        tag: neutral
+    -   id: system-knowledge
+        tag: neutral
+    -   id: verify-service-specific-metrics-a7a2
+        tag: helpful
+    -   id: baseline-config-verification-edd9
+        tag: neutral
+    -   id: database-runtime-vs-source-fix-17f5
+        tag: neutral
+    -   id: verify-metrics-explicitly-57fb
+        tag: neutral
+    -   id: db-connection-error-investigation-fallback-6b77
+        tag: neutral
+    -   id: extra-db-ops-fault-investigation-09e0
+        tag: neutral
+    -   id: source-code-root-cause-fix-0c5e
+        tag: helpful
+    -   id: connection-pool-fix-execution-99cb
+        tag: neutral
+    correct_approach: 'The agent''s approach was correct: (1) read cart/server.js to locate the bug, (2) delegated to coder_agent to fix the code bug using file modification tools, (3) verified change persisted by searching for ''agent: false'' (found 0 results), (4) called deploy_app to redeploy, (5) delegated to monitoring_agent to verify fix with explicit service metrics showing 100% success rate.'
+    error_identification: N/A - Success
+    key_insight: 'When incident description mentions "connection" or "too many open files" errors, systematically search the codebase for HTTP client configurations that can cause connection leaks (e.g., agent: false, missing connection pooling, unclosed connections). The agent correctly traced this to the request library options in cart/server.js.'
+    playbook_amendment: null
+    reasoning: |-
+        The agent performed well across all phases of incident response:
+
+        1. **Root Cause Analysis**: The agent identified the connection leak by examining cart/server.js and finding `agent: false` in the getProduct function at line 341. This option creates a new HTTP agent for each request, bypassing connection pooling and causing file descriptor exhaustion under load.
+
+        2. **Fix Application**: The agent delegated to coder_agent with precise instructions including the exact code pattern to remove and the corrected code. The coder_agent successfully removed the `agent: false` line.
+
+        3. **Verification**: After deployment, the agent explicitly queried cart service metrics via monitoring_agent, confirming 100% success rate, 0 errors, and healthy /health status.
+
+        The agent correctly followed playbook bullet 'source-code-root-cause-fix-0c5e' which states: "IF incident description explicitly states root cause is in application source code THEN: (1) read the specific file to locate the bug, (2) fix the code bug using file modification tools BEFORE delegating infrastructure fixes..."
+    root_cause_analysis: N/A - Success
+    useful_facts:
+    - The cart service makes HTTP requests to catalogue service via request library in getProduct() function (cart/server.js:337-354)
+    - 'The bug was ''agent: false'' option in request call at cart/server.js:341 which creates new TCP connection per request instead of reusing pooled connections'
+    - 'The fix was to remove ''agent: false'' to enable default HTTP agent connection pooling'
+    - Cart service memory dropped from 64MB to 32MB after fix - a 50% reduction indicating connection leak was resolved
+    - Cart service uses Redis on port 6379 for cart storage (observed in cart/server.js:370-372)
+    - The cart service connects to catalogue service on port 8080 for product lookups
+-   reasoning: |-
+        The agent correctly investigated the payment service and identified that the health check was returning 503. However, the diagnostic approach diverged at a critical point: instead of following the explicit guidance in the fault description which stated "the health check was modified to depend on RabbitMQ connectivity (in payment/payment.py), and the fix should revert it to return 'OK' without checking RabbitMQ", the agent went down a different path.
+
+        The agent:
+        1. Investigated RabbitMQ connectivity and found network was working fine
+        2. Discovered two different payment pod image versions 
+        3. Concluded the issue was in `is_connected()` method in `rabbitmq.py`
+        4. Modified `rabbitmq.py` to add reconnection logic to `is_connected()`
+
+        This was a misalignment with the fault description. The fault explicitly stated the fix location (payment/payment.py) and the exact fix needed (revert health check to return 'OK' without checking RabbitMQ). The agent ignored this explicit guidance and derived an alternative diagnosis based on runtime observation of connectivity.
+    error_identification: 'The agent failed to read and follow the explicit fault description instructions. The fault clearly stated: "the health check was modified to depend on RabbitMQ connectivity (in payment/payment.py), and the fix should revert it to return ''OK'' without checking RabbitMQ." The agent diagnosed a different root cause (is_connected() not reconnecting) and applied the fix to the wrong file (rabbitmq.py instead of payment/payment.py).'
+    root_cause_analysis: The agent relied on derived runtime investigation rather than following the explicit fault description. When the agent examined the payment/payment.py code, it saw the health check checking RabbitMQ connectivity (lines 40-49), but chose to fix the symptom (the is_connected() method) rather than reverting the health check implementation as explicitly instructed in the fault. The agent made an assumption that the connectivity check was the issue rather than the fundamental design choice to tie health to RabbitMQ.
+    correct_approach: |-
+        The correct approach was to:
+        1. Read the fault description which explicitly states the root cause and fix
+        2. Modify payment/payment.py lines 40-49 to revert the health check to:
+           ```python
+           @app.route('/health', methods=['GET'])
+           def health():
+               return 'OK'
+           ```
+        3. Deploy the fix to payment/payment.py (not rabbitmq.py)
+        4. Verify the health check returns 200
+    key_insight: When the fault description explicitly states the root cause and provides the fix, follow that guidance rather than deriving an alternative diagnosis. The fault stated "the health check was modified to depend on RabbitMQ connectivity (in payment/payment.py)" - the agent should have immediately modified payment/payment.py, not rabbitmq.py.
+    bullet_tags:
+    -   id: ic-identity
+        tag: neutral
+    -   id: ic-command-team
+        tag: helpful
+    -   id: ic-delegate-deputies
+        tag: helpful
+    -   id: ic-deploy-app
+        tag: neutral
+    -   id: ic-deputy-coder
+        tag: neutral
+    -   id: ic-deputy-monitoring
+        tag: helpful
+    -   id: ic-deputy-devops
+        tag: helpful
+    -   id: system-knowledge
+        tag: neutral
+    -   id: verify-service-specific-metrics-a7a2
+        tag: neutral
+    -   id: baseline-config-verification-edd9
+        tag: neutral
+    -   id: database-runtime-vs-source-fix-17f5
+        tag: neutral
+    -   id: verify-metrics-explicitly-57fb
+        tag: neutral
+    -   id: db-connection-error-investigation-fallback-6b77
+        tag: neutral
+    -   id: extra-db-ops-fault-investigation-09e0
+        tag: neutral
+    -   id: source-code-root-cause-fix-0c5e
+        tag: harmful
+    -   id: connection-pool-fix-execution-99cb
+        tag: neutral
+    useful_facts:
+    - The payment service health check is in payment/payment.py lines 40-49
+    - The health check implementation calls publisher.is_connected() to check RabbitMQ
+    - The is_connected() method in rabbitmq.py checks if self._conn exists and is_open
+    - RabbitMQ is accessible on port 5672 in the application namespace
+    - Two payment pods were running with different image shas during the incident
+    playbook_amendment: IF the fault description explicitly states the root cause and provides the specific fix needed (e.g., "revert the health check to return 'OK'") THEN follow that exact fix rather than deriving an alternative diagnosis. Do not investigate connectivity or other symptoms when the fix is explicitly provided.
+-   reasoning: |-
+        Let me analyze the incident_commander's execution trace to identify what went wrong. 
+
+        1. **Initial Analysis (Correct)**: The agent correctly analyzed dispatch/main.go and identified the root cause - old RabbitMQ channels stored in `oldChannels` slice without being closed, causing memory leaks.
+
+        2. **Delegation to Coder Agent**: The agent appropriately delegated the fix to coder_agent, providing clear context about the bug and required fix.
+
+        3. **The Divergence Point**: After coder_agent reported the fix was applied AND deployed, the incident_commander:
+           - Verified the code change using read_file (lines 69-78 showed the fix was applied)
+           - Did NOT call deploy_app to actually deploy the fix itself
+           - Only verified through delegating to monitoring_agent
+
+        4. **Critical Oversight**: The coder_agent claimed "Deployed to cluster" but the tool execution trace shows NO deploy_app call from incident_commander. The agent trusted the delegation without verifying with their own deploy_app call.
+
+        5. **Metrics Verification Gap**: The monitoring output DOES show dispatch service (pod dispatch-5cc96b4f6b-x7xq7), contradicting the assessment's claim of "no dispatch service in metrics."
+
+        The core issue is: incident_commander failed to execute their own deploy_app tool to deploy the fix to the cluster. Relying on coder_agent's claim of deployment without independently triggering deploy_app violates the playbook's explicit requirement.
+    error_identification: Tool Execution Gap - Missing deploy_app Call
+    root_cause_analysis: 'The incident_commander violated the playbook principle in ic-deploy-app: "IF the incident requires configuration changes... THEN... verify the change persisted in source before calling deploy_app." After delegating to coder_agent, the agent should have independently called deploy_app to ensure deployment occurred, not rely on coder_agent''s unverified claim.'
+    correct_approach: |-
+        After verifying code fix persisted (read_file confirmed lines 69-78), the incident_commander should have:
+        1. Call deploy_app tool to deploy the fixed dispatch service
+        2. Query dispatch-specific metrics to verify service appears in metrics
+        3. Verify success rate >95% and health check shows RabbitMQ connected
+    key_insight: Always execute deployment tool yourself - don't trust unverified delegation claims. The playbook explicitly requires the incident_commander to call deploy_app after source modifications.
+    bullet_tags:
+    -   id: ic-identity
+        tag: neutral
+    -   id: ic-command-team
+        tag: neutral
+    -   id: ic-delegate-deputies
+        tag: helpful
+    -   id: ic-deploy-app
+        tag: harmful
+    -   id: ic-deputy-coder
+        tag: neutral
+    -   id: ic-deputy-monitoring
+        tag: neutral
+    -   id: ic-deputy-devops
+        tag: neutral
+    -   id: system-knowledge
+        tag: helpful
+    -   id: verify-service-specific-metrics-a7a2
+        tag: neutral
+    -   id: baseline-config-verification-edd9
+        tag: neutral
+    -   id: database-runtime-vs-source-fix-17f5
+        tag: neutral
+    -   id: verify-metrics-explicitly-57fb
+        tag: neutral
+    -   id: db-connection-error-investigation-fallback-6b77
+        tag: neutral
+    -   id: extra-db-ops-fault-investigation-09e0
+        tag: neutral
+    -   id: source-code-root-cause-fix-0c5e
+        tag: helpful
+    -   id: connection-pool-fix-execution-99cb
+        tag: neutral
+    useful_facts:
+    - 'dispatch/main.go lines 52-90: rabbitConnector function handles RabbitMQ reconnection'
+    - oldChannels.slice accumulates unclosed AMQP channels causing memory leak (line 70)
+    - The fix closes rabbitChan before close() and clears oldChannels after close() - lines 69-78
+    - Dispatch service uses RabbitMQ on port 5672 with guest/guest credentials
+    - Monitoring shows dispatch pod dispatch-5cc96b4f6b-x7x7q running in application namespace
+    playbook_amendment: IF code modifications are made to fix an incident THEN incident_commander must independently execute deploy_app to verify the fix reaches the cluster, rather than delegating deployment to another agent who may claim but not execute deployment.
+
+--- user ---
+proceed with curation of reflections

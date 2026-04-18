@@ -4,6 +4,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 : "${O8S_ROOT:=$REPO_ROOT}"
 JSON_FILE="${O8S_ROOT}/api_key.json"
 
+
+kubectl apply -f ${SCRIPT_DIR}/serviceprofiles/ -n ${NAMESPACE}
+
 bash -e "${SCRIPT_DIR}/../services/robot-shop/k8s/deploy.sh"
 
 SVC_NAME="web"

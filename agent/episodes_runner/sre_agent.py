@@ -32,25 +32,47 @@ You are a judge agent that evaluates the performance of the SRE Agent.
 @contextmanager
 def create_sre_agent(
     name: str,
-    provider: str = "minimax",
-    project_name: str = "sre-agent"
-) -> LLMAgent:
+    provider: str | None = None,
+    model_id: str | None = None,
+    project_name: str = "sre-agent",
+    playbook_revision: int | None = None,
 
-    tracer = configure_settings(project_name, provider)
+) -> LLMAgent:
+    """Create the SRE multi-agent team.
+
+    Args:
+        provider: LLM provider (e.g. ``"minimax"``, ``"groq"``). When ``None``,
+            ``configure_settings`` falls back to ``EXPERIMENT_PROVIDER`` env var
+            or ``"minimax"``.
+        model_id: Explicit model id (e.g. ``"openai/gpt-oss-120b"``). When
+            ``None``, ``configure_settings`` falls back to ``EXPERIMENT_MODEL``
+            env var or the provider's default.
+        playbook_revision: When ``None`` (default) use the latest revision.
+            Pass an int (1-based) to pin every agent to a specific revision
+            (e.g. ``1`` for the initial/empty playbook).
+
+    """
+
+    tracer = configure_settings(
+        project_name,
+        provider=provider,
+        model_id=model_id,
+    )
+
+    def _load_playbook(assignee: str) -> str:
+        if playbook_revision is not None:
+            pb = Playbook.load_nth_revision_of(assignee, playbook_revision)
+        else:
+            pb = Playbook.load_last_revision_of(assignee)
+        return pb.to_markdown(
+            without_bullets_ids=True, positive_only=False, without_points=True
+        )
 
     playbooks = {
-        "incident_commander": Playbook.load_last_revision_of("incident_commander").to_markdown(
-            without_bullets_ids=True, positive_only=False, without_points=True
-        ),
-        "monitoring_agent": Playbook.load_last_revision_of("monitoring_agent").to_markdown(
-            without_bullets_ids=True, positive_only=False, without_points=True
-        ),
-        "devops_agent": Playbook.load_last_revision_of("devops_agent").to_markdown(
-            without_bullets_ids=True, positive_only=False, without_points=True
-        ),
-        "coder_agent": Playbook.load_last_revision_of("coder_agent").to_markdown(
-            without_bullets_ids=True, positive_only=False, without_points=True
-        ),
+        "incident_commander": _load_playbook("incident_commander"),
+        "monitoring_agent": _load_playbook("monitoring_agent"),
+        "devops_agent": _load_playbook("devops_agent"),
+        "coder_agent": _load_playbook("coder_agent"),
     }
     repo_root = get_repo_root()
     api_key_path = repo_root / "api_key.json"
@@ -140,7 +162,11 @@ if __name__ == "__main__":
     async def main():
         SESSION_ID = str(uuid.uuid4())
         sre_agent: LLMAgent
-        with create_sre_agent(name="sre-agent-testing-" + SESSION_ID) as sre_agent:
+        with create_sre_agent(
+            name="sre-agent-testing-" + SESSION_ID,
+            provider="ovh",
+            model_id="openai/gpt-oss-120b"
+        ) as sre_agent:
             goal = Task.create_root_task(
                 id=SESSION_ID,
                 assignee="incident_commander",

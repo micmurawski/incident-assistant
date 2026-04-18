@@ -4,8 +4,6 @@ from typing import List, Optional
 from anthropic.types.message_param import MessageParam as AnthropicMessage
 from openai.types.chat.chat_completion_message_param import \
     ChatCompletionMessageParam as OpenAIMessage
-from openai.types.chat.chat_completion_message_tool_call_param import \
-    ChatCompletionMessageToolCallParam
 
 
 def convert_to_openai_messages(anthropic_messages: List[AnthropicMessage]) -> List[OpenAIMessage]:
@@ -58,11 +56,11 @@ def convert_to_openai_messages(anthropic_messages: List[AnthropicMessage]) -> Li
                         content = "\n".join(parts)
 
                     openai_messages.append(
-                        OpenAIMessage(
-                            role="tool",
-                            tool_call_id=tool_message["tool_use_id"],
-                            content=content,
-                        )
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_message["tool_use_id"],
+                            "content": content,
+                        }
                     )
 
                 # If tool results contain images, send as a separate user message
@@ -105,7 +103,7 @@ def convert_to_openai_messages(anthropic_messages: List[AnthropicMessage]) -> Li
                         else:
                             content_parts.append({"type": "text", "text": part["text"]})
 
-                    openai_messages.append(OpenAIMessage(role="user", content=content_parts))
+                    openai_messages.append({"role": "user", "content": content_parts})
 
             elif anthropic_message["role"] == "assistant":
                 non_tool_messages = []
@@ -131,28 +129,28 @@ def convert_to_openai_messages(anthropic_messages: List[AnthropicMessage]) -> Li
                     content = "\n".join(parts)
 
                 # Process tool use messages
-                tool_calls: List[ChatCompletionMessageToolCallParam] = [
-                    ChatCompletionMessageToolCallParam(
-                        id=tool_message["id"],
-                        type="function",
-                        function={
+                tool_calls: List[dict] = [
+                    {
+                        "id": tool_message["id"],
+                        "type": "function",
+                        "function": {
                             "name": tool_message["name"],
                             # json string
                             "arguments": json.dumps(tool_message["input"]),
                         },
-                    )
+                    }
                     for tool_message in tool_messages
                 ]
 
-                message: OpenAIMessage = OpenAIMessage(
-                    role="assistant",
-                    content=content,
-                )
+                message: dict = {
+                    "role": "assistant",
+                    "content": content,
+                }
 
                 # Cannot be an empty array. API expects an array with minimum length 1,
                 # and will respond with an error if it's empty
                 if tool_calls:
-                    message.tool_calls = tool_calls
+                    message["tool_calls"] = tool_calls
 
                 openai_messages.append(message)
 

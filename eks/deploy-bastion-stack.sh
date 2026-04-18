@@ -6,6 +6,7 @@ VIZ_VALUES=(-f "${SCRIPT_DIR}/values-viz-monitoring-node.yaml")
 
 kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
 kubectl create namespace application --dry-run=client -o yaml | kubectl apply -f -
+# This disables Linkerd's automatic proxy injection in the 'bastion' namespace
 kubectl label namespace ${NAMESPACE} config.linkerd.io/admission-webhooks=disabled --overwrite
 # check if ca.crt and ca.key exist
 if [ ! -f "ca.crt" ] || [ ! -f "ca.key" ]; then
@@ -92,5 +93,8 @@ echo "Annotating application namespace for Linkerd injection..."
 kubectl annotate namespace application linkerd.io/inject=enabled
 #kubectl annotate namespace application config.linkerd.io/skip-inbound-ports=9090
 #kubectl annotate namespace application config.linkerd.io/skip-inbound-ports=9090
+
+echo "Applying Linkerd ServiceProfiles for named routes in 'linkerd viz routes'..."
+kubectl apply -f "${SCRIPT_DIR}/serviceprofiles/" -n application
 
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml

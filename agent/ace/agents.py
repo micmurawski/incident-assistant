@@ -1,4 +1,3 @@
-import os
 from contextlib import contextmanager
 from typing import Generator
 
@@ -14,7 +13,6 @@ from ace.utils import (format_reflector_task_data_for_task,
 from ace.yaml_dump import dump_yaml_multiline
 from agent.llm import LLMAgent
 from agent.repo_paths import get_repo_root
-from agent.settings import SettingsManager
 from agent.tasks.tasks import Task
 from agent.tooling.cli import CliTools
 from agent.tooling.codebase_read import CodebaseReadTools
@@ -26,8 +24,6 @@ from agent.tooling.kubectl import (KubectlReadTools, KubectlWriteTools,
 from agent.tooling.metrics import MetricsSummaryTools
 from agent.tooling.planning import PlanningTools
 from agent.tooling.rlm_metrics import REPLTools
-from agent.tracing import (ensure_anthropic_instrumentation,
-                           ensure_tracer_provider)
 
 incident_commander_tools = PlanningTools | deploy_app  # |CliTools
 metrics_tools = REPLTools | PlanningTools | MetricsSummaryTools | kubectl_get_resources
@@ -50,13 +46,16 @@ TOOLS_MAP = {
 }
 
 
-def configure_settings(project_name: str, provider: str = "minimax") -> trace.Tracer:
-    settings = SettingsManager.get_instance()
-    settings.set("api.provider", provider)
-    settings.set("api.api_key", os.environ["MINIMAX_API_KEY"])
-    tracer_provider = ensure_tracer_provider(project_name=project_name)
-    ensure_anthropic_instrumentation(tracer_provider=tracer_provider)
-    return trace.get_tracer(__name__)
+def configure_settings(
+    project_name: str,
+    provider: str | None = None,
+    model_id: str | None = None,
+) -> trace.Tracer:
+    # Delegate to the shared implementation so reflector/curator agents
+    # inside the ACE pipeline respect EXPERIMENT_PROVIDER/EXPERIMENT_MODEL
+    # set by experiment_runner.py.
+    from episodes_runner.utils import configure_settings as _configure_settings
+    return _configure_settings(project_name, provider=provider, model_id=model_id)
 
 
 @contextmanager

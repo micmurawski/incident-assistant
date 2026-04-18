@@ -67,6 +67,61 @@ def ensure_anthropic_instrumentation(tracer_provider=None):
         logger.warning(f"[Tracing] Could not instrument Anthropic: {e}")
 
 
+def ensure_openai_instrumentation(tracer_provider=None):
+    """Ensure OpenAI (and OpenAI-compatible) clients are instrumented."""
+    try:
+        from openinference.instrumentation.openai import OpenAIInstrumentor
+
+        if not OpenAIInstrumentor().is_instrumented_by_opentelemetry:
+            OpenAIInstrumentor().instrument(tracer_provider=tracer_provider)
+    except (ImportError, Exception) as e:
+        logger.warning(f"[Tracing] Could not instrument OpenAI: {e}")
+
+
+def ensure_google_genai_instrumentation(tracer_provider=None):
+    """Ensure Google GenAI (Gemini) is instrumented."""
+    try:
+        from openinference.instrumentation.google_genai import \
+            GoogleGenAIInstrumentor
+
+        if not GoogleGenAIInstrumentor().is_instrumented_by_opentelemetry:
+            GoogleGenAIInstrumentor().instrument(
+                tracer_provider=tracer_provider
+            )
+    except (ImportError, Exception) as e:
+        logger.warning(f"[Tracing] Could not instrument Google GenAI: {e}")
+
+
+# Provider -> instrumentation function. Providers that share a wire protocol
+# share an instrumentor (e.g. minimax's Anthropic-compatible endpoint, and
+# OpenAI-compatible providers like groq/openrouter/ovh).
+_PROVIDER_INSTRUMENTORS = {
+    "anthropic": ensure_anthropic_instrumentation,
+    "minimax": ensure_anthropic_instrumentation,
+    "openai": ensure_openai_instrumentation,
+    "groq": ensure_openai_instrumentation,
+    "openrouter": ensure_openai_instrumentation,
+    "ovh": ensure_openai_instrumentation,
+    "gemini": ensure_google_genai_instrumentation,
+}
+
+
+def ensure_provider_instrumentation(provider: str, tracer_provider=None) -> None:
+    """Install the OpenInference instrumentor that matches ``provider``.
+
+    Unknown providers (e.g. ``ollama``) are silently skipped with a warning so
+    tracing stays best-effort and never breaks the experiment.
+    """
+    instrumentor = _PROVIDER_INSTRUMENTORS.get(provider)
+    if instrumentor is None:
+        logger.warning(
+            f"[Tracing] No instrumentor registered for provider '{provider}'; "
+            "LLM spans will not be emitted."
+        )
+        return
+    instrumentor(tracer_provider=tracer_provider)
+
+
 class GraphTracer:
     """
     Tracer for flow graph execution only.
@@ -131,7 +186,9 @@ class GraphTracer:
         parent_ctx = set_span_in_context(self._root_span)
         span = self._tracer.start_span(node_name, context=parent_ctx)
         span.set_attribute("node_type", node_name)
-        self._spans[span_id] = span
+        ctx = set_span_in_context(span)
+        token = attach(ctx)
+        self._spans[span_id] = (span, token)
         return span_id
 
     def end_node_span(
@@ -144,7 +201,7 @@ class GraphTracer:
         if span_id not in self._spans:
             return
         try:
-            span = self._spans[span_id]
+            span, token = self._spans[span_id]
             if shared_before is not None:
                 val = _shared_to_attribute(shared_before)
                 if val is not None:
@@ -159,6 +216,7 @@ class GraphTracer:
             else:
                 span.set_status(StatusCode.OK)
             span.end()
+            detach(token)
         except Exception as e:
             logger.error(f"[GraphTracer] end_node_span failed: {e}")
         finally:
