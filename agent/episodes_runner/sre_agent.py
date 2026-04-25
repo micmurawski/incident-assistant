@@ -17,6 +17,7 @@ from agent.tooling.codebase_read import CodebaseReadTools
 from agent.tooling.codebase_write import CodebaseWriteTools
 from agent.tooling.deploy import deploy_app
 from agent.tooling.eks import EksReadTools, EksWriteTools
+from agent.tooling.ecr import EcrReadTools
 from agent.tooling.kubectl import (KubectlReadTools, KubectlWriteTools,
                                    kubectl_get_resources)
 from agent.tooling.metrics import MetricsSummaryTools
@@ -96,9 +97,9 @@ def create_sre_agent(
     }
 
     incident_commander_tools = PlanningTools | deploy_app | CodebaseReadTools
-    metrics_tools = REPLTools | PlanningTools | MetricsSummaryTools | kubectl_get_resources
+    metrics_tools = REPLTools | PlanningTools | MetricsSummaryTools | kubectl_get_resources | CodebaseReadTools
 
-    devops_read_tools = CliTools | CodebaseReadTools | KubectlReadTools | EksReadTools | PlanningTools
+    devops_read_tools = CliTools | CodebaseReadTools | KubectlReadTools | EksReadTools | PlanningTools | EcrReadTools
     devops_write_tools = CodebaseWriteTools | CliTools | KubectlWriteTools | EksWriteTools | PlanningTools
 
     coder_tools = CodebaseReadTools | CodebaseWriteTools | CliTools | PlanningTools
@@ -164,8 +165,8 @@ if __name__ == "__main__":
         sre_agent: LLMAgent
         with create_sre_agent(
             name="sre-agent-testing-" + SESSION_ID,
-            provider="ovh",
-            model_id="openai/gpt-oss-120b"
+            provider="openai_responses",
+            model_id="gpt-5-nano"
         ) as sre_agent:
             goal = Task.create_root_task(
                 id=SESSION_ID,

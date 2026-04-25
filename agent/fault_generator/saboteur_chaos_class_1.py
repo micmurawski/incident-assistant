@@ -253,6 +253,8 @@ def chaos_network_bandwidth(
     namespace: str,
     label_selector: str,
     rate: str,
+    buffer: int,
+    limit: int,
     mode: str,
     duration: str,
 ) -> str:
@@ -266,6 +268,8 @@ spec:
   mode: {mode}
 {_selector_yaml(namespace, label_selector)}  bandwidth:
     rate: "{rate}"
+    buffer: {buffer}
+    limit: {limit}
   duration: "{duration}"
 """
 
@@ -421,6 +425,8 @@ CHAOS_TEMPLATES = [
         "method": chaos_network_bandwidth,
         "params": {
             "rate": ["1mbps", "500kbps"],
+            "buffer": [10000],
+            "limit": [20971520],
             "mode": ["one"],
             "duration": ["60m"],
         },

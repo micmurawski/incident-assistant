@@ -47,3 +47,12 @@ def fetch_session_messages(
     if not row.messages_json:
         return None
     return json.loads(row.messages_json)
+
+
+def find_session_participants(session_id: str) -> tuple[str, str] | None:
+    """Return (assigner, assignee) for a session_id, regardless of caller pair."""
+    try:
+        row = SessionMessagesModel.get(SessionMessagesModel.session_id == session_id)
+    except SessionMessagesModel.DoesNotExist:
+        return None
+    return row.assigner, row.assignee

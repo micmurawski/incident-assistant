@@ -1,4 +1,16 @@
-# Incident: Cart and User Services Unavailable
+# Incident: Cart and User Services Failing
 
 ## Description
-Users are experiencing errors when trying to browse products, add items to cart, and complete purchases. The cart service is returning 500 errors for all cart operations, and new users cannot generate unique IDs during registration. Monitoring shows degraded performance across the web application with elevated error rates on cart and user endpoints.
+
+Users are reporting that they cannot add items to the cart, update quantities, or complete the checkout flow. New visitors are also unable to proceed past the landing page because anonymous ID generation fails. The web frontend shows repeated 500 errors coming from the cart and user services, and these errors persist even across several minutes of observation.
+
+**Affected services / endpoints**
+- `cart` — `/add`, `/update`, `/cart/*`, `/shipping`
+- `user` — `/uniqueid`, `/login`, `/register`
+
+**Observed metrics**
+- 5xx rate on cart service elevated well above baseline.
+- Cart service `/health` reports its Redis dependency as not connected.
+- No automatic recovery observed over the monitoring window.
+
+All users attempting to shop are impacted.

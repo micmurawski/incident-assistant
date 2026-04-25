@@ -27,6 +27,10 @@ def build_api_handler(*, provider: ApiProvider, **configuration: dict[str, Any])
     elif provider == "openai":
         from agent.providers.openai import OpenAIHandler
         return OpenAIHandler(**configuration)
+    elif provider == "openai_responses":
+        from agent.providers.openai_responses import OpenAIResponsesHandler
+
+        return OpenAIResponsesHandler(**configuration)
     elif provider == "openrouter":
         from agent.providers.openrouter import OpenRouterHandler
         return OpenRouterHandler(**configuration)

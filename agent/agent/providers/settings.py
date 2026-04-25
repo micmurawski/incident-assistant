@@ -1,8 +1,7 @@
 from typing import Any, Literal, TypedDict
 
 from anthropic.types.thinking_config_param import ThinkingConfigParam
-from openai.types.shared_params.reasoning import \
-    ReasoningEffort as OpenAIReasoningEffort
+from openai.types.shared_params.reasoning import ReasoningEffort as OpenAIReasoningEffort
 
 
 class OpenAiReasoningParam(TypedDict):
@@ -15,7 +14,17 @@ class GeminiReasoningParams(TypedDict, total=False):
 
 
 AnthropicReasoningParams = ThinkingConfigParam
-ApiProvider = Literal["anthropic", "openai", "gemini", "ollama", "minimax", "groq", "openrouter", "ovh"]
+ApiProvider = Literal[
+    "anthropic",
+    "openai",
+    "openai_responses",
+    "gemini",
+    "ollama",
+    "minimax",
+    "groq",
+    "openrouter",
+    "ovh",
+]
 
 
 class ModelInfo(TypedDict, total=False):

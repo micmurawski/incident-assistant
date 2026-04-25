@@ -33,7 +33,7 @@ type Hidden[T] = T
 # Set of Python types considered complex (not simple scalar/object types)
 COMPLEX_TYPES = {dict, list, set, tuple}
 NoneType = type(None)  # Used for checking Optional types
-ToolFormat = Literal["openai", "ollama", "anthropic", "gemini"]
+ToolFormat = Literal["openai", "openai_responses", "ollama", "anthropic", "gemini"]
 
 MAX_OUTPUT_LENGTH = 8000
 MAX_ERROR_LENGTH = 2000
@@ -658,6 +658,12 @@ class Tools(AsyncNode):
                 definition["parameters"] = self._strip_unsupported_schema_fields(
                     definition.get("parameters", {})
                 )
+        elif format == "openai_responses":
+            for definition in definitions:
+                definition["type"] = "function"
+                definition["name"] = definition.pop("name")
+                definition["description"] = definition.pop("description")
+                definition["parameters"] = definition.pop("parameters")
         elif format in["openai", "openrouter", "groq", "ovh"]:
             # For OpenAI, must produce a list of objects with 'type': 'function' and a 'function' field.
             for i, definition in enumerate(definitions):

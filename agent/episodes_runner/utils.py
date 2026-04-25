@@ -27,6 +27,7 @@ _PROVIDER_API_KEY_SOURCES: dict[str, tuple[str, str]] = {
     "gemini": ("GEMINI_API_KEY", "gemini_api_key"),
     "anthropic": ("ANTHROPIC_API_KEY", "anthropic_api_key"),
     "openai": ("OPENAI_API_KEY", "openai_api_key"),
+    "openai_responses": ("OPENAI_API_KEY", "openai_api_key"),
     "openrouter": ("OPENROUTER_API_KEY", "open_router_api_key"),
     "ovh": ("OVH_AI_ENDPOINTS_ACCESS_TOKEN", "ovh_ai_endpoint_access_token"),
 }
@@ -37,6 +38,7 @@ _PROVIDER_API_KEY_SOURCES: dict[str, tuple[str, str]] = {
 _PROVIDER_BASE_URLS: dict[str, str] = {
     "groq": "https://api.groq.com/openai/v1",
     "openai": "https://api.openai.com/v1",
+    "openai_responses": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "ovh": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
 }
@@ -157,6 +159,412 @@ def clean_all_containers():
     for sandbox in list(ContainersResourceManager.containers.values()):
         sandbox.shutdown()
     ContainersResourceManager.containers.clear()
+
+
+def get_pod_snapshot(namespace: str) -> dict[str, dict]:
+    """Return current pod metadata keyed by pod name for a namespace."""
+    import subprocess
+
+    env = get_kubectl_env()
+    result = subprocess.run(
+        ["kubectl", "get", "pods", "-n", namespace, "-o", "json"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"[kubectl] failed to list pods in {namespace}: {result.stderr or result.stdout}")
+    payload = json.loads(result.stdout or "{}")
+    items = payload.get("items", [])
+    return {item.get("metadata", {}).get("name", ""): item for item in items if item.get("metadata", {}).get("name")}
+
+
+def cleanup_additional_pods(namespace: str, baseline_pods: set[str]) -> list[str]:
+    """Delete pods that appeared after baseline and are safe cleanup targets.
+
+    Safe targets are:
+      - terminal pods (Succeeded/Failed)
+      - pods owned by a Job
+    """
+    import subprocess
+
+    current = get_pod_snapshot(namespace)
+    extra_pods = [pod for pod in current.keys() if pod not in baseline_pods]
+    if not extra_pods:
+        print(f"[cleanup] no additional pods detected in {namespace}")
+        return []
+
+    env = get_kubectl_env()
+    deleted: list[str] = []
+    for pod_name in extra_pods:
+        pod = current[pod_name]
+        status_phase = pod.get("status", {}).get("phase", "")
+        owner_refs = pod.get("metadata", {}).get("ownerReferences", []) or []
+        owner_kinds = {ref.get("kind", "") for ref in owner_refs}
+        is_terminal = status_phase in {"Succeeded", "Failed"}
+        is_job_owned = "Job" in owner_kinds
+        if not (is_terminal or is_job_owned):
+            continue
+
+        delete_res = subprocess.run(
+            ["kubectl", "delete", "pod", pod_name, "-n", namespace, "--wait=false"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=60,
+        )
+        if delete_res.returncode == 0:
+            deleted.append(pod_name)
+        else:
+            print(
+                f"[cleanup] failed to delete pod {pod_name} in {namespace}: "
+                f"{delete_res.stderr or delete_res.stdout}"
+            )
+
+    print(f"[cleanup] deleted {len(deleted)} additional pod(s) in {namespace}")
+    return deleted
+
+
+def cleanup_keep_one_pod_per_service(namespace: str, services: list[str]) -> list[str]:
+    """Keep one best pod per service and delete the rest.
+
+    Pod names are matched by:
+      - exact name (e.g. ``redis-0``)
+      - prefix ``<service>-`` for rollout suffixes (ReplicaSet pod names)
+    """
+    import subprocess
+
+    current = get_pod_snapshot(namespace)
+    env = get_kubectl_env()
+    deleted: list[str] = []
+
+    for service in services:
+        candidates = [
+            pod for pod in current.values()
+            if pod.get("metadata", {}).get("name") == service
+            or pod.get("metadata", {}).get("name", "").startswith(f"{service}-")
+        ]
+        if len(candidates) <= 1:
+            continue
+
+        # Keep the healthiest pod:
+        # 1) Running phase
+        # 2) max ready containers
+        # 3) oldest creation time (stable incumbent over fresh Pending replacement)
+        def _score(item: dict) -> tuple[int, int, str]:
+            status = item.get("status", {})
+            phase = status.get("phase", "")
+            container_statuses = status.get("containerStatuses", []) or []
+            ready = sum(1 for c in container_statuses if c.get("ready"))
+            created = item.get("metadata", {}).get("creationTimestamp", "")
+            return (1 if phase == "Running" else 0, ready, created)
+
+        keep = sorted(candidates, key=_score, reverse=True)[0]
+        keep_name = keep.get("metadata", {}).get("name")
+
+        for pod in candidates:
+            pod_name = pod.get("metadata", {}).get("name")
+            if not pod_name or pod_name == keep_name:
+                continue
+            delete_res = subprocess.run(
+                ["kubectl", "delete", "pod", pod_name, "-n", namespace, "--wait=false"],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=60,
+            )
+            if delete_res.returncode == 0:
+                deleted.append(pod_name)
+            else:
+                print(
+                    f"[cleanup] failed pruning pod {pod_name} for {service} in {namespace}: "
+                    f"{delete_res.stderr or delete_res.stdout}"
+                )
+
+    print(f"[cleanup] keep-one-per-service deleted {len(deleted)} pod(s) in {namespace}")
+    return deleted
+
+
+def _pod_service_key(pod_name: str) -> str:
+    """Infer stable service key from a pod name."""
+    if not pod_name:
+        return pod_name
+    parts = pod_name.split("-")
+    # Deployment pod format: <name>-<rs-hash>-<pod-id>
+    if len(parts) >= 3:
+        return "-".join(parts[:-2])
+    # StatefulSet pod format: <name>-<ordinal>
+    if len(parts) >= 2 and parts[-1].isdigit():
+        return "-".join(parts[:-1])
+    return pod_name
+
+
+def cleanup_keep_initial_services(namespace: str, baseline_pods: set[str]) -> list[str]:
+    """Keep one pod per baseline service and prune everything else.
+
+    Baseline pods should be captured before the experiment starts.
+    """
+    import subprocess
+
+    baseline_services = {_pod_service_key(name) for name in baseline_pods}
+    current = get_pod_snapshot(namespace)
+    env = get_kubectl_env()
+    deleted: list[str] = []
+    deleted_workloads: set[tuple[str, str]] = set()
+
+    service_to_pods: dict[str, list[dict]] = {}
+    for pod in current.values():
+        pod_name = pod.get("metadata", {}).get("name", "")
+        service = _pod_service_key(pod_name)
+        service_to_pods.setdefault(service, []).append(pod)
+
+    for service, pods in service_to_pods.items():
+        if service not in baseline_services:
+            # Service was introduced during the experiment. Deleting pods only is not
+            # enough because Deployment/StatefulSet controllers recreate them.
+            to_delete = []
+            for pod in pods:
+                pod_name = pod.get("metadata", {}).get("name", "")
+                owner_refs = pod.get("metadata", {}).get("ownerReferences", []) or []
+                owner = owner_refs[0] if owner_refs else {}
+                owner_kind = owner.get("kind", "")
+                owner_name = owner.get("name", "")
+                delete_kind = ""
+                delete_name = ""
+
+                if owner_kind == "ReplicaSet" and owner_name:
+                    # ReplicaSet name format: <deployment>-<hash>
+                    maybe_deploy = owner_name.rsplit("-", 1)
+                    if len(maybe_deploy) == 2:
+                        delete_kind, delete_name = "deployment", maybe_deploy[0]
+                elif owner_kind == "StatefulSet" and owner_name:
+                    delete_kind, delete_name = "statefulset", owner_name
+                elif owner_kind == "DaemonSet" and owner_name:
+                    delete_kind, delete_name = "daemonset", owner_name
+                elif owner_kind == "Job" and owner_name:
+                    delete_kind, delete_name = "job", owner_name
+
+                if delete_kind and delete_name:
+                    workload_key = (delete_kind, delete_name)
+                    if workload_key in deleted_workloads:
+                        continue
+                    delete_res = subprocess.run(
+                        [
+                            "kubectl",
+                            "delete",
+                            delete_kind,
+                            delete_name,
+                            "-n",
+                            namespace,
+                            "--wait=false",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                        timeout=60,
+                    )
+                    if delete_res.returncode == 0:
+                        deleted_workloads.add(workload_key)
+                        deleted.append(f"{delete_kind}/{delete_name}")
+                    else:
+                        print(
+                            f"[cleanup] failed to delete {delete_kind}/{delete_name} in {namespace}: "
+                            f"{delete_res.stderr or delete_res.stdout}"
+                        )
+                elif pod_name:
+                    # Fallback for orphan/standalone pods.
+                    to_delete.append(pod)
+        else:
+            if len(pods) <= 1:
+                continue
+
+            def _score(item: dict) -> tuple[int, int, str]:
+                status = item.get("status", {})
+                phase = status.get("phase", "")
+                container_statuses = status.get("containerStatuses", []) or []
+                ready = sum(1 for c in container_statuses if c.get("ready"))
+                created = item.get("metadata", {}).get("creationTimestamp", "")
+                return (1 if phase == "Running" else 0, ready, created)
+
+            keep = sorted(pods, key=_score, reverse=True)[0]
+            keep_name = keep.get("metadata", {}).get("name")
+            keep_owner_refs = keep.get("metadata", {}).get("ownerReferences", []) or []
+            keep_owner = keep_owner_refs[0] if keep_owner_refs else {}
+            keep_owner_kind = keep_owner.get("kind", "")
+            keep_owner_name = keep_owner.get("name", "")
+            to_delete = []
+
+            for pod in pods:
+                pod_name = pod.get("metadata", {}).get("name")
+                if not pod_name or pod_name == keep_name:
+                    continue
+
+                owner_refs = pod.get("metadata", {}).get("ownerReferences", []) or []
+                owner = owner_refs[0] if owner_refs else {}
+                owner_kind = owner.get("kind", "")
+                owner_name = owner.get("name", "")
+
+                # During a stuck Deployment rollout we may have one healthy old RS pod
+                # plus one Pending pod owned by a different RS. Deleting only the pod
+                # can let the RS recreate it, so prune that non-keeper RS instead.
+                if (
+                    owner_kind == "ReplicaSet"
+                    and owner_name
+                    and (owner_kind, owner_name) != (keep_owner_kind, keep_owner_name)
+                ):
+                    workload_key = ("replicaset", owner_name)
+                    if workload_key in deleted_workloads:
+                        continue
+                    delete_res = subprocess.run(
+                        [
+                            "kubectl",
+                            "delete",
+                            "replicaset",
+                            owner_name,
+                            "-n",
+                            namespace,
+                            "--wait=false",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                        timeout=60,
+                    )
+                    if delete_res.returncode == 0:
+                        deleted_workloads.add(workload_key)
+                        deleted.append(f"replicaset/{owner_name}")
+                        continue
+                    print(
+                        f"[cleanup] failed to delete replicaset/{owner_name} in {namespace}: "
+                        f"{delete_res.stderr or delete_res.stdout}"
+                    )
+
+                to_delete.append(pod)
+
+        for pod in to_delete:
+            pod_name = pod.get("metadata", {}).get("name")
+            if not pod_name:
+                continue
+            delete_res = subprocess.run(
+                ["kubectl", "delete", "pod", pod_name, "-n", namespace, "--wait=false"],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=60,
+            )
+            if delete_res.returncode == 0:
+                deleted.append(pod_name)
+            else:
+                print(
+                    f"[cleanup] failed to delete pod {pod_name} for service {service} in {namespace}: "
+                    f"{delete_res.stderr or delete_res.stdout}"
+                )
+
+    # Strict convergence pass: controllers can recreate duplicate pods after the first
+    # prune pass (e.g. during a stuck Deployment rollout). Retry a few times and force
+    # non-keeper ReplicaSets to 0 to converge to a single pod per baseline service.
+    max_attempts = 5
+    for attempt in range(1, max_attempts + 1):
+        current = get_pod_snapshot(namespace)
+        baseline_duplicates: dict[str, list[dict]] = {}
+        for pod in current.values():
+            pod_name = pod.get("metadata", {}).get("name", "")
+            service = _pod_service_key(pod_name)
+            if service not in baseline_services:
+                continue
+            baseline_duplicates.setdefault(service, []).append(pod)
+
+        baseline_duplicates = {
+            service: pods
+            for service, pods in baseline_duplicates.items()
+            if len(pods) > 1
+        }
+        if not baseline_duplicates:
+            break
+
+        print(
+            f"[cleanup] enforce-single-pod pass {attempt}/{max_attempts} "
+            f"for {len(baseline_duplicates)} service(s) in {namespace}"
+        )
+
+        for service, pods in baseline_duplicates.items():
+            def _score(item: dict) -> tuple[int, int, str]:
+                status = item.get("status", {})
+                phase = status.get("phase", "")
+                container_statuses = status.get("containerStatuses", []) or []
+                ready = sum(1 for c in container_statuses if c.get("ready"))
+                created = item.get("metadata", {}).get("creationTimestamp", "")
+                return (1 if phase == "Running" else 0, ready, created)
+
+            keep = sorted(pods, key=_score, reverse=True)[0]
+            keep_name = keep.get("metadata", {}).get("name")
+            keep_owner_refs = keep.get("metadata", {}).get("ownerReferences", []) or []
+            keep_owner = keep_owner_refs[0] if keep_owner_refs else {}
+            keep_owner_kind = keep_owner.get("kind", "")
+            keep_owner_name = keep_owner.get("name", "")
+
+            for pod in pods:
+                pod_name = pod.get("metadata", {}).get("name")
+                if not pod_name or pod_name == keep_name:
+                    continue
+
+                owner_refs = pod.get("metadata", {}).get("ownerReferences", []) or []
+                owner = owner_refs[0] if owner_refs else {}
+                owner_kind = owner.get("kind", "")
+                owner_name = owner.get("name", "")
+
+                if (
+                    owner_kind == "ReplicaSet"
+                    and owner_name
+                    and (owner_kind, owner_name) != (keep_owner_kind, keep_owner_name)
+                ):
+                    workload_key = ("replicaset-scale0", owner_name)
+                    if workload_key not in deleted_workloads:
+                        scale_res = subprocess.run(
+                            [
+                                "kubectl",
+                                "scale",
+                                "replicaset",
+                                owner_name,
+                                "-n",
+                                namespace,
+                                "--replicas=0",
+                            ],
+                            capture_output=True,
+                            text=True,
+                            env=env,
+                            timeout=60,
+                        )
+                        if scale_res.returncode == 0:
+                            deleted_workloads.add(workload_key)
+                            deleted.append(f"replicaset/{owner_name}:scaled-0")
+                        else:
+                            print(
+                                f"[cleanup] failed to scale replicaset/{owner_name} to 0 in {namespace}: "
+                                f"{scale_res.stderr or scale_res.stdout}"
+                            )
+
+                delete_res = subprocess.run(
+                    ["kubectl", "delete", "pod", pod_name, "-n", namespace, "--wait=false"],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=60,
+                )
+                if delete_res.returncode == 0:
+                    deleted.append(pod_name)
+                else:
+                    print(
+                        f"[cleanup] failed to delete duplicate pod {pod_name} "
+                        f"for service {service} in {namespace}: "
+                        f"{delete_res.stderr or delete_res.stdout}"
+                    )
+
+        time.sleep(2)
+
+    print(f"[cleanup] keep-initial-services deleted {len(deleted)} pod(s) in {namespace}")
+    return deleted
 
 
 def get_kubectl_env():

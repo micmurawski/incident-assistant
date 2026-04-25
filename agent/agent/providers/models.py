@@ -204,6 +204,7 @@ OPENAI_MODELS = {
 		"supports_prompt_cache": True,
 		"supports_reasoning_effort": ["minimal", "low", "medium", "high"],
 		"reasoning_effort": "medium",
+		"default_temperature": 1.0,
 		"input_price": 0.05,
 		"output_price": 0.4,
 		"cache_reads_price": 0.005,
@@ -216,6 +217,7 @@ OPENAI_MODELS = {
 
 OPENAI_MODELS["openai/gpt-oss-20b"] = OPENAI_MODELS["gpt-oss-20b"]
 OPENAI_MODELS["openai/gpt-oss-120b"] = OPENAI_MODELS["gpt-oss-120b"]
+OPENAI_MODELS["openai/gpt-5-nano"] = OPENAI_MODELS["gpt-5-nano"]
 
 OPENAI_DEFAULT_MODEL_ID = "gpt-oss-20b"
 

@@ -50,9 +50,6 @@ Criteria:
 - system_recovery_visible: 1 if the metrics report clearly shows the system returned to a healthy state, 0 otherwise.
     - if 5XX are visible in metrics put it as 0.
     - assess all metrics, if CPU, memory usage or any other metric is lower than before the incident, 0 otherwise.
-    
-    
-Return your final assessment in the requested JSON format.
 """
 
 

@@ -2,17 +2,21 @@
 
 ## Description
 
-Users are experiencing significant performance issues when browsing the product catalogue and when logging in. The catalogue service endpoints are timing out or responding very slowly, and the user service is also experiencing elevated latency.
+Users are experiencing significant performance issues when browsing the product catalogue and when interacting with their account. Catalogue endpoints are timing out or responding very slowly, and the user service is also degraded.
 
-Affected endpoints:
+**Affected endpoints:**
 - Product listing pages are slow to load
-- Product search is timing out
+- Product search is timing out for some queries
 - User login has high latency
-- User registration may be affected
+- Listing users (admin / internal) is degraded
 
-Impacted metrics:
-- Increased response times (p99 latency elevated)
-- Elevated error rates on catalogue and user service
-- Reduced throughput for e-commerce operations
+**Metrics affected:**
+- Elevated p95 / p99 response times on catalogue and user services
+- Elevated error / timeout rate on catalogue endpoints
+- Reduced throughput for storefront browsing flows
 
-The operations team is investigating the root cause. Services remain operational but with degraded performance.
+**Impact:**
+- Storefront feels sluggish for most browsing actions
+- Login is slower than usual
+
+Services remain operational but with degraded performance. The on-call team is investigating.

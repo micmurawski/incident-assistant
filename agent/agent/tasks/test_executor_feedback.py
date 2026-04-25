@@ -240,6 +240,16 @@ def test_result_with_session_id_list_block():
     assert "session_id: sid-2" in out[-1]["text"]
 
 
+def test_normalize_session_id_line_format():
+    raw = "session_id: AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"
+    assert TaskExecutor._normalize_session_id(raw) == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+
+def test_normalize_session_id_embedded_in_text():
+    raw = "Use this id to continue.\n\nsession_id: `BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB`"
+    assert TaskExecutor._normalize_session_id(raw) == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+
 @pytest.mark.asyncio
 async def test_session_messages_prepended_before_new_task(monkeypatch):
     settings = SettingsManager.get_instance()
@@ -283,6 +293,52 @@ async def test_session_messages_prepended_before_new_task(monkeypatch):
     assert "new task" in child.conversation[1]["content"]
     assert "Here is the todo list:" in child.conversation[1]["content"]
     assert "[ ] step" in child.conversation[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_prefixed_session_id_is_normalized_for_lookup(monkeypatch):
+    settings = SettingsManager.get_instance()
+    settings.set("features.feedback_enabled", False)
+
+    expected_sid = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+    prior = [{"role": "user", "content": "prior from session"}]
+    seen = {}
+
+    def fake_fetch(assigner, assignee, sid):
+        seen["sid"] = sid
+        if sid == expected_sid:
+            return prior
+        return None
+
+    monkeypatch.setattr("agent.tasks.executor.fetch_session_messages", fake_fetch)
+
+    parent = Task(
+        assignee="manager",
+        assigner="human",
+        conversation=[{"role": "user", "content": "root task"}],
+        messages_history=[{"role": "user", "content": "root task"}],
+    )
+
+    assignee_agent = _FakeAssigneeAgent("reply")
+    registry = AgentRegistry.get_instance()
+    registry.agents = {"worker": assignee_agent, "manager": _FakeAssignerAgent([])}
+    monkeypatch.setattr(Task, "save", lambda self, key=None: None)
+
+    result = await TaskExecutor.assign_and_run(
+        parent_task=parent,
+        assigner="manager",
+        assignee="worker",
+        message="new task",
+        todos_str="[ ] step",
+        feedback_tools=_FakeFeedbackTools(),
+        depth=0,
+        session_id=f"session_id: {expected_sid}",
+    )
+
+    assert result.error is None
+    assert seen["sid"] == expected_sid
+    child = parent.children[0]
+    assert child.conversation[0] == prior[0]
 
 
 @pytest.mark.asyncio

@@ -35,6 +35,8 @@ FAULT_VAULT_DIR = fault_vault_dir()
 
 # Wait after deploy for symptoms to appear (seconds)
 DEFAULT_WAIT_SECONDS = 300
+DEFAULT_BANDWIDTH_BUFFER = 10000
+DEFAULT_BANDWIDTH_LIMIT = 20971520
 
 
 def create_workspace(source_dir: Path, workspace_dir: Path) -> None:
@@ -64,12 +66,38 @@ def apply_chaos_mesh_fault(
     or *timeout* seconds elapse.
     """
     manifest = yaml.safe_load(manifest_path.read_text())
+    if (
+        manifest.get("kind") == "NetworkChaos"
+        and manifest.get("spec", {}).get("action") == "bandwidth"
+    ):
+        bandwidth = manifest.setdefault("spec", {}).setdefault("bandwidth", {})
+        raw_buffer = bandwidth.get("buffer")
+        raw_limit = bandwidth.get("limit")
+        try:
+            parsed_buffer = int(raw_buffer) if raw_buffer is not None else 0
+        except (TypeError, ValueError):
+            parsed_buffer = 0
+        try:
+            parsed_limit = int(raw_limit) if raw_limit is not None else 0
+        except (TypeError, ValueError):
+            parsed_limit = 0
+        if parsed_buffer < 1:
+            bandwidth["buffer"] = DEFAULT_BANDWIDTH_BUFFER
+        if parsed_limit < 1:
+            bandwidth["limit"] = DEFAULT_BANDWIDTH_LIMIT
     kind = manifest["kind"]
     name = manifest["metadata"]["name"]
     namespace = manifest["metadata"].get("namespace", "default")
 
-    cmd = ["kubectl", "apply", "-f", str(manifest_path)]
-    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    rendered_manifest = yaml.safe_dump(manifest, sort_keys=False)
+    cmd = ["kubectl", "apply", "-f", "-"]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        env=env,
+        input=rendered_manifest,
+    )
     if result.returncode != 0:
         raise RuntimeError(
             f"[3] kubectl apply chaos manifest failed: {result.stderr or result.stdout}"
@@ -186,7 +214,6 @@ async def deploy_and_wait(
     workspace_dir: Path,
     wait_seconds: int = DEFAULT_WAIT_SECONDS,
 ):
-    return None
     """
     Run deploy script from workspace k8s/ and wait.
     Streams up to 30 lines of deployment output.
@@ -245,27 +272,34 @@ def build_agent_prompt(
     print(f"\033[33mfocused_metrics_report: {focused_metrics_report}\033[0m")
     incident_start_time = datetime.now() - timedelta(seconds=wait_seconds)
     return f"""
+You are the incident-commander for a live production incident. You have full authority
+to investigate, change, and redeploy the cluster with the tools available, and you
+command three deputies you can delegate work by assigning tasks to your deputies.
+ There is no human in the loop: never ask for information, permission, or
+confirmation. Your only deliverable is the final post-mortem report, produced ONLY
+after the incident is verifiably resolved.
+
 ## Incident announcement
 Current time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 Incident start time: {incident_start_time.strftime("%Y-%m-%d %H:%M:%S")}
 {incident_md}
 
-Your task is to: 
- - provide a root cause analysis of the incident
- - propose a fix
- - execute the fix
- 
- Provide your response in post-mortem report format with sections: 
- - Root Cause Analysis
- - Proposed Fix
- - Execution
- - Conclusion
- 
-Proceed with work right after this message.
-Remember: 
-- Your fixes need to maintain the API contract with the user.
-- Once you need to use deploy tool once fix is ready to be deployed.
+## Operating rules
+- Act every turn: either call a tool or write the final post-mortem. No plans,
+  option menus, or "if you confirm" prose.
+- Discover any missing facts yourself via kubectl / read tools.
+- Iterate until resolved: apply a concrete code or config fix, deploy it, and
+  verify via metrics/logs/kubectl that the announced symptoms are gone. If a
+  fix fails, form a new hypothesis and try again.
 
+## Final report format (only after verified recovery)
+- Root Cause Analysis  (grounded in evidence you gathered)
+- Proposed Fix         (what you changed and why)
+- Execution            (tool calls / files / manifests touched)
+- Verification         (post-fix metrics/log/kubectl output proving recovery)
+- Conclusion
+
+Start working immediately.
 """
 
 

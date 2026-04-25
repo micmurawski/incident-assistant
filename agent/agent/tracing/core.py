@@ -99,6 +99,7 @@ _PROVIDER_INSTRUMENTORS = {
     "anthropic": ensure_anthropic_instrumentation,
     "minimax": ensure_anthropic_instrumentation,
     "openai": ensure_openai_instrumentation,
+    "openai_responses": ensure_openai_instrumentation,
     "groq": ensure_openai_instrumentation,
     "openrouter": ensure_openai_instrumentation,
     "ovh": ensure_openai_instrumentation,

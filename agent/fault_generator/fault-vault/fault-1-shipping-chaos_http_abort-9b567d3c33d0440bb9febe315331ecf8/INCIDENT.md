@@ -8,8 +8,8 @@ Users are reporting slow response times and failed checkout attempts when comple
 
 Monitoring shows:
 - Increased error rates on shipping service endpoints
-- High latency on /confirm endpoint (several minutes per request)
-- Thread pool exhaustion indicators
+- Elevated latency on /confirm endpoint with intermittent long tail requests
+- Increased in-flight request/concurrency pressure on shipping
 - Database connection pool pressure
 
 The issue is currently under investigation. Team is working to restore normal service.

@@ -89,7 +89,7 @@ class OpenAICompatibleHandler(ApiHandler):
                 model=model_id,
                 messages=openai_messages,
                 stream=True,
-                temperature=self.options.get("temperature", 0.0),
+                temperature=self.options.get("temperature", config.get("default_temperature", 0.0)),
                 stream_options={"include_usage": True},
                 **extra_create_kwargs,
                 **kwargs,

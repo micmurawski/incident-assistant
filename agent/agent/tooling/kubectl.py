@@ -764,17 +764,32 @@ async def kubectl_exec(
     reading environment variables, or verifying process state.
 
     Examples:
-    - ['cat', '/etc/resolv.conf']       — check DNS config
-    - ['nslookup', 'my-service']        — test service DNS resolution
-    - ['env']                           — list environment variables
-    - ['ls', '-la', '/app/data']        — inspect mounted volumes
-    - ['wget', '-qO-', 'http://localhost:8080/health'] — test health endpoint
+    - 'cat /etc/resolv.conf'       — check DNS config
+    - 'nslookup my-service'        — test service DNS resolution
+    - 'env'                           — list environment variables
+    - 'ls -la /app/data'        — inspect mounted volumes
+    - 'wget -qO- http://localhost:8080/health' — test health endpoint
     - 'sh -lc env | grep -i mysql'             — run shell pipelines
+    - 'sh -c "grep -R "Cart TTL" -n /workspace || true"' — search for "Cart TTL" in the cart workspace
     """
+    cmd = command.strip()
+    if not cmd:
+        return ToolResult(result=None, error="command must not be empty")
+
     args = ["exec", pod_name, "-n", namespace]
     if container:
         args += ["-c", container]
-    args += ["--"] + shlex.split(command.strip())   # split the command into a list of arguments
+
+    # Commands with shell operators must be run through a shell inside the container.
+    # This also avoids Python-side parsing errors for complex quoting patterns.
+    if _command_needs_shell(cmd):
+        args += ["--", "sh", "-lc", cmd]
+    else:
+        try:
+            args += ["--"] + shlex.split(cmd)
+        except ValueError as e:
+            return ToolResult(result=None, error=f"Invalid command quoting: {e}. Command: {cmd!r}")
+
     return await _run_kubectl(args, timeout=30, env=env, cwd=cwd)
 
 

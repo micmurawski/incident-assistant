@@ -9,6 +9,7 @@ from agent.tasks.tasks import Task
 from framework import AsyncFlow
 from framework.decorators import node
 
+ASSIGNEES = ["incident_commander", "monitoring_agent", "devops_agent", "coder_agent"]
 
 @node
 async def gather_tasks(n: int = 5, last: bool = True):
@@ -20,20 +21,25 @@ async def gather_tasks(n: int = 5, last: bool = True):
 async def reflect_on_tasks(tasks_map: dict[str, list[Task]]):
     result: dict[str, dict[str, Any]] = {}
     playbooks: dict[str, Playbook] = {}
-    
-    for assignee in tasks_map.keys():
-        playbooks[assignee] = Playbook.load_last_revision_of(assignee)
-        playbooks[assignee].auto_save = False
-            
-    for assignee, tasks in tasks_map.items():
-        result[assignee] = {
-            "assignee": assignee,
+
+    def _ensure_assignee(name: str) -> None:
+        if name in playbooks:
+            return
+        pb = Playbook.load_last_revision_of(name)
+        pb.auto_save = False
+        playbooks[name] = pb
+        result[name] = {
+            "assignee": name,
             # Finalize this after reflector tool calls mutate scores.
             "playbook_snapshot": None,
-            "rev_number": playbooks[assignee].number_of_revisions,
+            "rev_number": pb.number_of_revisions,
             "reflections": [],
         }
 
+    for assignee in ASSIGNEES:
+        _ensure_assignee(assignee)
+
+    for assignee, tasks in tasks_map.items():
         for task in tasks:
             reflection_shared = {
                 "messages": [{"role": "user", "content": "proceed with reflection on task"}],
@@ -44,8 +50,14 @@ async def reflect_on_tasks(tasks_map: dict[str, list[Task]]):
             reflections = get_reflections(reflection_shared["messages"])
             for reflection in reflections:
                 assignee_ref = reflection.get("assignee") or assignee
+                _ensure_assignee(assignee_ref)
                 result[assignee_ref]["reflections"].append(reflection)
         result[assignee]["playbook_snapshot"] = playbooks[assignee].to_dict()
+
+    # Snapshot any assignees that were only referenced via reflections.
+    for name, data in result.items():
+        if data["playbook_snapshot"] is None:
+            data["playbook_snapshot"] = playbooks[name].to_dict()
 
     return {"reflections_by_assignee": result}
 

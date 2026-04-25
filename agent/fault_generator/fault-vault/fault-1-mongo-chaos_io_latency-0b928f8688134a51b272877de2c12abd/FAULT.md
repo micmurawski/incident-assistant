@@ -1,35 +1,41 @@
-# Fault: Increased Database Query Complexity Amplifying MongoDB Latency Impact
+# Fault: N+1 MongoDB Query Pattern in Catalogue and User Services
 
 ## Description
-The catalogue and user services have been modified to perform additional database queries per request, significantly amplifying the impact of MongoDB I/O latency.
 
-### Changes Made:
+The catalogue and user services were modified to perform additional database queries per request, turning what were single-query handlers into N+1 query patterns and significantly multiplying the number of MongoDB round-trips per request.
 
-1. **catalogue/server.js** - Modified multiple endpoints to perform redundant database lookups:
-   - `/products` endpoint: Now performs an additional `findOne()` query for each product returned (N+1 query pattern)
-   - `/products/:cat` endpoint: Added enrichment queries for each product in a category
-   - `/search/:text` endpoint: Added enrichment queries for each search result
+### Changes Made
 
-2. **user/server.js** - Modified endpoints to add additional MongoDB queries:
-   - `/users` endpoint: Now fetches order history for each user, performing N additional queries
-   - `/login` endpoint: Now queries the orders collection to include order count in response
+1. **`catalogue/server.js`** — endpoints rewritten to perform N+1 lookups:
+   - `/products`: now performs an extra `findOne()` for each product returned.
+   - `/products/:cat`: same enrichment loop for category listings.
+   - `/search/:text`: same enrichment loop for search results.
 
-These changes transform simple queries into N+1 query patterns, multiplying the number of MongoDB operations per request.
+2. **`user/server.js`** — endpoints add additional MongoDB calls:
+   - `/users`: now fetches the order document for each user (N additional queries against `ordersCollection`).
+   - `/login`: now queries the orders collection to include `orderCount` in the login response.
 
 ## Symptom
-- Catalogue service response times increase significantly (each product lookup adds ~300ms due to IOChaos)
-- User service login and user list endpoints become very slow
-- Overall system appears sluggish as every catalog browsing action triggers multiple database queries
-- Health checks may still report "OK" but endpoints timeout or take very long
+
+- Catalogue listing, category, and search endpoints become very slow under any non-trivial result set.
+- `/users` and `/login` on the user service show greatly elevated latency.
+- Health checks still report "OK" while user-facing endpoints either time out or take seconds to respond.
+- The system feels sluggish across most browsing actions, especially as catalog size grows.
 
 ## Root Cause
-The Chaos Mesh IOChaos experiment introduces 300ms latency to all MongoDB I/O operations. By changing the application code to perform additional sequential queries per item (N+1 pattern), the latency multiplies:
-- `/products` with 10 items: 1 initial query + 10 enrichment queries = ~3300ms (was ~300ms)
-- `/users` with 3 users: 1 initial query + 3 order lookups = ~1200ms (was ~300ms)
+
+The application code is the root cause: each handler now makes one MongoDB call per item returned (N+1 pattern) instead of a single bulk query. On a healthy MongoDB with sub-millisecond round-trips this is wasteful but rarely catastrophic, which is how the regression slipped through.
+
+A `NetworkChaos delay` experiment is concurrently applied to the mongo pod (~300ms, correlation 100), adding sustained round-trip latency to every MongoDB call. The application bug — the N+1 query loops — multiplies that latency by the number of items in the result set:
+- `/products` with ~10 items: `1 + 10` round-trips × `~300ms` ≈ `~3.3s` (was ~300ms).
+- `/users` with ~3 users: `1 + 3` round-trips × `~300ms` ≈ `~1.2s` (was ~300ms).
+
+The chaos experiment is a contributing environmental condition, not the root cause. The N+1 pattern would also amplify any future MongoDB slowness — replica failover, primary CPU saturation, network jitter from a noisy neighbor, etc.
 
 ## Fix
-Revert the code changes in catalogue/server.js and user/server.js to remove the enrichment logic:
-- Restore original `/products`, `/products/:cat`, `/search/:text` endpoints to return data directly without additional queries
-- Restore original `/users` and `/login` endpoints to not fetch order data
 
-Alternatively, optimize the queries by using MongoDB aggregation pipelines or `$in` queries to fetch all data in a single operation.
+Revert the application code in `catalogue/server.js` and `user/server.js` to remove the enrichment loops:
+- Restore the original `/products`, `/products/:cat`, and `/search/:text` handlers to return the initial query result directly.
+- Restore the original `/users` and `/login` handlers to not fetch order data per item.
+
+If the order/enrichment data is genuinely a product requirement, the correct long-term fix is a single bulk query — for example a `$lookup` aggregation, or a `find({ sku: { $in: [...] } })` followed by an in-memory join.

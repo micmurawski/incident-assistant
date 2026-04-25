@@ -277,6 +277,8 @@ async def chaos_network_bandwidth(
     namespace: Annotated[str, "Namespace of target pods"],
     label_selector: Annotated[str, "Label selector for target pods"] = "app=frontend",
     rate: Annotated[str, "Bandwidth limit, e.g. '1mbps', '100kbps'"] = "1mbps",
+    buffer: Annotated[int, "Burst buffer in bytes (must be >= 1)"] = 10000,
+    limit: Annotated[int, "Queue limit in bytes (must be >= 1)"] = 20971520,
     mode: Annotated[str, "Mode: 'one', 'all', or 'fixed'"] = "one",
     duration: Annotated[str, "How long to apply limit (e.g. '2m')"] = "2m",
     experiment_name: Annotated[Optional[str], "Unique name for this experiment"] = None,
@@ -296,6 +298,8 @@ spec:
   mode: {mode}
 {_selector_yaml(namespace, label_selector)}  bandwidth:
     rate: "{rate}"
+    buffer: {buffer}
+    limit: {limit}
   duration: "{duration}"
 """
     return await _run_kubectl(["apply", "-f", "-"], stdin=spec.strip(), timeout=30)

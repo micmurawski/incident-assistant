@@ -275,6 +275,7 @@ async def get_resource_routes(
     resource_id: Annotated[str, "The id of the resource to get the routes for"] = None,
     env: Hidden[Optional[dict[str, str]]] = None,
     cwd: Hidden[Optional[str]] = None,
+    time_window: Annotated[Optional[TimeWindow], "Get routes from the last X minutes"] = None,
 ) -> ToolResult:
     """Get the routes for a specific resource from the Linkerd instance."""
     if resource_id:
@@ -283,6 +284,8 @@ async def get_resource_routes(
         resource_slug = resource_type
 
     cmd = f"linkerd viz routes {resource_slug} --namespace {NAMESPACE} --linkerd-namespace {LINKERD_NAMESPACE}"
+    if time_window:
+        cmd += f" --time-window {time_window}"
     return await bash(command=cmd, env=env, cwd=cwd)
 
 

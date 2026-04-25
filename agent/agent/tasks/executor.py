@@ -2,10 +2,12 @@
 import copy
 import json
 import os
+import re
 from uuid import uuid4
 
 from agent.llm import AgentRegistry, ChunkProxyIterator, LLMAgent
 from agent.persistence.session_queries import (fetch_session_messages,
+                                               find_session_participants,
                                                upsert_session_messages)
 from agent.settings import SettingsManager
 from agent.tasks.tasks import Task
@@ -27,11 +29,19 @@ TODO_LIST_PROMPT = """
 Here is the todo list:\n
 {todos_str}
 
-Please work on the todo list. And report back when you are done. 
+Please work on the todo list, and report back when you are done. Do not ask for permission or confirmation to proceed.
 """
 
 
 class TaskExecutor:
+    _SESSION_ID_LINE_RE = re.compile(
+        r"session_id\s*:\s*([0-9a-fA-F-]+)",
+        flags=re.IGNORECASE,
+    )
+    _UUID_RE = re.compile(
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+    )
+
     @staticmethod
     def _result_with_session_id(result, session_id: str):
         """Append session_id to tool results returned to the assigner (does not mutate task conversation)."""
@@ -55,6 +65,25 @@ class TaskExecutor:
             return merged
         return f"{result}{suffix}"
 
+    @classmethod
+    def _normalize_session_id(cls, session_id: str | None) -> str | None:
+        """Extract a usable session id from common LLM/tool copy-paste variants."""
+        if session_id is None:
+            return None
+        sid = session_id.strip().strip("`\"'")
+        if sid == "":
+            return None
+
+        sid_line_match = cls._SESSION_ID_LINE_RE.search(sid)
+        if sid_line_match:
+            sid = sid_line_match.group(1).strip().strip("`\"'")
+
+        uuid_match = cls._UUID_RE.search(sid)
+        if uuid_match:
+            return uuid_match.group(0).lower()
+
+        return sid
+
     @staticmethod
     async def assign_and_run(
         parent_task: Task,
@@ -66,7 +95,13 @@ class TaskExecutor:
         depth: int = 0,
         session_id: str | None = None,
     ) -> ToolResult:
-        sid = session_id if session_id is not None else str(uuid4())
+        normalized_session_id = TaskExecutor._normalize_session_id(session_id)
+        session_id_is_empty = normalized_session_id is None
+        if session_id_is_empty:
+            sid = str(uuid4())
+        else:
+            sid = normalized_session_id
+
         settings = SettingsManager.get_instance()
         feedback_enabled = settings.get("features.feedback_enabled", False)
 
@@ -75,7 +110,20 @@ class TaskExecutor:
             return ToolResult(result=None, error="Task depth limit reached. You cannot assign tasks to anymore.")
 
         prior_raw = fetch_session_messages(assigner, assignee, sid)
-        if session_id is not None and prior_raw is None:
+        if not session_id_is_empty and prior_raw is None:
+            existing_participants = find_session_participants(sid)
+            if existing_participants is not None:
+                existing_assigner, existing_assignee = existing_participants
+                return ToolResult(
+                    result=None,
+                    error=(
+                        f"No session found for assigner={assigner}, assignee={assignee}, "
+                        f"session_id={sid}. The session_id exists but belongs to "
+                        f"assigner={existing_assigner}, assignee={existing_assignee}. "
+                        "Use the matching assignee/assigner pair to continue, or omit session_id "
+                        "to start a new session."
+                    ),
+                )
             return ToolResult(
                 result=None,
                 error=f"No session found for session_id={sid}",

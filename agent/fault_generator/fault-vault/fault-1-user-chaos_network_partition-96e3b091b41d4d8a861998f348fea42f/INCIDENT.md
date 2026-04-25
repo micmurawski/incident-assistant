@@ -1,12 +1,19 @@
-# Incident: User Service Degradation
+# Incident: User Service Saturated and Unresponsive
 
 ## Description
-The user service is experiencing degraded performance affecting authentication and user management functionality. Users are reporting inability to log in, register new accounts, or browse the application. Health checks indicate the service is unable to maintain stable connections to backend dependencies.
 
-Metrics affected:
-- Elevated error rates on user service endpoints (>50% failure rate)
-- Increased latency on authentication requests
-- High CPU utilization on user service pods
-- Failed health checks
+The user service is failing under what looks like its own load. Login, registration, anonymous-ID generation and order history all time out or return 5xx. Upstream services that fan out to `user` (web and cart) are reporting elevated error rates and slow calls to `user` endpoints.
 
-The issue is impacting all users attempting to access the shopping application.
+**Affected user journeys**
+- Account login
+- Account registration
+- Anonymous shopping (requires a unique ID)
+- Order history view
+
+**Observed metrics**
+- Elevated 5xx rate on user service endpoints.
+- User pod CPU close to its limit; memory drifting upward.
+- User pod logs dominated by repeated Mongo and Redis connection errors.
+- No obvious traffic surge from the frontend — request rate is normal.
+
+The incident is visible to every user attempting to authenticate or browse while signed out.

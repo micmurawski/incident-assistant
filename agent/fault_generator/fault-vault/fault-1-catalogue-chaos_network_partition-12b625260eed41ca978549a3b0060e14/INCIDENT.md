@@ -1,22 +1,20 @@
-# Incident: Catalogue Service Unavailable During Network Partition
+# Incident: Catalogue Service Flapping / Restarting
 
 ## Description
 
-The catalogue service became unavailable during a network partition experiment. Users experienced failures when browsing the product catalogue, searching for products, and viewing product details. The service exhibited repeated restarts and was unable to recover while the network partition was in effect.
+The catalogue microservice is unstable. It restarts repeatedly and its pod alternates between `Running` and `NotReady` states faster than it can serve meaningful traffic. When a user hits the storefront, product listings, search and product detail pages either error out or hang for the request timeout.
 
-**Affected Components:**
-- Catalogue service (all endpoints: /products, /product/:sku, /products/:cat, /categories, /search/:text)
+**Affected user journeys**
+- Homepage product grid
+- Category browse
+- Product detail page
+- Product search
+- Cart operations that require a SKU lookup
 
-**Impact:**
-- Product catalogue not loading on the web frontend
-- Product search functionality broken
-- Users unable to browse products by category
+**Observed metrics**
+- 5xx rate from the catalogue service elevated and noisy.
+- Catalogue pod restart counter climbing steadily during the incident.
+- Liveness and readiness probe failures visible in Kubernetes events.
+- Elevated CPU on the catalogue pod despite no traffic surge upstream.
 
-**Metrics Observed:**
-- Increased 5xx error rate from catalogue service
-- Pod restart count increased significantly
-- Health check failures on liveness and readiness probes
-- High CPU usage on catalogue pods due to connection attempts
-
-**Duration:**
-- Service was unavailable for the duration of the network partition experiment
+The impact is fleet-wide: every user of the storefront sees broken or degraded product browsing.

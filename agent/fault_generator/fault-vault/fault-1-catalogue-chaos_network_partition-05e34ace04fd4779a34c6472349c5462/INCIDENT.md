@@ -1,16 +1,19 @@
-# INCIDENT.md
-
-## Title
-Catalogue service experiencing widespread failures
+# Incident: Product Browsing Broken Across the Shop
 
 ## Description
-The catalogue microservice is currently returning errors on all product-related API endpoints. Users are unable to browse the product catalog, search for products, view individual product details, or access product categories. The web application is reporting errors when loading product pages.
 
-**Affected endpoints:**
-- Product listing
-- Product details by SKU
-- Products by category
-- Category listing
+Users report that product pages, category pages, and product search are failing on the storefront. Adding an item to cart frequently fails as well, because the cart cannot fetch the SKU details it needs. The problem is consistent across sessions — not user-specific — and is affecting all shoppers on the web application.
+
+**Affected user journeys**
+- Homepage product grid
+- Category browse
+- Product detail page
 - Product search
+- "Add to cart" on any new item
 
-**Impact:** Users cannot view or search products in the robot shop e-commerce application. The shopping experience is severely degraded as product browsing is unavailable.
+**Observed metrics**
+- Elevated 5xx rate on the web frontend.
+- Elevated client-side error rate on cart → catalogue calls (timeouts and connection refused).
+- Catalogue service itself shows no pod restarts and stable CPU / memory.
+
+No recent catalogue deploy was flagged by the change tracker at the start of the window, but a recent code change to the catalogue service is visible in git history.
