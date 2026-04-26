@@ -357,15 +357,23 @@ class FileOpsManager:
         # if not "claude" in context.model:
         #    new_content = unescape_html_entities(new_content)
 
-        if create_if_not_exists:
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        original_content = ""
+        if os.path.exists(full_path) and os.path.isfile(full_path):
+            with open(full_path) as file:
+                original_content = file.read()
 
-        with open(full_path, "w") as file:
-            file.write(new_content)
+        try:
+            if create_if_not_exists:
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+
+            with open(full_path, "w") as file:
+                file.write(new_content)
+        except OSError as e:
+            return FileOpsResult(path=path, content=None, error=e)
 
         return FileOpsResult(
             path=path,
-            diff=_generate_diff(open(full_path).read(), new_content),
+            diff=_generate_diff(original_content, new_content),
         )
 
     @staticmethod

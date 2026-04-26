@@ -156,6 +156,7 @@ async def run_experiment(
             model_id=model_id,
             playbook_revision=playbook_revision,
         ) as sre_agent:
+            timed_out = False
             try:
                 await asyncio.wait_for(
                     sre_agent.call(shared),
@@ -163,17 +164,23 @@ async def run_experiment(
                 )
             except asyncio.TimeoutError:
                 print(f"SRE agent exceeded {SRE_AGENT_CALL_TIMEOUT_SEC}s timeout")
-                # ... (timeout handling remains similar but simplified for brevity)
-                goal.status = TaskStatus.DISCARDED
-                goal.save()
-                return
+                timed_out = True
             goal.conversation = shared["messages"]
             goal.attempt_complete(force=True)
-            # Wait for recovery
-            live_timer(5*60)
+
+            # For completed runs, wait for stabilization before evaluating recovery.
+            # For timeout runs, still evaluate and generate feedback immediately.
+            if not timed_out:
+                live_timer(5 * 60)
             metrics_after_fixing = await get_metrics_summary()
             diff = detect_differences(episode["metrics_after"], metrics_after_fixing)
             focused_metrics_report = format_diff_status_report(diff, "recovery attempt")
+            if timed_out:
+                focused_metrics_report += (
+                    f"\n\nRun status note: the SRE agent timed out after "
+                    f"{SRE_AGENT_CALL_TIMEOUT_SEC}s. Evaluate the partial attempt and "
+                    "provide constructive feedback anyway."
+                )
 
             # 1. Collect all meaningful tool actions from the entire task tree
             meaningful_actions, modified_files, deploy_app_called = collect_meaningful_actions(goal)
@@ -199,6 +206,7 @@ async def run_experiment(
             assessment_request = (
                 "Please assess the SRE Agent's performance based on the following data.\n\n"
                 f"**Fault Description:**\n{episode['fault_md']}\n\n"
+                f"**Run Timed Out:**\n{'yes' if timed_out else 'no'}\n\n"
                 f"**Metrics Recovery Report:**\n{focused_metrics_report}\n\n"
                 f"{evidence_report}\n\n"
                 "Return the assessment in this JSON format:\n"
@@ -242,6 +250,8 @@ async def run_experiment(
             print("Total usage:")
             print(total_usage)
             goal.usage = total_usage
+            if timed_out:
+                goal.status = TaskStatus.DISCARDED
             goal.save()
     finally:
         clean_all_containers()

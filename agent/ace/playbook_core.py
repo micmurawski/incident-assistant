@@ -270,6 +270,65 @@ class Playbook:
                 return i
         raise PlaybookOperationError(f"Unknown bullet id: {bullet_id!r} in section {section.id!r}")
 
+    def _find_bullet_sections(self, bullet_id: str) -> list[str]:
+        locations: list[str] = []
+        for section_id, section in self.sections.items():
+            if any(b.id == bullet_id for b in section.bullets):
+                locations.append(section_id)
+        return locations
+
+    def _similar_bullet_ids(self, bullet_id: str, limit: int = 8) -> list[str]:
+        needle = re.sub(r"-[0-9a-f]{4}$", "", bullet_id)
+        if not needle:
+            return []
+        similar: list[str] = []
+        for section in self.sections.values():
+            for bullet in section.bullets:
+                existing = bullet.id
+                existing_base = re.sub(r"-[0-9a-f]{4}$", "", existing)
+                if (
+                    existing != bullet_id
+                    and (
+                        existing_base == needle
+                        or existing.startswith(needle)
+                        or needle in existing
+                    )
+                ):
+                    similar.append(existing)
+        return sorted(set(similar))[:limit]
+
+    def _unknown_bullet_message(
+        self,
+        *,
+        action: str,
+        section: "PlaybookSection",
+        bullet_id: str,
+    ) -> str:
+        actual_sections = self._find_bullet_sections(bullet_id)
+        if actual_sections:
+            listed_sections = ", ".join(repr(section_id) for section_id in actual_sections)
+            return (
+                f"Unknown bullet id: {bullet_id!r} in section {section.id!r}. "
+                f"Hint: this bullet_id exists in section(s): {listed_sections}. "
+                f"For {action}, use the section that contains the bullet_id."
+            )
+
+        section_ids = ", ".join(repr(b.id) for b in section.bullets) or "<none>"
+        similar = self._similar_bullet_ids(bullet_id)
+        if similar:
+            similar_ids = ", ".join(repr(candidate) for candidate in similar)
+            return (
+                f"Unknown bullet id: {bullet_id!r} in section {section.id!r}. "
+                f"Hint: this bullet_id does not exist in the playbook, so {action} cannot be applied. "
+                f"Closest ids: {similar_ids}. "
+                f"Available ids in section {section.id!r}: {section_ids}."
+            )
+        return (
+            f"Unknown bullet id: {bullet_id!r} in section {section.id!r}. "
+            f"Hint: this bullet_id does not exist in the playbook, so {action} cannot be applied. "
+            f"Available ids in section {section.id!r}: {section_ids}."
+        )
+
     def _next_added_bullet_id(self, requested_id: str) -> str:
         """Generate a stable bullet id with exactly one random short suffix."""
         # Curator-provided ADD ids may already include an old short suffix (e.g., "...-e4f1").
@@ -318,14 +377,32 @@ class Playbook:
                 bid = operation.get("bullet_id")
                 if not bid:
                     raise PlaybookOperationError("UPDATE requires bullet_id")
-                i = self._bullet_index(section, bid)
+                try:
+                    i = self._bullet_index(section, bid)
+                except PlaybookOperationError:
+                    raise PlaybookOperationError(
+                        self._unknown_bullet_message(
+                            action="UPDATE",
+                            section=section,
+                            bullet_id=bid,
+                        )
+                    ) from None
                 section.bullets[i].content = operation["content"]
             elif action == "DELETE":
                 section = self._section_by_id(operation["section"])
                 bid = operation.get("bullet_id")
                 if not bid:
                     raise PlaybookOperationError("DELETE requires bullet_id")
-                i = self._bullet_index(section, bid)
+                try:
+                    i = self._bullet_index(section, bid)
+                except PlaybookOperationError:
+                    raise PlaybookOperationError(
+                        self._unknown_bullet_message(
+                            action="DELETE",
+                            section=section,
+                            bullet_id=bid,
+                        )
+                    ) from None
                 section.bullets.pop(i)
                 if not section.bullets:
                     del self.sections[section.id]

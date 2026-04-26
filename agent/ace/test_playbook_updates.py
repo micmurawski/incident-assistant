@@ -124,6 +124,39 @@ class TestPlaybookUpdates(unittest.TestCase):
                 ]
             )
         self.assertIn("Unknown bullet", str(ctx.exception))
+        self.assertIn("does not exist in the playbook", str(ctx.exception))
+
+    def test_unknown_bullet_on_update_reports_actual_section_hint(self):
+        pb = _sample_playbook()
+        with self.assertRaises(PlaybookOperationError) as ctx:
+            pb.apply_operations(
+                [
+                    {
+                        "action": "UPDATE",
+                        "section": "sec_b",
+                        "bullet_id": "b1",
+                        "content": "z",
+                    }
+                ]
+            )
+        self.assertIn("Unknown bullet id", str(ctx.exception))
+        self.assertIn("exists in section(s): 'sec_a'", str(ctx.exception))
+
+    def test_unknown_bullet_on_delete_reports_actual_section_hint(self):
+        pb = _sample_playbook()
+        with self.assertRaises(PlaybookOperationError) as ctx:
+            pb.apply_operations(
+                [
+                    {
+                        "action": "DELETE",
+                        "section": "sec_b",
+                        "bullet_id": "b2",
+                        "content": "",
+                    }
+                ]
+            )
+        self.assertIn("Unknown bullet id", str(ctx.exception))
+        self.assertIn("exists in section(s): 'sec_a'", str(ctx.exception))
 
     def test_add_creates_missing_section(self):
         pb = _sample_playbook()
