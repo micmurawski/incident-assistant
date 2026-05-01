@@ -269,10 +269,9 @@ class FileOpsManager:
         is_file = os.path.isfile(full_path)
 
         if not path_exists:
-            raise Exception(f"The path: {path} does not exists.")
-
+            return FileOpsResult(path=path, content=f"The path: {path} does not exists.", error=Exception(f"The path: {path} does not exists."))
         if not is_file:
-            raise Exception(f"The path {path} is not file.")
+            return FileOpsResult(path=path, content=f"The path {path} is not file.", error=Exception(f"The path {path} is not file."))
 
         # Build regex flags correctly as an integer bitmask
         flags = re.IGNORECASE if ignore_case else 0

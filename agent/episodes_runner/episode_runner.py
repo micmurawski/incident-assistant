@@ -39,6 +39,94 @@ DEFAULT_BANDWIDTH_BUFFER = 10000
 DEFAULT_BANDWIDTH_LIMIT = 20971520
 
 
+def _labels_to_selector(labels: dict) -> str:
+    return ",".join(f"{k}={v}" for k, v in labels.items())
+
+
+def _all_pods_ready(pods: list[dict]) -> bool:
+    if not pods:
+        return False
+    for pod in pods:
+        status = pod.get("status", {})
+        if status.get("phase") != "Running":
+            return False
+        conditions = status.get("conditions", [])
+        ready = next((c for c in conditions if c.get("type") == "Ready"), None)
+        if not ready or ready.get("status") != "True":
+            return False
+    return True
+
+
+def wait_for_chaos_targets_ready(
+    manifest: dict,
+    env: dict,
+    timeout: int = 300,
+    poll_interval: int = 5,
+) -> None:
+    """Wait until pods selected by chaos selector are Running/Ready."""
+    selector = manifest.get("spec", {}).get("selector", {})
+    label_selectors = selector.get("labelSelectors") or {}
+    namespaces = selector.get("namespaces") or [
+        manifest.get("metadata", {}).get("namespace", "default")
+    ]
+    if not label_selectors:
+        return
+
+    label_selector = _labels_to_selector(label_selectors)
+    deadline = time.monotonic() + timeout
+    last_summary = "no pods matched selector yet"
+    while time.monotonic() < deadline:
+        namespace_summaries = []
+        all_ready = True
+        matched_any = False
+
+        for namespace in namespaces:
+            cmd = [
+                "kubectl",
+                "get",
+                "pods",
+                "-n",
+                namespace,
+                "-l",
+                label_selector,
+                "-o",
+                "json",
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"[3] kubectl get pods failed for namespace={namespace}, "
+                    f"selector={label_selector}: {result.stderr or result.stdout}"
+                )
+
+            items = json.loads(result.stdout).get("items", [])
+            if items:
+                matched_any = True
+            ready_here = _all_pods_ready(items)
+            all_ready = all_ready and ready_here
+            namespace_summaries.append(f"{namespace}:{len(items)} pod(s), ready={ready_here}")
+
+        last_summary = "; ".join(namespace_summaries) or "no namespace summaries"
+        if matched_any and all_ready:
+            print(
+                f"[3] Chaos targets ready for selector '{label_selector}' "
+                f"in namespaces {','.join(namespaces)}"
+            )
+            return
+
+        remaining = int(deadline - time.monotonic())
+        print(
+            f"[3] Waiting for chaos targets to become ready... "
+            f"({remaining}s left, {last_summary})"
+        )
+        time.sleep(poll_interval)
+
+    raise RuntimeError(
+        f"[3] Chaos target pods not ready after {timeout}s for selector '{label_selector}'. "
+        f"Last status: {last_summary}"
+    )
+
+
 def create_workspace(source_dir: Path, workspace_dir: Path) -> None:
     """Copy source to workspace. Overwrites existing workspace."""
     if workspace_dir.exists():
@@ -85,6 +173,8 @@ def apply_chaos_mesh_fault(
             bandwidth["buffer"] = DEFAULT_BANDWIDTH_BUFFER
         if parsed_limit < 1:
             bandwidth["limit"] = DEFAULT_BANDWIDTH_LIMIT
+    wait_for_chaos_targets_ready(manifest, env)
+
     kind = manifest["kind"]
     name = manifest["metadata"]["name"]
     namespace = manifest["metadata"].get("namespace", "default")

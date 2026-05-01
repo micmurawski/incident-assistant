@@ -100,12 +100,26 @@ def _is_rate_limit_error(error: OpenAIError) -> bool:
 
 
 def _extract_retry_after_seconds(error: OpenAIError) -> float | None:
-    """Extract retry delay from OpenAI error text (e.g., 'try again in 527ms')."""
+    """
+    Extract retry delay from OpenAI error text, capturing both ms and s units.
+    Handles OpenAI error messages such as:
+      - 'try again in 527ms'
+      - 'Please try again in 1.303s.'
+    """
     text = str(error).lower()
-    match = re.search(r"try again in\s+(\d+)\s*ms", text)
-    if not match:
-        return None
-    return max(0.0, int(match.group(1)) / 1000.0)
+    # Try for milliseconds, e.g., 'try again in 527ms'
+    match_ms = re.search(r"try again in\s+(\d+)\s*ms", text)
+    if match_ms:
+        return max(0.0, int(match_ms.group(1)) / 1000.0)
+    # Try for seconds as float, e.g., 'please try again in 1.303s'
+    match_s = re.search(r"try again in\s+([0-9]*\.?[0-9]+)\s*s", text)
+    if match_s:
+        return max(0.0, float(match_s.group(1)))
+    # Try alternative phrasing with 'please'
+    match_please_s = re.search(r"please try again in\s+([0-9]*\.?[0-9]+)\s*s", text)
+    if match_please_s:
+        return max(0.0, float(match_please_s.group(1)))
+    return None
 
 
 class OpenAIResponsesHandler(ApiHandler):

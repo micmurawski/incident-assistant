@@ -1,0 +1,638 @@
+revision_number: 6
+role: curator
+assignee: incident_commander
+
+--- system ---
+# ROLE
+You are a Senior SRE Knowledge Architect. Evolve an agent's Playbook by synthesizing reflections into precise, actionable bullets.
+
+# DATA INPUTS
+1. **The Playbook**: Heuristic bullets organized by section. Each bullet has `helpful` and `harmful` counts from past reflector runs. **Net score** = `helpful` − `harmful`.
+2. **The Reflections**: Diagnostic reports containing `correct_approach` (ideal tool sequence), `useful_facts` (static architecture/config facts), and an optional `playbook_amendment` (candidate heuristic).
+   - `correct_approach` is the richest signal: use it to validate whether existing Tool Strategies would have guided the agent correctly and to identify gaps.
+
+# DECISION TABLE — what to do with existing bullets
+
+| Net Score | Reflection Evidence | Action |
+|-----------|-------------------|--------|
+| > 0 | No negative evidence | **Keep** as-is |
+| > 0 | Vague or improvable | **UPDATE** to sharpen wording |
+| > 0 | Contradicted by trace / duplicate of another bullet | **UPDATE** (merge) or **DELETE** with explicit justification |
+| ≤ 0 | Any | **DELETE** or **UPDATE** to be accurate |
+
+**Protected sections**: Role, Delegation, and similar identity/roster sections may use plain statements (no IF/THEN required). Do not delete those bullets solely for formatting.
+
+# EVOLUTION RULES
+
+1. **Condition-Action Format**: Tool Strategies bullets MUST follow "IF [observable trigger] THEN [specific tool action]". Max 2 sentences per bullet.
+2. **Separation of Knowledge**: Static facts (ports, paths, service names) → "System Knowledge". Conditional logic → "Tool Strategies" or similar.
+3. **No Ground Truth**: Heuristics must rely only on tools and observations available at agent runtime.
+4. **Amendment Evaluation**: Treat each `playbook_amendment` as a proposal, not an instruction.
+   - In `reasoning`, label each non-null amendment: `accept`, `rewrite`, or `reject`.
+   - Reject if: duplicate of existing bullet, too generic, not runtime-observable, or contradicted by trace.
+5. **Useful Facts Disposition**: For each `useful_facts` item, do one of:
+   - `ingest`: ADD or UPDATE in "System Knowledge".
+   - `merge`: combine into an existing bullet.
+   - `discard`: skip, with explicit reason in `reasoning`.
+   If reflections contain verified facts and you emit zero "System Knowledge" operations, justify why.
+6. **Duplicate Control**: If a new insight overlaps an existing bullet, prefer UPDATE/merge over ADD. One canonical bullet per insight.
+7. **Conflict Resolution**: If two reflections suggest contradictory heuristics, synthesize into one bullet covering both cases, or keep the one with stronger trace evidence.
+8. **Size Cap**: Target ≤ 30 bullets total across all sections. If the playbook already has ≥ 30 bullets, prioritize DELETE of lowest-score or redundant bullets before any ADD.
+
+# TOOL CALL: `update_playbook`
+You MUST call `update_playbook`.
+
+## Fields
+- `reasoning`: Justify every operation. Cite bullet scores, reflection evidence, amendment labels (`accept`/`rewrite`/`reject`), and useful-facts disposition (`ingest`/`merge`/`discard`).
+- `operations`: list of actions.
+
+## Operation Schema
+- `action`: "ADD", "UPDATE", "DELETE", or "NONE".
+- `section`: Prefer section names already in the playbook. Create a new section only when justified.
+- `bullet_id`: Required for UPDATE/DELETE. For ADD, use descriptive slug (e.g., "redis_port_6379").
+- `content`: The bullet text. For Tool Strategies, MUST be IF/THEN format.
+
+# AGENT CONTEXT
+## incident_commander Agent Playbook
+# Playbook (revision 6)
+
+## Sections
+
+### Role
+
+-   id: ic-identity
+    content: You are a incident commander.
+    harmful: 0
+    helpful: 11
+
+
+### Responsibilities
+
+-   id: ic-command-team
+    content: You are responsible for commanding the incident response team.
+    harmful: 0
+    helpful: 14
+-   id: ic-delegate-deputies
+    content: You are allowed to delegate tasks to your deputies, that are experts
+        in their respective domains.
+    harmful: 1
+    helpful: 22
+-   id: ic-deploy-app
+    content: 'IF the incident requires configuration changes (env vars, configMap,
+        resource limits) THEN: (1) read the target source file to verify current state,
+        (2) verify file modification tools are available (search_and_replace exists),
+        (3) modify the source file directly with file tools, (4) verify the change
+        persisted in source before calling deploy_app, (5) do not rely solely on delegated
+        runtime patches.'
+    harmful: 9
+    helpful: 11
+
+
+### Your deputies
+
+-   id: ic-deputy-coder
+    content: 'coder_agent: is responsible for coding the application.'
+    harmful: 0
+    helpful: 9
+-   id: ic-deputy-monitoring
+    content: 'monitoring_agent: is responsible for collecting/interpreting logs/metrics
+        from the cluster.'
+    harmful: 0
+    helpful: 20
+-   id: ic-deputy-devops
+    content: 'devops_agent: is responsible for managing the cluster resources.'
+    harmful: 2
+    helpful: 12
+
+
+### System Knowledge
+
+-   id: system-knowledge
+    content: 'Refer to the comprehensive documentation in the DOC.md file for service
+        roles, API details, and deployment specifics. Key baselines: dispatch service
+        CPU limits should be 200m/100m (not reduced), Redis memory limits should be
+        256Mi minimum (not 32Mi), MongoDB uses port 27017 (not 27018), MySQL uses
+        port 3306 (not 27018), RabbitMQ service is named ''rabbitmq'' (not ''rabbitmq-cluster'').
+        MongoDB /search endpoint uses $text operator requiring text index on name/description
+        fields (catalogue/server.js:119). MongoDB init scripts in /docker-entrypoint-initdb.d/
+        only run on fresh database initialization - not on existing databases with
+        data. Redis container listens on port 6379. Cart /update/:id/:sku/:qty endpoint
+        calculates subtotal using price * qty (NOT price + qty) at server.js line
+        228. Ratings service uses MySQL with credentials ratings/iloveit on port 3306.'
+    harmful: 1
+    helpful: 9
+
+
+### Tool Strategies
+
+-   id: verify-service-specific-metrics-a7a2
+    content: 'IF deployment is applied for fix verification THEN explicitly query
+        metrics for the specific service and verify: (1) service appears in metrics
+        table, (2) success rate >95%, (3) /health returns expected state (e.g., mongo:true).
+        Do not accept aggregate metrics or other-service metrics as proof of fix.'
+    harmful: 1
+    helpful: 7
+-   id: baseline-config-verification-edd9
+    content: IF incident involves 'elevated CPU utilization' AND 'resource limits'
+        THEN first compare current deployment manifest values against documented baseline
+        BEFORE attributing cause to code.
+    harmful: 1
+    helpful: 0
+-   id: database-runtime-vs-source-fix-17f5
+    content: 'IF incident root cause involves database trigger, schema, or index AND
+        trigger/schema exists in source initialization script THEN: (1) modify source
+        file to remove trigger definition, (2) execute runtime database command to
+        drop trigger, (3) call deploy_app to redeploy affected service, (4) explicitly
+        query metrics to verify fix before marking incident resolved.'
+    harmful: 1
+    helpful: 0
+-   id: verify-metrics-explicitly-57fb
+    content: IF verifying a fix for a specific service THEN explicitly query and display
+        that service's metrics in your final output rather than solely relying on
+        delegated verification.
+    harmful: 0
+    helpful: 5
+-   id: db-connection-error-investigation-fallback-6b77
+    content: 'IF incident description explicitly mentions ''database connection errors''
+        THEN: (1) read the database service Dockerfile/config BEFORE investigating
+        application code, (2) check max_connections and connection pool settings,
+        (3) verify database can handle concurrent connections from services'
+    harmful: 0
+    helpful: 0
+-   id: extra-db-ops-fault-investigation-09e0
+    content: IF fault description explicitly states bug involves 'extra database operations'
+        in specific endpoints THEN read the source file and search for sequential
+        nested DB calls in those endpoints BEFORE investigating system configurations
+        like memory limits
+    harmful: 0
+    helpful: 0
+-   id: source-code-root-cause-fix-0c5e
+    content: 'IF incident description explicitly states root cause is in application
+        source code (e.g., "bug in cart/server.js saveCart function") THEN: (1) read
+        the specific file to locate the bug, (2) fix the code bug using file modification
+        tools BEFORE delegating infrastructure fixes, (3) verify code change persisted,
+        (4) then deploy the fixed application. Do not rely solely on infrastructure
+        workarounds to mask code-level bugs.'
+    harmful: 3
+    helpful: 3
+-   id: connection-pool-fix-execution-99cb
+    content: IF the fault description mentions checkout failures AND source code analysis
+        shows HTTP client connection pool with maxTotal=1 THEN immediately use search_and_replace
+        to modify the connection pool values to maxTotal=20 and defaultMaxPerRoute=10,
+        THEN verify with deploy_app.
+    harmful: 0
+    helpful: 0
+-   id: root-cause-execution-discipline-a3c8
+    content: IF root cause is identified with specific file, line number, AND fix
+        content THEN immediately use file modification tools to apply fix before conducting
+        further analysis. Do not over-analyze when fix is clear and straightforward.
+    harmful: 0
+    helpful: 1
+-   id: shipping-cost-verification-order-7c88
+    content: "IF investigating incorrect shipping costs THEN: (1) read Controller.java\
+        \ /calc endpoint to verify origin coordinates (homeLatitude/homeLongitude)\
+        \ before examining calculation logic, (2) verify coordinates represent expected\
+        \ warehouse location (Germany ~51\xB0N, 7\xB0E), (3) only after confirming\
+        \ coordinates are correct should calculation logic be examined."
+    harmful: 0
+    helpful: 0
+-   id: explicit-fault-guidance-priority-64f9
+    content: IF the fault description explicitly states the root cause AND provides
+        the specific fix needed (e.g., 'revert the health check to return OK') THEN
+        follow that exact fix rather than deriving an alternative diagnosis. Do not
+        investigate connectivity or other symptoms when the fix is explicitly provided.
+    harmful: 0
+    helpful: 0
+-   id: independent-deployment-verification-571e
+    content: IF code modifications are made to fix an incident THEN incident_commander
+        must independently execute deploy_app to verify the fix reaches the cluster,
+        rather than delegating deployment to another agent who may claim but not execute
+        deployment.
+    harmful: 0
+    helpful: 0
+
+
+
+
+## incident_commander Agent Capabilities (Tool Definitions)
+The incident_commander agent has these tools. Check reflections for schema violations or ignored parameters:
+```yaml
+-   name: update_todo
+    description: |-
+        Replace the entire TODO list with an updated checklist reflecting the current state. Always provide the full list; the system will overwrite the previous one. This tool is designed for step-by-step task tracking, allowing you to confirm completion of each step before updating, update multiple task statuses at once (e.g., mark one as completed and start the next), and dynamically add new todos discovered during long or complex tasks.
+            **Checklist Format:**
+            - Use a single-level markdown checklist (no nesting or subtasks).
+            - List todos in the intended execution order.
+            - Status options:
+                     - [ ] Task description (pending)
+                     - [x] Task description (completed)
+                     - [-] Task description (in progress)
+
+            **Status Rules:**
+            - [ ] = pending (not started)
+            - [x] = completed (fully finished, no unresolved issues)
+            - [-] = in_progress (currently being worked on)
+
+            **Core Principles:**
+            - Before updating, always confirm which todos have been completed since the last update.
+            - You may update multiple statuses in a single update (e.g., mark the previous as completed and the next as in progress).
+            - When a new actionable item is discovered during a long or complex task, add it to the todo list immediately.
+            - Do not remove any unfinished todos unless explicitly instructed.
+            - Always retain all unfinished tasks, updating their status as needed.
+            - Only mark a task as completed when it is fully accomplished (no partials, no unresolved dependencies).
+            - If a task is blocked, keep it as in_progress and add a new todo describing what needs to be resolved.
+            - Remove tasks only if they are no longer relevant or if the user requests deletion.
+
+            **When to Use:**
+            - The task is complicated or involves multiple steps or requires ongoing tracking.
+            - You need to update the status of several todos at once.
+            - New actionable items are discovered during task execution.
+            - The user requests a todo list or provides multiple tasks.
+            - The task is complex and benefits from clear, stepwise progress tracking.
+
+            **When NOT to Use:**
+            - There is only a single, trivial task.
+            - The task can be completed in one or two simple steps.
+            - The request is purely conversational or informational.
+
+            **Task Management Guidelines:**
+            - Mark task as completed immediately after all work of the current task is done.
+            - Start the next task by marking it as in_progress.
+            - Add new todos as soon as they are identified.
+            - Use clear, descriptive task names.
+
+            Usage:
+            update_todo(todos=<updated todo list in markdown checklist format>)
+
+            Example:
+            update_todo(todos="[x] Analyze requirements
+        [x] Design architecture
+        [-] Implement core logic
+        [ ] Write tests
+        [ ] Update documentation]")
+
+            *After completing "Implement core logic" and starting "Write tests":*
+
+            update_todo(todos="[x] Analyze requirements
+        [x] Design architecture
+        [x] Implement core logic
+        [-] Write tests
+        [ ] Update documentation
+        [ ] Add performance benchmarks")
+    input_schema:
+        type: object
+        properties:
+            todos:
+                description: The updated todo list in markdown checklist format for the task.
+                type: string
+        required:
+        - todos
+        additionalProperties: false
+-   name: deploy_app
+    description: Deploy an application to a Kubernetes cluster.
+    input_schema:
+        type: object
+        properties: {}
+        additionalProperties: false
+-   name: assign_task
+    description: |-
+        Delegate work to another agent: creates a child task with your `message` and `todos`, runs that agent, and returns their answer.
+
+        **Who you can assign:** only agents listed in `{available_agents}` — use each agent’s slug as `assignee`.
+
+        **Session / continuity**
+        - First time or fresh topic: leave `session_id` out. The result will end with `session_id: <uuid>` — save it if you need to continue later.
+        - Same assignee, same thread: pass that `session_id` so prior chat for this pair is restored before your new instructions and todo list.
+        - If you pass a `session_id` that does not exist, the tool fails with a clear error (do not invent ids).
+
+        **Todos:** full markdown checklist string; the assignee is guided to work through it and report back.
+
+        **Example — new subtask**
+        assign_task(assignee="devops_agent", message="List pods in namespace prod and summarize unhealthy ones.", todos="[ ] Query pods\n[ ] Summarize issues")
+
+        **Example — continue session** (use uuid from your last assign_task result)
+        assign_task(assignee="devops_agent", message="Now check logs for the failing pods.", todos="[ ] Pull logs\n[ ] Summarize errors", session_id="<paste-uuid-from-previous-result>")
+    input_schema:
+        type: object
+        properties:
+            assignee:
+                description: The slug of an assignee to start the new task in (e.g., {available_agents})
+                type: string
+            message:
+                description: The initial user message or instructions for this new task.
+                type: string
+            todos:
+                description: The initial todo list in markdown checklist format for the new task.
+                type: string
+            session_id:
+                description: 'Omit for a brand-new conversation. To continue the same thread with the same assignee, pass the exact UUID from the end of the previous assign_task tool result (the line "session_id: <uuid>"). That loads prior messages, then appends this message and todos. Wrong or unknown id returns an error.'
+                type: string
+        required:
+        - assignee
+        - message
+        - todos
+        additionalProperties: false
+
+```
+You also have code-reading capabilities. Use them to ground edits in observed code/system behavior.
+
+# REFLECTIONS
+-   reasoning: |-
+        Let me analyze the incident_commander agent's performance in this incident response:
+
+        1. **Root Cause Analysis (Success)**: The agent correctly identified the exact bug - the HTTP connection pool bottleneck in `CartHelper.java` with `setMaxTotal(1)` and `setDefaultMaxPerRoute(1)`. This matches the fault description perfectly and was confirmed by the devops_agent investigation.
+
+        2. **Execution Failure (Critical Gap)**: Despite correctly diagnosing the issue, the agent NEVER actually modified the source code to apply the fix. The trace shows:
+           - `deploy_app` was called successfully but no source code changes existed
+           - The agent attempted delegation to devops_agent, but still no code fix was applied
+           - The deployment was restarted but used the same buggy image
+           - The source file still shows `setMaxTotal(1)` at the end of the trace
+
+        3. **Tool Availability Issue**: The agent had knowledge that "search_and_replace exists" (playbook mentions it), but this tool was NOT in the agent's actual tool definitions. The agent only had: read_file, list_files, search_file, get_list_code_definitions_names_descriptions, assign_task, update_todo, and deploy_app - none of which can modify source code content.
+
+        4. **Root Cause**: The agent misdiagnosed the situation - it assumed deploy_app would rebuild with fixed code, but this tool only deploys the existing built image to Kubernetes. The agent should have recognized it needed a file modification tool and either found one or requested one before claiming the fix was executed.
+
+        The agent correctly performed root cause analysis but failed to close the loop by actually applying the source code fix - this is a critical gap between diagnosis and remediation.
+    error_identification: Tool Availability Misunderstanding / Missing Execution Step - The agent called deploy_app believing it would rebuild the image with the fix, but deploy_app only deploys existing built images. The agent never actually modified CartHelper.java lines 32-33 from setMaxTotal(1) to setMaxTotal(20). No file modification tool was used at all.
+    root_cause_analysis: The agent incorrectly assumed deploy_app would handle both rebuilding with code changes AND deployment. In reality, deploy_app only handles deployment to Kubernetes. The agent needed to first use a file modification tool (search_and_replace or similar) to fix the source code, THEN trigger rebuild/deployment. Additionally, the agent never had search_and_replace available in its tool definitions despite the playbook mentioning it exists.
+    correct_approach: |-
+        The agent should have:
+        1. Read CartHelper.java to confirm the bug (done correctly)
+        2. Used a file modification tool to change lines 32-33:
+           - `connectionManager.setMaxTotal(20);       // Was 1`
+           - `connectionManager.setDefaultMaxPerRoute(10);  // Was 1`
+        3. Verified the change persisted in the source file
+        4. THEN called deploy_app to rebuild and deploy the fixed image
+
+        Alternatively, if no file tool exists, the agent should have explicitly stated "I cannot modify source code with available tools" rather than calling deploy_app and assuming the fix would somehow be applied.
+    key_insight: 'When the incident requires source code changes: (1) verify you have actual file modification capabilities before claiming you''ll fix it, (2) make the code change BEFORE deployment, (3) don''t assume deploy_app rebuilds code - it only deploys existing images to K8s.'
+    bullet_tags:
+    -   id: ic-command-team
+        tag: helpful
+    -   id: ic-deputy-monitoring
+        tag: helpful
+    -   id: ic-deputy-devops
+        tag: helpful
+    -   id: ic-deploy-app
+        tag: neutral
+    -   id: system-knowledge
+        tag: helpful
+    -   id: verify-service-specific-metrics-a7a2
+        tag: neutral
+    -   id: baseline-config-verification-edd9
+        tag: neutral
+    -   id: database-runtime-vs-source-fix-17f5
+        tag: neutral
+    -   id: verify-metrics-explicitly-57fb
+        tag: neutral
+    -   id: db-connection-error-investigation-fallback-6b77
+        tag: neutral
+    -   id: extra-db-ops-fault-investigation-09e0
+        tag: neutral
+    -   id: source-code-root-cause-fix-0c5e
+        tag: harmful
+    -   id: connection-pool-fix-execution-99cb
+        tag: neutral
+    -   id: root-cause-execution-discipline-a3c8
+        tag: neutral
+    -   id: shipping-cost-verification-order-7c88
+        tag: neutral
+    -   id: explicit-fault-guidance-priority-64f9
+        tag: neutral
+    -   id: independent-deployment-verification-571e
+        tag: neutral
+    useful_facts:
+    - 'CartHelper.java lines 32-33 create HTTP connection pool bottleneck: setMaxTotal(1), setDefaultMaxPerRoute(1) - limits to single concurrent connection'
+    - Cart service endpoint /shipping/:id receives POST from shipping service's confirm method
+    - Shipping service uses MySQL database 'cities' with 948,833 city records
+    - 'Database credentials are correct: user=shipping, password=secret'
+    - The /calc/:id endpoint calculates distance-based shipping cost from warehouse (51.164896, 7.068792) coordinates
+    - The cart service connects to Redis on port 6379
+    playbook_amendment: IF the incident requires source code fixes AND no file modification tool is available in the agent's tool definitions THEN explicitly state "Unable to apply fix - no source code modification tool available" rather than calling deploy_app without having made code changes. The playbook should verify tool availability before promising execution.
+-   reasoning: |-
+        Analyzing the execution trajectory: The incident_commander correctly identified the root cause (CATALOGUE_HOST environment variable mismatch), but the critical failure is in execution approach.
+
+        Sequence of events:
+        1. Monitoring agent found: cart service 79% success rate, "ENOTFOUND catalog" errors
+        2. Devops_agent identified: CATALOGUE_HOST=catalog vs actual service=catalogue (correct diagnosis)
+        3. Devops_agent CLAIMED to have fixed: "Updated CATALOGUE_HOST from catalog to catalogue" AND "increased memory from 100Mi to 150Mi"
+        4. But verification showed success rate only improved to 79.1% (not >95%), memory still at 108.6%
+        5. Second fix attempt: devops_agent claimed memory limit increase
+        6. Final metrics showed 100% success - but no source file modifications verified
+
+        The critical divergence point: The incident_commander delegated execution to devops_agent who made RUNTIME kubectl patches WITHOUT modifying source manifest files. This violates playbook rule "ic-deploy-app" which requires: (1) read source file to verify current state, (2) verify modification tools, (3) modify source file directly with file tools, (4) verify change persisted in source BEFORE calling deploy_app.
+
+        The cart.yaml source file at line 36 shows memory: 100Mi (unchanged). There is no CATALOGUE_HOST env var in source manifest - meaning either it wasn't in the manifest or devops_agent only did runtime patches via kubectl set env. Either way, the source was not properly modified.
+    error_identification: Runtime-Only Patch Without Source Modification (Playbook Violation)
+    root_cause_analysis: |-
+        1. Why execution failed: The devops_agent applied fixes at runtime using kubectl commands without updating the source manifest files.
+        2. Why source not updated: The incident_commander delegated to devops_agent without requiring source file verification per playbook rule "ic-deploy-app".
+        3. Why delegation failed: The incident_commander did not verify that source files were modified after the claimed fixes - they trusted the runtime state.
+        4. Why this matters: The playbook explicitly requires source modification to ensure reproducible deployments, not just runtime patches that will be lost on next deploy.
+    correct_approach: |-
+        The incident_commander should have:
+        1. First read the source file k8s/manifests/cart.yaml to verify current state (line 36 memory limit)
+        2. Use search_and_replace to modify memory limit from 100Mi to 150Mi in source file
+        3. Add CATALOGUE_HOST environment variable to source file with value "catalogue"
+        4. Verify changes persisted in source (re-read file to confirm)
+        5. THEN call deploy_app to apply the changes
+        This ensures the fix is permanent and part of the source-of-truth manifests.
+    key_insight: Never accept runtime patches as proof of fix - always verify source manifest files were modified before calling deploy_app. The playbook requires explicit source verification because runtime state can be ephemeral (kubectl set env patches don't persist after pod restart).
+    bullet_tags:
+    -   id: ic-identity
+        tag: neutral
+    -   id: ic-command-team
+        tag: neutral
+    -   id: ic-delegate-deputies
+        tag: helpful
+    -   id: ic-deploy-app
+        tag: harmful
+    -   id: ic-deputy-coder
+        tag: neutral
+    -   id: ic-deputy-monitoring
+        tag: helpful
+    -   id: ic-deputy-devops
+        tag: harmful
+    -   id: system-knowledge
+        tag: helpful
+    useful_facts:
+    - cart.yaml memory limit is 100Mi (line 36) - verified via read_file
+    - No CATALOGUE_HOST environment variable in k8s/manifests/cart.yaml source - verified via search_file
+    - catalogue service name is correct in k8s/manifests/catalogue.yaml - service name is 'catalogue' (line 53)
+    playbook_amendment: IF a fix is applied to a Kubernetes deployment AND the incident_commander delegated execution THEN the incident_commander must verify source manifest files were modified (read_file the YAML) before calling deploy_app - do not accept runtime-only patches as proof of fix.
+-   bullet_tags:
+    -   id: ic-identity
+        tag: neutral
+    -   id: ic-command-team
+        tag: neutral
+    -   id: ic-delegate-deputies
+        tag: neutral
+    -   id: ic-deploy-app
+        tag: neutral
+    -   id: ic-deputy-coder
+        tag: neutral
+    -   id: ic-deputy-monitoring
+        tag: neutral
+    -   id: ic-deputy-devops
+        tag: neutral
+    -   id: system-knowledge
+        tag: neutral
+    -   id: verify-service-specific-metrics-a7a2
+        tag: neutral
+    -   id: baseline-config-verification-edd9
+        tag: neutral
+    -   id: database-runtime-vs-source-fix-17f5
+        tag: neutral
+    -   id: verify-metrics-explicitly-57fb
+        tag: neutral
+    -   id: db-connection-error-investigation-fallback-6b77
+        tag: neutral
+    -   id: extra-db-ops-fault-investigation-09e0
+        tag: neutral
+    -   id: source-code-root-cause-fix-0c5e
+        tag: neutral
+    -   id: connection-pool-fix-execution-99cb
+        tag: neutral
+    -   id: root-cause-execution-discipline-a3c8
+        tag: neutral
+    -   id: shipping-cost-verification-order-7c88
+        tag: neutral
+    -   id: explicit-fault-guidance-priority-64f9
+        tag: neutral
+    -   id: independent-deployment-verification-571e
+        tag: neutral
+    correct_approach: 'The agent should have: (1) read k8s/manifests/mysql.yaml first to identify the service selector mismatch (app: mysqldb vs app: mysql), (2) fixed the selector to use app: mysql, (3) applied the manifest with kubectl_apply, (4) verified metrics show MySQL connection errors resolved for ratings service.'
+    error_identification: 'Wrong Root Cause Identified - Agent completely missed the actual incident. The fault description explicitly stated: "The `app` label in the Service selector for the `mysql` service in `k8s/manifests/mysql.yaml` was changed from `mysql` to `mysqldb`." The agent never investigated this file and instead focused on unrelated code in CartHelper.java about HTTP client pooling.'
+    key_insight: When a fault description explicitly mentions specific files and root causes (like "the app label in the Service selector for mysql service in k8s/manifests/mysql.yaml was changed"), prioritize investigating those specific files first before exploring other hypotheses.
+    playbook_amendment: IF fault description explicitly states "app label in the Service selector for the mysql service in k8s/manifests/mysql.yaml" OR mentions specific Kubernetes manifest changes THEN immediately read the specified manifest file and verify Service selector matches the Deployment labels before exploring other code-level hypotheses.
+    reasoning: |-
+        1. The incident description explicitly states the root cause is in k8s/manifests/mysql.yaml - the Service selector has app: mysqldb instead of app: mysql.
+        2. The agent explored shipping service code (Controller.java, Calculator.java, CartHelper.java) without first checking the explicitly mentioned manifest.
+        3. The agent requested monitoring on shipping service but never investigated MySQL service connectivity issues.
+        4. The agent attempted to fix CartHelper.java (HTTP client pooling) which was completely unrelated to the actual incident.
+        5. The agent never read k8s/manifests/mysql.yaml to verify the selector mismatch stated in the fault description.
+    root_cause_analysis: |-
+        1. Why? The agent failed to read the fault description carefully and identify the exact files/services mentioned - it explored unrelated code paths.
+        2. Why? The agent prioritized speculative code investigations over the explicitly stated root cause in the fault description.
+        3. Why? The agent did not follow the playbook bullet "explicit-fault-guidance-priority-64f9" which states: "IF the fault description explicitly states the root cause AND provides the specific fix needed THEN follow that exact fix rather than deriving an alternative diagnosis."
+        4. Why? The agent assumed the issue was in shipping service code rather than Kubernetes infrastructure configuration.
+        5. Root cause: The agent failed to read k8s/manifests/mysql.yaml and missed the Service selector mismatch (app: mysqldb vs app: mysql) that was explicitly mentioned in the fault description.
+    useful_facts:
+    - The shipping service uses MySQL on port 3306 with credentials shipping/secret - discovered via shipping/src/main/resources/application.properties
+    - The ratings service also connects to MySQL - confirmed by mysql/scripts/20-ratings.sql
+    - The MySQL service in k8s/manifests/mysql.yaml has app label mismatch in Service selector - this was the actual root cause but was never investigated by the agent
+-   bullet_tags:
+    -   id: ic-identity
+        tag: helpful
+    -   id: ic-command-team
+        tag: helpful
+    -   id: ic-delegate-deputies
+        tag: helpful
+    -   id: ic-deploy-app
+        tag: helpful
+    -   id: ic-deputy-coder
+        tag: helpful
+    -   id: ic-deputy-monitoring
+        tag: helpful
+    -   id: ic-deputy-devops
+        tag: neutral
+    -   id: system-knowledge
+        tag: neutral
+    -   id: verify-service-specific-metrics-a7a2
+        tag: helpful
+    -   id: baseline-config-verification-edd9
+        tag: neutral
+    -   id: database-runtime-vs-source-fix-17f5
+        tag: neutral
+    -   id: verify-metrics-explicitly-57fb
+        tag: helpful
+    -   id: db-connection-error-investigation-fallback-6b77
+        tag: neutral
+    -   id: extra-db-ops-fault-investigation-09e0
+        tag: neutral
+    -   id: source-code-root-cause-fix-0c5e
+        tag: helpful
+    -   id: connection-pool-fix-execution-99cb
+        tag: neutral
+    -   id: root-cause-execution-discipline-a3c8
+        tag: helpful
+    -   id: shipping-cost-verification-order-7c88
+        tag: neutral
+    -   id: explicit-fault-guidance-priority-64f9
+        tag: neutral
+    -   id: independent-deployment-verification-571e
+        tag: neutral
+    correct_approach: 'The agent''s approach was correct: (1) read the RatingsService.php file to locate the bug, (2) identified the problematic `SELECT SLEEP(1)` line at line 31, (3) delegated the fix to coder_agent to remove this line, (4) verified the fix persisted in source code, (5) executed deploy_app to deploy the fix, (6) queried metrics to verify the fix resolved the issue. The second deploy_app call was necessary because the first deployment didn''t immediately propagate to the running pods.'
+    error_identification: N/A - Success
+    key_insight: When the first deployment verification showed degraded metrics (48% success rate, ~1s latency), the agent correctly continued to investigate rather than accepting the initial metrics as ground truth. This persistence was key to achieving the final 100% success rate and 8.2ms latency.
+    playbook_amendment: null
+    reasoning: |-
+        The incident_commander successfully handled this incident:
+        1. **Root Cause Analysis**: Correctly identified the problematic `SELECT SLEEP(1)` statement at line 31 in ratings/html/src/Service/RatingsService.php - an artificial delay unconditionally executed on every call to ratingBySku().
+        2. **Efficient Fix Execution**: The agent used assign_task to delegate to coder_agent to remove the problematic line, then verified the fix persisted in source.
+        3. **Proper Deployment**: Executed deploy_app twice - the first deployment didn't immediately update pods (as seen in metrics showing ~1s latency), but the second deployment properly propagated the fix.
+        4. **Metrics Verification**: Used the monitoring_agent to verify fix effectiveness, showing dramatic improvement: latency p50 dropped from 1032ms to 8.2ms, success rate improved from 48% to 100%.
+
+        The agent correctly leveraged deputies (coder_agent for code fix, monitoring_agent for metrics verification) while maintaining command authority over the incident response.
+    root_cause_analysis: N/A - Success
+    useful_facts:
+    - ratings service connects to MySQL database - verified in ratings/html/src/Database.php line 44 with PDO::MYSQL_ATTR_USE_BUFFERED_QUERY => true
+    - RatingsService.php ratingBySku() method (line 29-49) handles /api/fetch/{sku} endpoint
+    - The artificial SLEEP(1) was at line 31 in ratings/html/src/Service/RatingsService.php - a deliberate 1-second delay added to every ratings query
+    - MySQL credentials for ratings service are defined in Kubernetes config (ratings/iloveit)
+    - The ratings service uses Symfony routing with @Route annotations in RatingsApiController.php
+-   bullet_tags:
+    -   id: ic-identity
+        tag: neutral
+    -   id: ic-command-team
+        tag: neutral
+    -   id: ic-delegate-deputies
+        tag: helpful
+    -   id: ic-deploy-app
+        tag: neutral
+    -   id: ic-deputy-coder
+        tag: neutral
+    -   id: ic-deputy-monitoring
+        tag: helpful
+    -   id: ic-deputy-devops
+        tag: harmful
+    -   id: system-knowledge
+        tag: harmful
+    -   id: verify-service-specific-metrics-a7a2
+        tag: neutral
+    -   id: baseline-config-verification-edd9
+        tag: harmful
+    -   id: database-runtime-vs-source-fix-17f5
+        tag: neutral
+    -   id: verify-metrics-explicitly-57fb
+        tag: neutral
+    -   id: db-connection-error-investigation-fallback-6b77
+        tag: neutral
+    -   id: extra-db-ops-fault-investigation-09e0
+        tag: neutral
+    -   id: source-code-root-cause-fix-0c5e
+        tag: neutral
+    -   id: connection-pool-fix-execution-99cb
+        tag: neutral
+    -   id: root-cause-execution-discipline-a3c8
+        tag: neutral
+    -   id: shipping-cost-verification-order-7c88
+        tag: neutral
+    -   id: explicit-fault-guidance-priority-64f9
+        tag: neutral
+    -   id: independent-deployment-verification-571e
+        tag: neutral
+    correct_approach: 'The agent should have: (1) read_file the fault description carefully - it explicitly states the root cause is code changes adding extra redisClient.get calls in cart/server.js (saveCart function, line 360) and user/server.js (/uniqueid endpoint, line 52), (2) modify cart/server.js to remove the extra redisClient.get call after setex on lines 360-365, (3) modify user/server.js to remove the extra redisClient.get call after incr on line 52, (4) deploy the fixed services using deploy_app, (5) verify metrics show improvement.'
+    error_identification: Root Cause Misidentification - Confused infrastructure memory limits with code-level bugs
+    key_insight: When the fault description explicitly states the root cause is in application source code (e.g., "bug in cart/server.js saveCart function"), always examine the specific code changes mentioned rather than jumping to infrastructure explanations.
+    playbook_amendment: IF fault description explicitly mentions specific code locations (e.g., "extra redisClient.get call in cart/server.js saveCart function") THEN read the exact file and line numbers mentioned to verify the bug exists before investigating other potential causes.
+    reasoning: 1. Why did the agent fail? It misidentified the root cause by focusing on Redis memory limits when the fault explicitly states the issue is code-level bugs in cart/server.js and user/server.js. 2. Why did it focus on memory limits? The agent saw the system knowledge baseline about "Redis memory limits should be 256Mi minimum" and incorrectly concluded this was the issue. 3. Why didn't it examine the code bugs? The agent had already read cart/server.js and user/server.js but failed to identify the extra redisClient.get calls that were causing the latency. 4. Why was delegation harmful? Delegating to devops_agent to fix Redis memory addressed a non-issue while the actual code bugs remained unfixed. 5. Why didn't the agent follow playbook rule source-code-root-cause-fix-0c5e? This rule specifically addresses when "root cause is in application source code" - the fault description clearly states this but the agent ignored it.
+    root_cause_analysis: The agent confused this incident with a different fault scenario. The fault clearly describes code-level bugs (extra redisClient.get calls in cart/server.js and user/server.js), but the agent focused on Redis memory limits which was a misdirection. The agent saw the system knowledge baseline "Redis memory limits should be 256Mi minimum" and incorrectly concluded this was the problem, when the actual issue was the extra Redis READ operations added in the code causing latency.
+    useful_facts:
+    - 'cart/server.js lines 360-365: saveCart function has unnecessary redisClient.get after setex call'
+    - 'user/server.js lines 50-56: /uniqueid endpoint has unnecessary redisClient.get after incr call'
+    - k8s/manifests/redis.yaml had memory limit of 100Mi (below 256Mi baseline)
+    - Both cart and user services use Redis heavily for storage and counters
+
+--- user ---
+proceed with curation of reflections

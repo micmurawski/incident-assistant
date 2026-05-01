@@ -227,6 +227,8 @@ MINIMAX_MODELS = {
         "context_window": 204_800,
         "supports_images": False,
         "supports_prompt_cache": True,
+        "supports_reasoning_budget": True,
+        "reasoning_budget": 2048,
         # "included_tools": ["search_and_replace"],
         # "excluded_tools": ["apply_diff"],
         "preserve_reasoning": True,

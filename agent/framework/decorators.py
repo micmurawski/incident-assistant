@@ -74,7 +74,14 @@ def _validated_kwargs(input_model: BaseModel, prep_res: dict[str, Any]) -> dict[
     validated = input_model(**prep_res)
     raw = {name: getattr(validated, name) for name in validated.model_fields}
     # During injection, we want to preserve rich objects so nodes get the instances they expect.
-    return _deep_materialize(raw, preserve_custom_objects=True)
+    try:
+        return _deep_materialize(raw, preserve_custom_objects=True)
+    except TypeError as exc:
+        model_name = getattr(input_model, "__name__", str(input_model))
+        raise TypeError(
+            f"Failed to materialize validated kwargs for {model_name}. "
+            f"Top-level keys: {list(raw.keys())}. {exc}"
+        ) from exc
 
 
 def __init(self, **kwargs):

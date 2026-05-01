@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import os
+import subprocess
 import uuid
 
 import yaml
@@ -28,6 +29,9 @@ from episodes_runner.utils import (clean_all_containers,
 # Max wall time for the SRE agent flow; override with env SRE_AGENT_TIMEOUT_SEC.
 SRE_AGENT_CALL_TIMEOUT_SEC = float(os.environ.get("SRE_AGENT_TIMEOUT_SEC", "3600"))
 ACE_ASSIGNEES = ["incident_commander", "monitoring_agent", "devops_agent", "coder_agent"]
+FIX_REDIS_SCRIPT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "fix-redis.sh")
+)
 JUDGE_SYSTEM_PROMPT = """
 You are a Senior SRE Judge. Your role is to evaluate if an SRE Agent successfully resolved an incident.
 You have access to:
@@ -128,6 +132,11 @@ async def run_experiment(
     else:
         print("Learning disabled — skipping ACE pipeline and pinning playbook revision to 1")
 
+    print(f"Running pre-deployment redis reset script: {FIX_REDIS_SCRIPT}")
+    #subprocess.run(["bash", FIX_REDIS_SCRIPT], check=True)
+    #print("Waiting 5 minutes after redis reset...")
+    #await asyncio.sleep(5 * 60)
+
     baseline_pods = set(get_pod_snapshot(NAMESPACE).keys())
     try:
         await ensure_load_gen_deployed()
@@ -184,6 +193,9 @@ async def run_experiment(
 
             # 1. Collect all meaningful tool actions from the entire task tree
             meaningful_actions, modified_files, deploy_app_called = collect_meaningful_actions(goal)
+            print(f"Meaningful actions: {meaningful_actions}")
+            print(f"Modified files: {modified_files}")
+            print(f"Deploy app called: {deploy_app_called}")
             # 2. Build the System Evidence Report
             evidence_report = "### System Execution Evidence (Ground Truth):\n"
             if meaningful_actions:
