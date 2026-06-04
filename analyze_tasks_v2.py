@@ -14,6 +14,7 @@ import json
 import os
 import re
 import glob as globmod
+import argparse
 from collections import defaultdict
 from datetime import datetime
 from typing import Optional
@@ -206,6 +207,7 @@ def get_metrics(db_path):
     root_metrics = []
     child_metrics = []
     global_failing_tools = {}
+    root_id_cache = {}
 
     def get_subtree_stats(task_id, current_depth):
         task = tasks[task_id]
@@ -224,6 +226,21 @@ def get_metrics(db_path):
                 for lvl, cnt in child_levels.items():
                     level_counts[lvl] += cnt
         return all_descendants, max_d, level_counts
+
+    def get_root_id(task_id):
+        if task_id in root_id_cache:
+            return root_id_cache[task_id]
+        current_id = task_id
+        visited = set()
+        while current_id in tasks and current_id not in visited:
+            visited.add(current_id)
+            parent = tasks[current_id].get("parent")
+            if not parent:
+                root_id_cache[task_id] = current_id
+                return current_id
+            current_id = parent
+        root_id_cache[task_id] = task_id
+        return task_id
 
     for tid, t in tasks.items():
         is_root = not t["parent"] or t["parent"] == ""
@@ -246,6 +263,7 @@ def get_metrics(db_path):
 
         metric = {
             "id": tid,
+            "root_id": tid if is_root else get_root_id(tid),
             "ttr": ttr,
             "trajectory_length": trajectory_len,
             "iterations_count": t.get("iterations_count", 0),
@@ -254,6 +272,7 @@ def get_metrics(db_path):
             "tool_uses": tool_uses,
             "tool_errors": tool_errors,
             "tool_error_rate": error_rate,
+            "failing_tools": dict(failing_tools),
             "created_at_dt": created,
         }
 
@@ -276,6 +295,34 @@ def get_metrics(db_path):
 
     conn.close()
     return root_metrics, child_metrics, global_failing_tools
+
+
+def _aggregate_failing_tools(metrics):
+    aggregated = {}
+    for m in metrics:
+        for tool_name, count in m.get("failing_tools", {}).items():
+            aggregated[tool_name] = aggregated.get(tool_name, 0) + count
+    return aggregated
+
+
+def _select_incidents(root_nl, child_nl, root_l, child_l, incident_limit):
+    if incident_limit is None:
+        return root_nl, child_nl, root_l, child_l
+
+    root_nl_sorted = sorted(root_nl, key=lambda x: x["created_at_dt"] or datetime.min)
+    selected_nl = root_nl_sorted[:incident_limit]
+    selected_ids = {m["id"] for m in selected_nl}
+
+    selected_l = [m for m in root_l if m["id"] in selected_ids]
+    selected_l_sorted = sorted(selected_l, key=lambda x: x["created_at_dt"] or datetime.min)
+
+    selected_root_ids_nl = {m["id"] for m in selected_nl}
+    selected_root_ids_l = {m["id"] for m in selected_l_sorted}
+
+    selected_child_nl = [m for m in child_nl if m.get("root_id") in selected_root_ids_nl]
+    selected_child_l = [m for m in child_l if m.get("root_id") in selected_root_ids_l]
+
+    return selected_nl, selected_child_nl, selected_l_sorted, selected_child_l
 
 
 # ---------------------------------------------------------------------------
@@ -309,9 +356,9 @@ def _stat_text(values, unit=""):
 # Figure 1 – Success Metrics Comparison
 # ---------------------------------------------------------------------------
 def plot_fig1_success(root_nl, root_l, outfile):
-    fig = plt.figure(figsize=(14, 8), facecolor="white")
-    gs = gridspec.GridSpec(2, 2, hspace=0.38, wspace=0.30,
-                           height_ratios=[1, 1.2])
+    fig = plt.figure(figsize=(14, 10.5), facecolor="white")
+    gs = gridspec.GridSpec(3, 2, hspace=0.45, wspace=0.30,
+                           height_ratios=[1, 0.8, 1.2])
 
     # ---- 1a: Overall success rates (grouped bar) ----
     ax1 = fig.add_subplot(gs[0, :])
@@ -363,12 +410,46 @@ def plot_fig1_success(root_nl, root_l, outfile):
         bbox=dict(boxstyle="round,pad=0.4", fc="white", ec=PALETTE["grid"], alpha=0.9),
     )
 
-    # ---- 1b: Success by incident type – No Learning ----
-    ax2 = fig.add_subplot(gs[1, 0])
+    # ---- 1b: Composite score threshold attainment ----
+    ax_mid = fig.add_subplot(gs[1, :])
+    thresholds = [1, 2, 3]
+    threshold_labels = ["Score >= 1", "Score >= 2", "Score >= 3"]
+
+    rates_thr_nl = [
+        (sum(1 for m in root_nl if m.get("score", 0) >= thr) / n_nl * 100) if n_nl else 0
+        for thr in thresholds
+    ]
+    rates_thr_l = [
+        (sum(1 for m in root_l if m.get("score", 0) >= thr) / n_l * 100) if n_l else 0
+        for thr in thresholds
+    ]
+
+    x_thr = np.arange(len(threshold_labels))
+    bars_thr_nl = ax_mid.bar(
+        x_thr - w / 2, rates_thr_nl, w, label=LABEL_NO_LEARNING,
+        color=PALETTE["no_learning"], edgecolor="white", linewidth=0.8
+    )
+    bars_thr_l = ax_mid.bar(
+        x_thr + w / 2, rates_thr_l, w, label=LABEL_LEARNING,
+        color=PALETTE["learning"], edgecolor="white", linewidth=0.8
+    )
+    _annotate_bars(ax_mid, bars_thr_nl, offset=1.2)
+    _annotate_bars(ax_mid, bars_thr_l, offset=1.2)
+    ax_mid.set_ylim(0, 115)
+    ax_mid.set_xticks(x_thr)
+    ax_mid.set_xticklabels(threshold_labels)
+    ax_mid.set_ylabel("Episodes Reaching Threshold (%)")
+    ax_mid.set_title("Composite Score Threshold Attainment")
+    ax_mid.legend(frameon=True, loc="upper center")
+    ax_mid.yaxis.set_major_locator(mticker.MultipleLocator(20))
+    sns.despine(ax=ax_mid)
+
+    # ---- 1c: Success by incident type – No Learning ----
+    ax2 = fig.add_subplot(gs[2, 0])
     _plot_incident_breakdown(ax2, root_nl, f"{LABEL_NO_LEARNING}  (n={n_nl})")
 
-    # ---- 1c: Success by incident type – Learning ----
-    ax3 = fig.add_subplot(gs[1, 1])
+    # ---- 1d: Success by incident type – Learning ----
+    ax3 = fig.add_subplot(gs[2, 1])
     _plot_incident_breakdown(ax3, root_l, f"{LABEL_LEARNING}  (n={n_l})")
 
     fig.savefig(outfile)
@@ -425,42 +506,42 @@ def plot_fig2_operational(root_nl, child_nl, tools_nl,
     ax = axes[0, 0]
     ttr_nl = [m["ttr"] / 60 for m in root_nl if m["ttr"] is not None]
     ttr_l = [m["ttr"] / 60 for m in root_l if m["ttr"] is not None]
-    _side_by_side_violin(ax, ttr_nl, ttr_l, "Time to Resolution (min)",
+    _side_by_side_distribution(ax, ttr_nl, ttr_l, "Time to Resolution (min)",
                          "Time to Resolution – Root Tasks")
 
     # ---- 2b: Trajectory length (all tasks) ----
     ax = axes[0, 1]
     traj_nl = [m["trajectory_length"] for m in all_nl if m["trajectory_length"] > 0]
     traj_l = [m["trajectory_length"] for m in all_l if m["trajectory_length"] > 0]
-    _side_by_side_violin(ax, traj_nl, traj_l, "Message Count",
+    _side_by_side_distribution(ax, traj_nl, traj_l, "Message Count",
                          "Trajectory Length – All Tasks")
 
     # ---- 2c: Iterations (root) ----
     ax = axes[0, 2]
     iter_nl = [m["iterations_count"] for m in root_nl]
     iter_l = [m["iterations_count"] for m in root_l]
-    _side_by_side_violin(ax, iter_nl, iter_l, "Iterations",
+    _side_by_side_distribution(ax, iter_nl, iter_l, "Iterations",
                          "Iteration Count – Root Tasks")
 
     # ---- 2d: Tool uses (all) ----
     ax = axes[1, 0]
     tu_nl = [m["tool_uses"] for m in all_nl if m["tool_uses"] > 0]
     tu_l = [m["tool_uses"] for m in all_l if m["tool_uses"] > 0]
-    _side_by_side_violin(ax, tu_nl, tu_l, "Tool Invocations",
+    _side_by_side_distribution(ax, tu_nl, tu_l, "Tool Invocations",
                          "Tool Uses per Task")
 
     # ---- 2e: Tool error rate (all) ----
     ax = axes[1, 1]
     er_nl = [m["tool_error_rate"] for m in all_nl if m["tool_uses"] > 0]
     er_l = [m["tool_error_rate"] for m in all_l if m["tool_uses"] > 0]
-    _side_by_side_violin(ax, er_nl, er_l, "Error Rate (%)",
+    _side_by_side_distribution(ax, er_nl, er_l, "Error Rate (%)",
                          "Tool Error Rate per Task")
 
     # ---- 2f: Subtree depth (root) ----
     ax = axes[1, 2]
     dep_nl = [m["max_depth"] for m in root_nl]
     dep_l = [m["max_depth"] for m in root_l]
-    _side_by_side_violin(ax, dep_nl, dep_l, "Max Depth",
+    _side_by_side_distribution(ax, dep_nl, dep_l, "Max Depth",
                          "Task-Tree Depth – Root Tasks")
 
     fig.tight_layout(h_pad=3.0, w_pad=2.5)
@@ -469,8 +550,8 @@ def plot_fig2_operational(root_nl, child_nl, tools_nl,
     print(f"  Saved {outfile}")
 
 
-def _side_by_side_violin(ax, data_nl, data_l, ylabel, title):
-    """Draw overlapping violin + box + strip for two groups."""
+def _side_by_side_distribution(ax, data_nl, data_l, ylabel, title):
+    """Draw overlapping violin + box for two groups."""
     if not data_nl and not data_l:
         ax.set_title(title)
         ax.text(0.5, 0.5, "No data", transform=ax.transAxes, ha="center")
@@ -490,22 +571,42 @@ def _side_by_side_violin(ax, data_nl, data_l, ylabel, title):
 
     order = [LABEL_NO_LEARNING, LABEL_LEARNING]
     pal = {LABEL_NO_LEARNING: PALETTE["no_learning"], LABEL_LEARNING: PALETTE["learning"]}
-
-    parts = sns.violinplot(
-        data=df, x="group", y="value", hue="group", order=order, palette=pal,
-        inner=None, ax=ax, cut=0, linewidth=0.8, alpha=0.35, density_norm="width",
+    sns.violinplot(
+        data=df,
+        x="group",
+        y="value",
+        hue="group",
+        order=order,
+        palette=pal,
+        inner=None,
+        ax=ax,
+        cut=0,
+        linewidth=0.8,
+        alpha=0.35,
+        density_norm="width",
         legend=False,
     )
     sns.boxplot(
-        data=df, x="group", y="value", hue="group", order=order, ax=ax,
-        width=0.15, showcaps=True, boxprops=dict(facecolor="white", edgecolor=PALETTE["text"], linewidth=1),
-        whiskerprops=dict(color=PALETTE["text"]), medianprops=dict(color=PALETTE["score0"], linewidth=1.5),
-        capprops=dict(color=PALETTE["text"]), fliersize=0, zorder=3, legend=False,
+        data=df,
+        x="group",
+        y="value",
+        hue="group",
+        order=order,
+        ax=ax,
+        width=0.15,
+        showcaps=True,
+        boxprops=dict(facecolor="white", edgecolor=PALETTE["text"], linewidth=1),
+        whiskerprops=dict(color=PALETTE["text"]),
+        medianprops=dict(color=PALETTE["score0"], linewidth=1.5),
+        capprops=dict(color=PALETTE["text"]),
+        fliersize=0,
+        zorder=3,
+        legend=False,
     )
 
     ax.set_title(title)
-    ax.set_ylabel(ylabel)
     ax.set_xlabel("")
+    ax.set_ylabel(ylabel)
 
     stat_nl = _stat_text(data_nl)
     stat_l = _stat_text(data_l)
@@ -610,7 +711,7 @@ def plot_fig6_tree_structure(root_nl, root_l, outfile):
     ax_sum.legend(fontsize=8, frameon=True, loc="upper right")
     sns.despine(ax=ax_sum)
 
-    # ---- 6c–d: Per-level distribution (same as fig2: violin + box, no strip/scatter) ----
+    # ---- 6c–d: Per-level distribution (same as fig2: box + strip) ----
     for col_idx, lvl in enumerate(levels[:3]):
         if col_idx >= 2:
             break
@@ -619,7 +720,7 @@ def plot_fig6_tree_structure(root_nl, root_l, outfile):
         vals_nl = widths_nl[lvl]
         vals_l = widths_l[lvl]
 
-        _side_by_side_violin(
+        _side_by_side_distribution(
             ax,
             vals_nl,
             vals_l,
@@ -682,94 +783,95 @@ def plot_fig3_timeline(root_nl, root_l, outfile):
         0: PALETTE["score0"],
     }
 
-    fig_w = max(14, n * 0.42)
-    fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(fig_w, 5.5), sharex=True, facecolor="white",
-        gridspec_kw={"hspace": 0.12},
-    )
+    # More compact figure size
+    fig_w = max(8, n * 0.25)
+    fig = plt.figure(figsize=(fig_w, 6), facecolor="white")
+    gs = gridspec.GridSpec(3, 1, height_ratios=[1, 1, 0.8], hspace=0.05)
+    
+    ax1 = fig.add_subplot(gs[0])
+    ax2 = fig.add_subplot(gs[1], sharex=ax1)
+    ax3 = fig.add_subplot(gs[2], sharex=ax1)
 
     indices = np.arange(n)
-    bar_w = 0.72
+    bar_w = 0.9
 
     # --- Top: No Learning ---
     colors_nl = [score_colors[m["score"]] for m in root_nl_sorted]
-    bars_nl = ax1.bar(indices, [1] * n, color=colors_nl, edgecolor="white",
-                       linewidth=0.5, width=bar_w)
+    bars_nl = ax1.bar(indices, [1] * n, color=colors_nl, edgecolor="none",
+                       linewidth=0, width=bar_w)
 
-    cum = 0
-    for i, m in enumerate(root_nl_sorted):
-        cum += m["score"]
-        ax1.text(i, 1.06, str(m["score"]), ha="center", va="bottom",
-                 fontsize=7, fontweight="bold", color=PALETTE["text"])
-
-    ax1.set_ylabel(LABEL_NO_LEARNING, fontsize=11, fontweight="bold")
-    ax1.set_ylim(0, 1.35)
+    ax1.set_ylabel(LABEL_NO_LEARNING, fontsize=12, fontweight="bold", labelpad=5)
+    ax1.set_ylim(0, 1)
     ax1.set_yticks([])
-    ax1.set_title("Per-Episode Score Timeline  (score 0–3 per bar)", fontsize=13, pad=10)
+    ax1.set_xlim(-0.5, n-0.5)  # Tight fit around data
 
-    total_nl = sum(m["score"] for m in root_nl_sorted)
-    ax1.text(0.99, 0.92, f"Total: {total_nl}/{n * 3}",
-             transform=ax1.transAxes, ha="right", va="top",
-             fontsize=10, fontweight="bold",
-             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=PALETTE["grid"]))
-
-    # --- Bottom: Learning ---
+    # --- Middle: Learning ---
     agent_data = [agent_map.get(tid) for tid in master_ids]
     colors_l = [score_colors[m["score"]] if m else "#F3F4F6" for m in agent_data]
     heights = [1 if m else 0.3 for m in agent_data]
-    bars_l = ax2.bar(indices, heights, color=colors_l, edgecolor="white",
-                      linewidth=0.5, width=bar_w)
+    bars_l = ax2.bar(indices, heights, color=colors_l, edgecolor="none",
+                      linewidth=0, width=bar_w)
 
-    n_matched = 0
-    total_l = 0
-    for i, m in enumerate(agent_data):
-        if m:
-            n_matched += 1
-            total_l += m["score"]
-            ax2.text(i, 1.06, str(m["score"]), ha="center", va="bottom",
-                     fontsize=7, fontweight="bold", color=PALETTE["text"])
-        else:
-            ax2.text(i, 0.15, "—", ha="center", va="center",
-                     fontsize=8, color="#9CA3AF")
-
-    ax2.set_ylabel(LABEL_LEARNING, fontsize=11, fontweight="bold")
-    ax2.set_ylim(0, 1.35)
+    ax2.set_ylabel(LABEL_LEARNING, fontsize=12, fontweight="bold", labelpad=5)
+    ax2.set_ylim(0, 1)
     ax2.set_yticks([])
-    ax2.text(0.99, 0.92, f"Total: {total_l}/{n_matched * 3}  ({n_matched}/{n} episodes)",
-             transform=ax2.transAxes, ha="right", va="top",
-             fontsize=10, fontweight="bold",
-             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=PALETTE["grid"]))
+    ax2.set_xlim(-0.5, n-0.5)  # Tight fit around data
 
-    # X labels
-    labels = []
-    for m in root_nl_sorted:
-        svc = m["service_name"]
-        if len(svc) > 12:
-            svc = svc[:11] + "…"
-        labels.append(f"{svc}\nT{m['incident_type']}")
-    ax2.set_xticks(indices)
-    ax2.set_xticklabels(labels, rotation=55, ha="right", fontsize=7)
+    # --- Bottom: Cumulative Score Difference ---
+    cumulative_diff = []
+    cumulative_nl = 0
+    cumulative_l = 0
+    
+    for i, (m_nl, m_l) in enumerate(zip(root_nl_sorted, agent_data)):
+        cumulative_nl += m_nl["score"]
+        if m_l:
+            cumulative_l += m_l["score"]
+        diff = cumulative_l - cumulative_nl
+        cumulative_diff.append(diff)
 
-    # Every-5 guide lines
-    for i in range(4, n - 1, 5):
-        pos = i + 0.5
-        for a in (ax1, ax2):
-            a.axvline(x=pos, color=PALETTE["grid"], linestyle="--", linewidth=0.8)
+    # Plot the cumulative difference
+    ax3.plot(indices, cumulative_diff, color=PALETTE["learning"], linewidth=2, marker='o', markersize=3)
+    ax3.axhline(y=0, color='black', linestyle='-', linewidth=0.5, alpha=0.7)
+    ax3.fill_between(indices, cumulative_diff, 0, 
+                     where=[d >= 0 for d in cumulative_diff], 
+                     color=PALETTE["learning"], alpha=0.3, interpolate=True)
+    ax3.fill_between(indices, cumulative_diff, 0, 
+                     where=[d < 0 for d in cumulative_diff], 
+                     color=PALETTE["no_learning"], alpha=0.3, interpolate=True)
+    
+    ax3.set_ylabel("Cumulative Score Difference\n(Learning - No Learning)", fontsize=10, fontweight="bold", labelpad=15)
+    ax3.set_xlabel("Episode", fontsize=11)
+    ax3.set_xlim(-0.5, n-0.5)  # Tight fit around data
 
-    # Legend
+    # Remove all x-axis labels except from bottom plot
+    ax1.set_xticks([])
+    ax2.set_xticks([])
+    ax3.set_xticks(indices[::max(1, n//10)])  # Show every 10th or fewer labels
+    ax3.set_xticklabels([f"{i+1}" for i in ax3.get_xticks()], fontsize=9)
+
+    # Legend - larger and more prominent, positioned at top right with white background
     legend_patches = [
-        mpatches.Patch(color=score_colors[3], label="Score 3 (full success)"),
+        mpatches.Patch(color=score_colors[3], label="Score 3"),
         mpatches.Patch(color=score_colors[2], label="Score 2"),
         mpatches.Patch(color=score_colors[1], label="Score 1"),
-        mpatches.Patch(color=score_colors[0], label="Score 0 (failure)"),
+        mpatches.Patch(color=score_colors[0], label="Score 0"),
     ]
-    ax1.legend(handles=legend_patches, loc="upper left", ncol=4, fontsize=8,
-               frameon=True, handlelength=1.2, handletextpad=0.4, columnspacing=1.0)
+    ax1.legend(handles=legend_patches, loc="upper right", ncol=4, fontsize=10,
+               frameon=True, facecolor='white', edgecolor='none', 
+               handlelength=1.5, handletextpad=0.5, columnspacing=1.2)
 
-    sns.despine(ax=ax1, left=True, bottom=True)
-    sns.despine(ax=ax2, left=True)
+    # Remove all spines and grids
+    for ax in [ax1, ax2, ax3]:
+        sns.despine(ax=ax, left=True, bottom=True, right=True, top=True)
+        ax.grid(False)
+        ax.set_facecolor('white')
 
-    fig.savefig(outfile)
+    # Only show bottom spine for the bottom plot
+    sns.despine(ax=ax3, left=True, right=True, top=True)
+
+    # Adjust subplot spacing for better margins
+    plt.subplots_adjust(left=0.15, right=0.95, top=0.95, bottom=0.1, hspace=0.05)
+    fig.savefig(outfile, dpi=300, bbox_inches='tight', pad_inches=0.1)
     plt.close(fig)
     print(f"  Saved {outfile}")
 
@@ -917,13 +1019,13 @@ def plot_fig5_playbook_evolution(history_dir: str, outfile: str):
     ax_top.stackplot(
         rev_indices, *token_stacks_arr,
         labels=[AGENT_DISPLAY.get(a, a) for a in agents],
-        colors=[AGENT_COLORS.get(a, "#888") + "55" for a in agents],
+        colors=[AGENT_COLORS.get(a, "#888888") + "55" for a in agents],
         edgecolor="white", linewidth=0.5,
     )
     for i, agent in enumerate(agents):
         cumulative = token_stacks_arr[:i + 1].sum(axis=0)
         ax_top.plot(rev_indices, cumulative,
-                    color=AGENT_COLORS.get(agent, "#888"),
+                    color=AGENT_COLORS.get(agent, "#888888"),
                     linewidth=1.5, alpha=0.7)
 
     totals = token_stacks_arr.sum(axis=0)
@@ -950,11 +1052,11 @@ def plot_fig5_playbook_evolution(history_dir: str, outfile: str):
             entries_vals.append(entries_vals[-1])
         ax_bot.plot(rev_indices, entries_vals,
                     marker="o", markersize=6, linewidth=2,
-                    color=AGENT_COLORS.get(agent, "#888"),
+                    color=AGENT_COLORS.get(agent, "#888888"),
                     label=AGENT_DISPLAY.get(agent, agent))
         for r, v in enumerate(entries_vals):
             ax_bot.text(r, v + 0.3, str(v), ha="center", va="bottom",
-                        fontsize=8, color=AGENT_COLORS.get(agent, "#888"),
+                        fontsize=8, color=AGENT_COLORS.get(agent, "#888888"),
                         fontweight="semibold")
 
     ax_bot.set_ylabel("Playbook Entries (rules)")
@@ -1083,16 +1185,77 @@ def print_terminal_tables(root_nl, child_nl, tools_nl,
         f"{total_l}/{max_l} ({pct_l:.1f}%)",
         _fmt_delta(pct_nl, pct_l, unit=" pp", higher_is_better=True),
     ])
+    # Calculate threshold percentages
+    score_1_nl = sum(1 for s in scores_nl if s >= 1)
+    score_1_l = sum(1 for s in scores_l if s >= 1)
+    score_2_nl = sum(1 for s in scores_nl if s >= 2)
+    score_2_l = sum(1 for s in scores_l if s >= 2)
+    score_3_nl = sum(1 for s in scores_nl if s == 3)
+    score_3_l = sum(1 for s in scores_l if s == 3)
+    score_0_nl = sum(1 for s in scores_nl if s == 0)
+    score_0_l = sum(1 for s in scores_l if s == 0)
+    
+    pct_1_nl = (score_1_nl / n_nl * 100) if n_nl else 0
+    pct_1_l = (score_1_l / n_l * 100) if n_l else 0
+    pct_2_nl = (score_2_nl / n_nl * 100) if n_nl else 0
+    pct_2_l = (score_2_l / n_l * 100) if n_l else 0
+    pct_3_nl = (score_3_nl / n_nl * 100) if n_nl else 0
+    pct_3_l = (score_3_l / n_l * 100) if n_l else 0
+    
+    # Calculate progressions and regressions
+    progressions = 0
+    regressions = 0
+    matched_tasks = []
+    
+    # Match tasks by ID to compare scores
+    nl_scores_by_id = {m["id"]: m["score"] for m in root_nl}
+    for l_task in root_l:
+        task_id = l_task["id"]
+        if task_id in nl_scores_by_id:
+            score_nl = nl_scores_by_id[task_id]
+            score_l = l_task["score"]
+            matched_tasks.append((score_nl, score_l))
+            if score_l > score_nl:
+                progressions += 1
+            elif score_l < score_nl:
+                regressions += 1
+    
+    n_matched = len(matched_tasks)
+    
+    rows.append([
+        "Episodes >= 1/3 score",
+        f"{score_1_nl}/{n_nl} ({pct_1_nl:.1f}%)",
+        f"{score_1_l}/{n_l} ({pct_1_l:.1f}%)",
+        _fmt_delta(pct_1_nl, pct_1_l, unit=" pp", higher_is_better=True),
+    ])
+    rows.append([
+        "Episodes >= 2/3 score",
+        f"{score_2_nl}/{n_nl} ({pct_2_nl:.1f}%)",
+        f"{score_2_l}/{n_l} ({pct_2_l:.1f}%)",
+        _fmt_delta(pct_2_nl, pct_2_l, unit=" pp", higher_is_better=True),
+    ])
     rows.append([
         "Full-Success Episodes (score=3)",
-        f"{sum(1 for s in scores_nl if s == 3)}/{n_nl}",
-        f"{sum(1 for s in scores_l if s == 3)}/{n_l}",
-        "",
+        f"{score_3_nl}/{n_nl} ({pct_3_nl:.1f}%)",
+        f"{score_3_l}/{n_l} ({pct_3_l:.1f}%)",
+        _fmt_delta(pct_3_nl, pct_3_l, unit=" pp", higher_is_better=True),
     ])
     rows.append([
         "Complete-Failure Episodes (score=0)",
-        f"{sum(1 for s in scores_nl if s == 0)}/{n_nl}",
-        f"{sum(1 for s in scores_l if s == 0)}/{n_l}",
+        f"{score_0_nl}/{n_nl}",
+        f"{score_0_l}/{n_l}",
+        "",
+    ])
+    rows.append([
+        "Progressions (L > NL)",
+        f"—",
+        f"{progressions}/{n_matched} ({(progressions/n_matched*100):.1f}%)" if n_matched else "—",
+        "",
+    ])
+    rows.append([
+        "Regressions (L < NL)",
+        f"—",
+        f"{regressions}/{n_matched} ({(regressions/n_matched*100):.1f}%)" if n_matched else "—",
         "",
     ])
 
@@ -1217,6 +1380,20 @@ def print_terminal_tables(root_nl, child_nl, tools_nl,
 # Main
 # ---------------------------------------------------------------------------
 def analyze():
+    parser = argparse.ArgumentParser(
+        description="Compare learning vs. no-learning agent performance."
+    )
+    parser.add_argument(
+        "--incident-limit",
+        type=int,
+        default=None,
+        help="Use only the first N incidents (chronological, based on no-learning run). "
+             "Omit for all incidents.",
+    )
+    args = parser.parse_args()
+    if args.incident_limit is not None and args.incident_limit <= 0:
+        raise ValueError("--incident-limit must be a positive integer.")
+
     db_no_learning = "./agent_no_learning.db"
     db_agent = "./agent.db"
 
@@ -1228,11 +1405,21 @@ def analyze():
         print("Both databases are required for comparison.")
         return
 
-    root_nl, child_nl, tools_nl = metrics_nl
-    root_l, child_l, tools_l = metrics_l
+    root_nl, child_nl, _ = metrics_nl
+    root_l, child_l, _ = metrics_l
+
+    root_nl, child_nl, root_l, child_l = _select_incidents(
+        root_nl, child_nl, root_l, child_l, args.incident_limit
+    )
+    tools_nl = _aggregate_failing_tools(root_nl + child_nl)
+    tools_l = _aggregate_failing_tools(root_l + child_l)
 
     print(f"  {LABEL_NO_LEARNING}: {len(root_nl)} root, {len(child_nl)} child tasks")
     print(f"  {LABEL_LEARNING}:    {len(root_l)} root, {len(child_l)} child tasks\n")
+    if args.incident_limit is None:
+        print("  Incident scope: all incidents\n")
+    else:
+        print(f"  Incident scope: first {args.incident_limit} incidents (chronological)\n")
 
     out_dir = "./figures"
     os.makedirs(out_dir, exist_ok=True)

@@ -133,9 +133,9 @@ async def run_experiment(
         print("Learning disabled — skipping ACE pipeline and pinning playbook revision to 1")
 
     print(f"Running pre-deployment redis reset script: {FIX_REDIS_SCRIPT}")
-    #subprocess.run(["bash", FIX_REDIS_SCRIPT], check=True)
-    #print("Waiting 5 minutes after redis reset...")
-    #await asyncio.sleep(5 * 60)
+    subprocess.run(["bash", FIX_REDIS_SCRIPT], check=True)
+    print("Waiting 5 minutes after redis reset...")
+    live_timer(5 * 60)
 
     baseline_pods = set(get_pod_snapshot(NAMESPACE).keys())
     try:

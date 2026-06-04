@@ -16,8 +16,14 @@ sys.path.append(os.path.join(os.getcwd(), "agent"))
 try:
     from agent.persistence.model import TaskModel
     from agent.persistence.settings import init_db
+    from agent.settings import SettingsManager
 
     # Initialize and bind the database
+    db_override = os.environ.get("VIZ_DB_PATH") or os.environ.get("AGENT_DB_PATH")
+    if db_override:
+        SettingsManager.get_instance().set("persistence.url", db_override)
+        print(f"Using DB override: {db_override}")
+
     print("Initializing database...")
     init_db()
     print("Database initialized successfully.")

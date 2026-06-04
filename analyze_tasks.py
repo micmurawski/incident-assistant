@@ -340,12 +340,14 @@ def plot_success_comparison(root_metrics_no_learning, root_metrics_agent, output
         return
 
     def get_color(score):
-        cmap = plt.get_cmap('Set1')
-        if score == 0: return cmap(0)
-        if score < 3: return cmap(4)
-        return cmap(2)
+        if score == 3: return '#2ca02c'   # green
+        if score == 2: return '#a2c523'   # yellow-green
+        if score == 1: return '#ff7f0e'   # orange
+        return '#d62728'                  # red
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(max(12, n * 0.6), 8), sharex=True)
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(
+        4, 1, figsize=(max(12, n * 0.6), 12), sharex=True
+    )
     indices = np.arange(n)
     
     # Top Chart: No Learning
@@ -355,9 +357,13 @@ def plot_success_comparison(root_metrics_no_learning, root_metrics_agent, output
     ax1.set_ylabel("Success Score")
     ax1.set_yticks([])
     
+    cumsum1 = 0
+    cumulative_no_learning = []
     for i, bar in enumerate(bars1):
+        cumsum1 += root_metrics_no_learning[i]['score']
+        cumulative_no_learning.append(cumsum1)
         ax1.text(bar.get_x() + bar.get_width()/2., 1.05,
-                f"{root_metrics_no_learning[i]['score']}/3", ha='center', va='bottom', fontsize=8)
+                str(cumsum1), ha='center', va='bottom', fontsize=8)
 
     # Bottom Chart: Agent
     agent_data = [agent_map.get(tid) for tid in master_ids]
@@ -367,12 +373,45 @@ def plot_success_comparison(root_metrics_no_learning, root_metrics_agent, output
     ax2.set_ylabel("Success Score")
     ax2.set_yticks([])
 
+    cumsum2 = 0
+    cumulative_agent = []
     for i, bar in enumerate(bars2):
         if agent_data[i]:
+            cumsum2 += agent_data[i]['score']
+            cumulative_agent.append(cumsum2)
             ax2.text(bar.get_x() + bar.get_width()/2., 1.05,
-                    f"{agent_data[i]['score']}/3", ha='center', va='bottom', fontsize=8)
+                    str(cumsum2), ha='center', va='bottom', fontsize=8)
         else:
+            cumulative_agent.append(np.nan)
             ax2.text(bar.get_x() + bar.get_width()/2., 0.5, "N/A", ha='center', va='center', fontsize=8, color='gray')
+
+    # Cumulative intensity strips (green gets stronger with gathered points)
+    max_cumulative = max(
+        cumulative_no_learning[-1] if cumulative_no_learning else 0,
+        np.nanmax(cumulative_agent) if cumulative_agent else 0,
+        1,
+    )
+
+    no_learning_norm = np.array(cumulative_no_learning, dtype=float) / max_cumulative
+    no_learning_strip = no_learning_norm.reshape(1, -1)
+    ax3.imshow(no_learning_strip, aspect='auto', cmap='Greens', vmin=0, vmax=1)
+    ax3.set_title("Agent No Learning - Cumulative Points Intensity")
+    ax3.set_ylabel("Intensity")
+    ax3.set_yticks([])
+
+    agent_norm = np.array(cumulative_agent, dtype=float) / max_cumulative
+    agent_norm_for_plot = np.nan_to_num(agent_norm, nan=0.0).reshape(1, -1)
+    ax4.imshow(agent_norm_for_plot, aspect='auto', cmap='Greens', vmin=0, vmax=1)
+    ax4.set_title("Agent - Cumulative Points Intensity")
+    ax4.set_ylabel("Intensity")
+    ax4.set_yticks([])
+
+    for i, is_missing in enumerate(np.isnan(agent_norm)):
+        if is_missing:
+            ax4.add_patch(
+                plt.Rectangle((i - 0.5, -0.5), 1, 1, fill=False, edgecolor='gray', linewidth=1.2)
+            )
+            ax4.text(i, 0, "N/A", ha='center', va='center', fontsize=7, color='gray')
 
     # Shared X labels
     labels = [f"{t['service_name']}\n{t['incident_type']}" for t in root_metrics_no_learning]
@@ -384,6 +423,8 @@ def plot_success_comparison(root_metrics_no_learning, root_metrics_agent, output
         pos = i + 0.5
         ax1.axvline(x=pos, color='black', linestyle='--', linewidth=1, alpha=0.5)
         ax2.axvline(x=pos, color='black', linestyle='--', linewidth=1, alpha=0.5)
+        ax3.axvline(x=pos, color='black', linestyle='--', linewidth=1, alpha=0.35)
+        ax4.axvline(x=pos, color='black', linestyle='--', linewidth=1, alpha=0.35)
     
     plt.tight_layout()
     plt.savefig(output_filename)
@@ -395,6 +436,16 @@ def analyze():
     
     metrics_no_learning = get_metrics(db_no_learning)
     metrics_agent = get_metrics(db_agent)
+
+    if metrics_no_learning:
+        root_count = len(metrics_no_learning[0])
+        child_count = len(metrics_no_learning[1])
+        print(f"No Learning tasks: total={root_count + child_count} (root={root_count}, child={child_count})")
+
+    if metrics_agent:
+        root_count = len(metrics_agent[0])
+        child_count = len(metrics_agent[1])
+        print(f"Learning tasks: total={root_count + child_count} (root={root_count}, child={child_count})")
     
     if metrics_no_learning:
         print("Plotting task_metrics_no_learning.png")

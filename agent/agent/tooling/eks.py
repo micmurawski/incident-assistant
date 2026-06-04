@@ -31,7 +31,7 @@ async def scale_node_group(
     max_size: Annotated[int, "The maximum size of the node group"],
     env: Hidden[Optional[dict[str, str]]] = None,
 ) -> ToolResult:
-    """Scale a node group to a desired size."""
+    """Update the scaling configuration (desired, minimum, and maximum size) for the specified EKS node group."""
     scaling_args = []
     if desired_size is not None:
         scaling_args.append(f"desiredSize={desired_size}")

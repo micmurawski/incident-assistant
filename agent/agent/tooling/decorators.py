@@ -424,10 +424,16 @@ class Tools(AsyncNode):
     tools: list[BaseTool]
     debug_mode: bool = True
 
+    def _tool_not_found_message(self, name: str) -> str:
+        names = sorted(t.name for t in self.tools)
+        if names:
+            return f"Tool {name!r} not found. Available tools: {', '.join(names)}"
+        return f"Tool {name!r} not found (no tools are registered)"
+
     def pick_tool_by_name(self, name: str) -> BaseTool:
         tool = next((t for t in self.tools if t.name == name), None)
         if tool is None:
-            raise Exception(f"Tool {name} not found")
+            raise Exception(self._tool_not_found_message(name))
         return tool
 
     def set_debug_mode(self, debug_mode: bool = True) -> None:
@@ -484,7 +490,7 @@ class Tools(AsyncNode):
             if tool is None:
                 tool_result = ToolResult(
                     result=None,
-                    error=f"Tool {name} not found",
+                    error=self._tool_not_found_message(name),
                 )
                 if tool_result.error:
                     print(f"Tool result error: {tool_result.error}")
@@ -601,7 +607,7 @@ class Tools(AsyncNode):
     def pop(self, name: str) -> BaseTool:
         tool = next((t for t in self.tools if t.name == name), None)
         if tool is None:
-            raise Exception(f"Tool {name} not found")
+            raise Exception(self._tool_not_found_message(name))
         self.tools.remove(tool)
         return tool
 

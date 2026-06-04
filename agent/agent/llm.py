@@ -198,10 +198,14 @@ class ChunkProxyIterator[T]:
         chunk: StreamChunk
         last_chunk_type = None
         async for chunk in self.iterator:
-            if last_chunk_type != chunk.get("type"):
-                print()
-                pr_red(self.agent_id + " is " + random.choice(adjectives), flush=True)
-                last_chunk_type = chunk.get("type")
+            new_type = chunk.get("type")
+            if last_chunk_type != new_type:
+                # Usage chunks end the model turn; announcing here splits streamed text
+                # mid-line (e.g. markdown) before the yellow usage JSON.
+                if new_type != "usage":
+                    print()
+                    pr_red(self.agent_id + " is " + random.choice(adjectives), flush=True)
+                last_chunk_type = new_type
             await self._process_chunk(chunk)
             yield chunk
 

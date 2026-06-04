@@ -11,7 +11,8 @@ async def bash(
     command: Annotated[
         str,
         "The bash command to run as a string, e.g., 'ls -la' or 'npm run dev'. Each argument must be a separate string; do not concatenate into one string.",
-    ]
+    ],
+    timeout: Annotated[Optional[int], "Command timeout in seconds (default 120s)"] = 120,
 ) -> ToolResult:
     """
     Run a bash command using a list of arguments. Use for system operations or terminal commands related to the user's task.
@@ -34,7 +35,7 @@ async def bash(
         cmd=["bash", "-c", cmd],
         cwd=cwd,
         env=env,
-        timeout=300,  # Increased default timeout for potentially streamed long commands
+        timeout=timeout,  # Increased default timeout for potentially streamed long commands
     )
 
 

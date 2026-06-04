@@ -38,6 +38,7 @@ helm upgrade --install linkerd-crds linkerd-edge/linkerd-crds -n ${NAMESPACE}
 echo "Installing Linkerd Control Plane..."
 helm upgrade --install linkerd-control-plane \
   -n ${NAMESPACE} \
+  --set controllerLogLevel=warn \
   --set-file identityTrustAnchorsPEM=ca.crt \
   --set-file identity.issuer.tls.crtPEM=issuer.crt \
   --set-file identity.issuer.tls.keyPEM=issuer.key \
@@ -95,6 +96,6 @@ kubectl annotate namespace application linkerd.io/inject=enabled
 #kubectl annotate namespace application config.linkerd.io/skip-inbound-ports=9090
 
 echo "Applying Linkerd ServiceProfiles for named routes in 'linkerd viz routes'..."
-kubectl apply -f "${SCRIPT_DIR}/serviceprofiles/" -n application
+#kubectl apply -f "${SCRIPT_DIR}/serviceprofiles/" -n application
 
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
